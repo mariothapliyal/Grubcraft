@@ -319,8 +319,9 @@ As built (`gc_sim::brigades`; the numbers are its constants).
   is over.
 - **Leaving a brigade.** Any other order to a regiment takes it out. So
   does routing. The same order given again (the same number, the same
-  place within three tiles) changes nothing, so a computer player
-  repeating itself doesn't restart anything. A player's group order is
+  place within three tiles, facing within ten degrees, the same pace)
+  changes nothing, so a computer player repeating itself doesn't
+  restart anything. A player's group order is
   always a new brigade with the next number, so clicking twice on the
   same spot forms the body up again from where it stands (it sets off
   as it stands, so this costs little).
@@ -334,7 +335,9 @@ As built (`gc_sim::brigades`; the numbers are its constants).
   stand in their places, each turning on any enemy that comes within
   its own reach. When its fight is over it takes up the march again,
   joins the brigade again and takes its place, and the brigade goes on.
-  On a plain move the brigade keeps marching.
+  The body does not wait for one standing with no way to its quarry (a
+  foe behind a wall or over deep water): only for one fighting,
+  shooting or on its way. On a plain move the brigade keeps marching.
 - **Letting go.** Where a brigade would be slower than its regiments
   each by its own way, it is over on the spot and they march on as they
   did before there were brigades. See "What a brigade does not do yet".
@@ -487,6 +490,11 @@ disorder, not 17%): they let go at some natural narrows where filing was
 in fact no slower. Stage 3 (passages) is where a brigade learns to take
 a gate and a corner well, and these rules go.
 
+Regiments of two owners ordered together (an ally's army handed over,
+with your own) march as two bodies, one for each owner: a brigade is
+its owner's. Each player's brigade numbers are its own, so two players
+ordering one owner's regiments never share a brigade.
+
 Not yet measured: brigades of one player crossing each other, and a
 brigade under fire.
 
@@ -497,7 +505,8 @@ Stress scenarios `brigade-ford`, `brigade-gate`, `brigade-column-gate`,
 beside `army-gate`, which keeps sending 48 separate moves. Simulation
 tests in `crates/gc_sim/tests/brigades.rs`: a brigade arrives together
 where separate moves straggle, keeps its shape, files through a gap and
-forms again, the same order again changes nothing, a member given
+forms again, the same order again changes nothing, an attack-move brigade does not
+wait on a foe nobody can reach, a member given
 another order leaves and the rest march on, a short move is each
 regiment's own, an attack-move brigade halts while one of its own
 fights, and a copy made for a computer player's rehearsal marches on

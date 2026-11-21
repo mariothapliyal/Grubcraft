@@ -2921,9 +2921,13 @@ impl Running {
         let queue = queue && !self.world.deploying();
         // Two or more sent together march as a brigade
         // (docs/42-armies-that-march.md), each order a new one.
+        // Each player's numbers are its own, so two players ordering
+        // one owner's regiments (an army handed over) never share one.
         if self.selected.len() > 1 {
-            self.last_brigade = self.last_brigade % gc_sim::brigades::PLAYER_NUMBERS + 1;
-            order.brigade = self.last_brigade;
+            const EACH: u16 = gc_sim::brigades::PLAYER_NUMBERS / gc_sim::MAX_PARTIES as u16;
+            self.last_brigade = self.last_brigade % EACH + 1;
+            let side = u16::from(self.sandbox.side) % gc_sim::MAX_PARTIES as u16;
+            order.brigade = side * EACH + self.last_brigade;
         }
         self.plan_order(order);
         if !self.group_commands.is_empty() {

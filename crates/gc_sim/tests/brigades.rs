@@ -335,13 +335,8 @@ fn a_copy_of_a_brigade_on_the_march_marches_on_like_the_original() {
     }
 }
 
-#[test]
-fn an_attack_move_brigade_halts_while_one_of_its_own_fights() {
-    let mut w = world(&[]);
-    let who = spawn(&mut w, 0, &SCATTERED[..4]);
-    // A lone foe off to the east of the way north.
-    let foe = spawn(&mut w, 1, &[(0, 175, 150)])[0];
-    let mut orders = group(&w, &who, 118, 60, 1);
+/// The `orders` (moves) as attack-moves.
+fn hunting(mut orders: Vec<PlayerCommand>) -> Vec<PlayerCommand> {
     for c in &mut orders {
         let Command::MoveTo {
             regiment,
@@ -363,6 +358,16 @@ fn an_attack_move_brigade_halts_while_one_of_its_own_fights() {
             brigade,
         };
     }
+    orders
+}
+
+#[test]
+fn an_attack_move_brigade_halts_while_one_of_its_own_fights() {
+    let mut w = world(&[]);
+    let who = spawn(&mut w, 0, &SCATTERED[..4]);
+    // A lone foe off to the east of the way north.
+    let foe = spawn(&mut w, 1, &[(0, 175, 150)])[0];
+    let orders = hunting(group(&w, &who, 118, 60, 1));
     w.tick(&orders);
     // Until one turns aside for the foe.
     let mut ticks = 0;
@@ -395,4 +400,39 @@ fn an_attack_move_brigade_halts_while_one_of_its_own_fights() {
     }
     // The foe dealt with, they all go on and arrive.
     arrivals(&mut w, &orders, 400);
+}
+
+#[test]
+fn an_attack_move_brigade_does_not_wait_on_a_foe_nobody_can_reach() {
+    // A foe walled in on every side, close by the way north.
+    let side = MAP * CELLS_PER_TILE;
+    let nav: Vec<u8> = (0..side * side)
+        .map(|c| {
+            let (x, y) = ((c % side) / CELLS_PER_TILE, (c / side) / CELLS_PER_TILE);
+            let about = (132..=140).contains(&x) && (146..=154).contains(&y);
+            let within = (133..=139).contains(&x) && (147..=153).contains(&y);
+            if about && !within { BLOCKED } else { 1 }
+        })
+        .collect();
+    let mut w = world(&nav);
+    let line = [(0, 100, 200), (0, 112, 200), (0, 124, 200), (0, 136, 200)];
+    let who = spawn(&mut w, 0, &line);
+    spawn(&mut w, 1, &[(0, 136, 150)]);
+    let orders = hunting(group(&w, &who, 118, 60, 1));
+    w.tick(&orders);
+    // Until one turns aside for the foe.
+    let mut ticks = 0;
+    while who.iter().all(|&h| w.brigade(h).is_some()) {
+        w.tick(&[]);
+        ticks += 1;
+        assert!(ticks < 60 * TICKS_PER_SECOND, "nobody went for the foe");
+    }
+    // The rest go on and arrive.
+    let rest: Vec<PlayerCommand> = orders
+        .iter()
+        .copied()
+        .filter(|c| w.brigade(goal_of(c).0).is_some())
+        .collect();
+    assert!(rest.len() >= 2, "{} left in the brigade", rest.len());
+    arrivals(&mut w, &rest, 150);
 }

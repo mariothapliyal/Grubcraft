@@ -3163,8 +3163,11 @@ impl World {
         // The same order sent again to a regiment marching in that
         // brigade changes nothing.
         if brigade != 0
-            && (self.regiments.resolve(h))
-                .is_some_and(|i| self.brigades.marching_to(i, brigade, target, facing))
+            && (self.regiments.resolve(h)).is_some_and(|i| {
+                let regs = &self.regiments;
+                let pace = regs.pace_for(i, pace);
+                (self.brigades).marching_to(regs, i, brigade, target, facing, pace, hunt)
+            })
         {
             return true;
         }
@@ -3181,8 +3184,8 @@ impl World {
         stand_back(&mut self.regiments, &self.units, &self.nav, &self.combat, i);
         self.leave_off(h);
         // Not while the armies deploy (nobody marches yet), and not
-        // workers, who go about their own business.
-        if brigade != 0 && !self.deploying() && !self.is_worker(h) {
+        // workers or caravans, who go about their own business.
+        if brigade != 0 && !self.deploying() && !self.is_worker(h) && !self.trades(h) {
             self.brigades.join(&mut self.regiments, i, brigade, hunt);
         }
         true
@@ -3236,6 +3239,10 @@ impl World {
                 continue;
             }
             let plan = regs.plan(i);
+            // One a brigade steers has not arrived when it gets to the
+            // point it was given to walk at: its brigade sends it on
+            // (see `Brigades::step`).
+            let led = self.brigades.steers(i);
             if let Some(hunt) = plan.hunt {
                 // A beaten foe is left to run.
                 if let Some(t) = regs.attack_target[i]
@@ -3251,7 +3258,7 @@ impl World {
                     if regs.attack_target[i].is_none() {
                         self.start_step(i, hunt);
                     }
-                } else if regs.idle(i) {
+                } else if regs.idle(i) && !led {
                     // Arrived: the attack-move is done.
                     self.regiments.on_hunt(i, None);
                 } else if regs.target[i].is_some()
@@ -3267,7 +3274,7 @@ impl World {
                     self.regiments.set_plan(i, plan);
                 }
             }
-            while self.free(i) {
+            while !led && self.free(i) {
                 let mut plan = self.regiments.plan(i);
                 let Some(step) = plan.queue.pop() else {
                     break;

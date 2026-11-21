@@ -173,7 +173,9 @@ macro_rules! regiment_fields {
             /// is at its place in it. Set by its brigade each tick it
             /// marches and hashed with it (see `Brigades::hash_into`), not
             /// with the regiment: a match without brigades hashes as it
-            /// did before there were any.
+            /// did before there were any. An order to move, attack or
+            /// fall back clears it: the pace is that order's from then,
+            /// not its brigade's.
             pub(crate) step_with: Vec<u8>,
             /// The fewest files a brigade lets it narrow to in tight
             /// ground (see [`Regiments::squeeze`]), or 0 for no say; set
@@ -844,13 +846,21 @@ impl Regiments {
         if order.files != 0 {
             self.set_frontage(i, order.files);
         }
-        let pace = Fx::from_raw(order.pace.raw() / TICKS_PER_SECOND as i32);
-        self.pace[i] = if pace.raw() <= 0 {
+        self.pace[i] = self.pace_for(i, order.pace);
+        self.step_with[i] = 0;
+        true
+    }
+
+    /// The pace slot `i` marches at, in tiles a tick, on an order to
+    /// march at `pace` tiles a second (its own when zero or more than
+    /// it can do).
+    pub(crate) fn pace_for(&self, i: usize, pace: Fx) -> Fx {
+        let pace = Fx::from_raw(pace.raw() / TICKS_PER_SECOND as i32);
+        if pace.raw() <= 0 {
             self.speed[i]
         } else {
             pace.min(self.speed[i])
-        };
-        true
+        }
     }
 
     /// Slot `i` has nothing to carry out: no march, no enemy to attack.
@@ -1238,6 +1248,7 @@ impl Regiments {
         self.held[i] = 0;
         self.clear[i] = 0;
         self.pace[i] = self.speed[i];
+        self.step_with[i] = 0;
         true
     }
 
@@ -1274,6 +1285,7 @@ impl Regiments {
         self.clear[i] = 0;
         // Backing steps are half steps (see `step_movement`).
         self.pace[i] = self.speed[i];
+        self.step_with[i] = 0;
         true
     }
 

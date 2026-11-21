@@ -52,6 +52,9 @@ const MIN_LEAD: Fx = Fx::from_int(2);
 /// An order to within this of where a member is already going, in tiles,
 /// is the same order sent again.
 const SAME_PLACE: Fx = Fx::from_int(3);
+/// ... to face within this of the way it was to face there (ten
+/// degrees, in [`Angle`] units).
+const SAME_FACING: u16 = 1820;
 /// Regiments further than this from the middle of those ordered, in
 /// tiles, march alone.
 const JOIN_REACH: Fx = Fx::from_int(20);
@@ -283,7 +286,8 @@ impl Brigade {
 
     /// Whether the anchor has come to the end of the track.
     fn arrived(&self) -> bool {
-        !self.partial && self.arc >= self.total()
+        // (A brigade waiting for its track to be searched again has none.)
+        self.len >= 2 && !self.partial && self.arc >= self.total()
     }
 
     /// Where the way that was found begins (what is left of it): before
@@ -452,6 +456,13 @@ impl Brigade {
     /// End the track at `arc` along it (between its ends).
     fn cut(&mut self, arc: Fx) {
         let k = self.leg(arc);
+        if arc - self.cum[k] < QUARTER {
+            // At a point of the track (where it was cut before, the
+            // anchor not having moved since): it ends at that point,
+            // with no leg too short to run any way.
+            self.len = k as u8 + 1;
+            return;
+        }
         let p = self.at(arc).0;
         self.track[k + 1] = p;
         self.cum[k + 1] = arc;
@@ -647,22 +658,44 @@ impl Brigades {
     }
 
     /// Whether regiment slot `i` already marches in its owner's brigade
-    /// `number` to `target` (or near it) to face `facing` there: the same
-    /// order sent again, which changes nothing.
+    /// `number` to `target` (or near it) to face `facing` there (or
+    /// nearly), at `pace` (as [`Regiments::pace_for`] gives it), on an
+    /// attack-move or not as `hunt` says: the same order sent again,
+    /// which changes nothing. Not one that has been told to stand since.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn marching_to(
         &self,
+        regs: &Regiments,
         i: usize,
         number: u16,
         target: FxVec2,
         facing: Option<Angle>,
+        pace: Fx,
+        hunt: bool,
     ) -> bool {
         self.of(i).is_some_and(|(n, end)| {
             let d = end - target;
+            let faces = match (self.members[i].facing, facing) {
+                (None, None) => true,
+                (Some(a), Some(b)) => (a.0.wrapping_sub(b.0) as i16).unsigned_abs() < SAME_FACING,
+                _ => false,
+            };
             n == number
-                && self.members[i].facing == facing
+                && faces
                 && d.x.abs() < SAME_PLACE
                 && d.y.abs() < SAME_PLACE
+                && self.members[i].ordered == pace
+                && self.pool[usize::from(self.of[i]) - 1].hunt == hunt
+                && regs.target[i].is_some()
         })
+    }
+
+    /// Whether a brigade steers regiment slot `i` now: it walks at the
+    /// point its brigade gives it, not to where its order sent it (it may
+    /// get to that point and stand a tick with nowhere to go, which is
+    /// not the end of its march).
+    pub(crate) fn steers(&self, i: usize) -> bool {
+        self.of.get(i).is_some_and(|&t| t != 0) && self.members[i].mode != Mode::Plain
     }
 
     /// Regiment slot `i` has just been sent on a move with brigade
@@ -688,6 +721,8 @@ impl Brigades {
         if self.of[i] != tag {
             let members = self.of.iter().filter(|&&t| t == tag).count();
             self.leave(regs, i);
+            // (Nothing of a march it was on before comes with it.)
+            self.members[i] = Member::NONE;
             if members >= MAX_MEMBERS {
                 return;
             }
@@ -808,8 +843,8 @@ impl Brigades {
             }
             if regs.target[i] != Some(self.members[i].set) || regs.on_wall[i] {
                 // The pace was the brigade's unless whoever gave the new
-                // order set one.
-                if regs.pace[i] == self.members[i].paced {
+                // order set one (`step_with` is cleared by an order).
+                if regs.step_with[i] != 0 && regs.pace[i] == self.members[i].paced {
                     regs.pace[i] = self.members[i].ordered;
                 }
                 self.leave(regs, i);
@@ -930,10 +965,14 @@ impl Brigades {
                 }
                 let plan = regs.plan(j);
                 let d = regs.position[j] - at;
+                // (Not for one standing with no way to its quarry: the
+                // far side of a wall or deep water.)
+                let fights = regs.engaged[j].is_some() || regs.reload[j] > 0 || regs.stepped(j);
                 plan.diverted
                     && matches!(plan.hunt, Some(Step::Move { brigade, .. }) if brigade == number)
                     && d.x.abs() < HUNT_NEAR
                     && d.y.abs() < HUNT_NEAR
+                    && fights
             });
         }
         let b = &mut self.pool[slot];
