@@ -6,7 +6,8 @@ are justified, thorough and creative.
 
 This is the proposal. It starts from what armies do in the game today,
 measured and drawn, names the one cause behind most of it, and lists
-twenty changes in five stages. Stage 1 is the reform everything else
+twenty changes in five stages (and a sixth stage Mario added the same
+day, changes 21 to 25). Stage 1 is the reform everything else
 hangs on, and it is specified in full here, with its real-use section.
 
 **Status (2026-11-21):** proposal, reviewed by Opus the same day (verdict:
@@ -170,6 +171,33 @@ and after.
     round trees, corners and gateposts instead of holding a slot in a
     sliding rectangle. Then the measured cost of making soldiers bodies
     in the simulation (option C) is put to Mario with numbers.
+
+**Stage 6. Through and round the woods** (simulation; Mario
+2026-11-21, built straight after stage 1 because it sits on the brigade's
+shared track)
+
+Measured on the 42 recorded marches: regiments spend 36 to 40% of their
+marching time in woods where the quickest route spends about 20%, with
+and without brigades. Two causes are confirmed in the code: a route is
+priced for a point, so it hugs the edge of a wood and half of a wide body
+marches in the trees; and a regiment is slowed only when its centre is in
+the wood, so the search thinks skirting the edge costs nothing. What else
+pushes them in is the first thing stage 6 finds out.
+
+21. **Route for the body's width.** A brigade's track keeps the whole
+    body clear of woods where there is open ground for it, as it keeps
+    clear of cliffs.
+22. **Close up beside a wood.** Rows close up on the side nearest the
+    trees instead of marching a flank through them.
+23. **One line through a wood.** Where the way must cross a wood, the
+    track takes the thinnest crossing and the body goes through in
+    column on one line.
+24. **Priced for the slowest.** The track is priced for the slowest
+    troops in the body (heavy troops keep 70% of their pace in woods,
+    foot 85%), so a body with horse goes round.
+25. **Held to a number.** Time in woods within a few points of the
+    quickest route's, and no later arrival, as limits in the march
+    report.
 
 ## Stage 1 in full: marching together
 

@@ -25,7 +25,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
-use crate::combat::{Block, OPEN_GROUND};
+use crate::combat::{Block, ELBOW_ROOM, OPEN_GROUND};
 use crate::formation::GROUP_GAP;
 use crate::hash::StateHasher;
 use crate::nav::{self, Nav};
@@ -845,8 +845,9 @@ impl Brigades {
             // track's). Those still filing
             // through a narrows behind keep their turns until they are
             // through, and do not all make for their places at once
-            // through each other. (One the body would not wait for goes
-            // on alone once the anchor is in.)
+            // through each other: once the anchor is in, each goes as it
+            // comes out on to open ground in plain sight of its place
+            // (and one the body would not wait for goes on alone).
             b.arc = b.arc.min(b.total());
             let b = self.pool[slot];
             let tag = slot as u8 + 1;
@@ -854,7 +855,13 @@ impl Brigades {
                 let i = self.list[k] as usize;
                 let place = b.total() + (self.end[i] - b.centre).dot(b.ahead).min(Fx::ZERO);
                 let behind = b.arc - self.station[i] - self.arc[i];
-                if self.arc[i] + LEAD >= place || (b.arrived() && !self.kept_up(regs, i, behind)) {
+                let here = regs.position[i];
+                let out = b.arrived()
+                    && (!self.kept_up(regs, i, behind)
+                        || ((tick + i as u32).is_multiple_of(SIGHT)
+                            && nav.open_around(owner, here, ELBOW_ROOM)
+                            && nav.clear_line(owner, here, self.end[i])));
+                if self.arc[i] + LEAD >= place || out {
                     self.release(regs, i);
                 }
             }
