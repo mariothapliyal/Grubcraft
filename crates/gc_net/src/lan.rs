@@ -169,6 +169,12 @@ struct Peer {
     lost_at: Option<Instant>,
     /// Lost or left; nothing more is sent or taken.
     gone: bool,
+    /// Rejoined after a restart and still replaying the match: their
+    /// machine has not yet reported a state hash that matches the host's at
+    /// or past this tick (the turns the host had closed when they came
+    /// back). The computer keeps
+    /// their side until then (see [`Lan::uncommanded`]).
+    catch_up_to: Option<u32>,
     /// Forget this peer at this time (after a refusal or a goodbye has had
     /// a chance to arrive).
     drop_at: Option<Instant>,
@@ -599,6 +605,39 @@ impl Lan {
         self.flush(now, false);
     }
 
+    /// The people's places in the match that nobody commands now, in player
+    /// order (host only; empty elsewhere): their player left or lost the
+    /// connection for good (not while the match waits for them), or
+    /// rejoined after a restart and is still catching up. The host's game
+    /// lets the computer play these sides, and gives each back once it
+    /// leaves this list (docs/11-networking.md, "Disconnects and
+    /// rejoining").
+    pub fn uncommanded(&self) -> Vec<PlayerId> {
+        let Role::Host(h) = &self.role else {
+            return Vec::new();
+        };
+        let Some(g) = &h.game else {
+            return Vec::new();
+        };
+        // The host is player 0 and plays from this machine.
+        (1..g.start.players.len())
+            .filter(|&i| g.start.players[i].kind == SlotKind::Human)
+            .map(|i| i as PlayerId)
+            .filter(|&p| {
+                !(h.peers.iter())
+                    .any(|peer| peer.player == Some(p) && !peer.gone && peer.catch_up_to.is_none())
+            })
+            .collect()
+    }
+
+    /// A notice for every player in the match and this machine (host only):
+    /// "The computer is playing Alex's side", say.
+    pub fn announce(&mut self, text: String) {
+        if self.is_host() {
+            self.tell_everyone(text);
+        }
+    }
+
     /// This machine's state hash after `tick` ticks. Call after every tick;
     /// only every [`HASH_EVERY`]th is used.
     pub fn record_hash(&mut self, tick: u32, hash: u64) {
@@ -845,6 +884,7 @@ impl Lan {
                     loaded: false,
                     lost_at: None,
                     gone: false,
+                    catch_up_to: None,
                     drop_at: Some(now + Duration::from_secs(5)),
                 });
                 mine.public
@@ -1265,6 +1305,7 @@ impl Lan {
         peer.name.clone_from(&g.start.players[player].name);
         peer.drop_at = None;
         peer.loaded = true;
+        peer.catch_up_to = Some(g.history.len() as u32);
         peer.link.send(&g.start_msg(player as PlayerId));
         for (turn, commands) in g.history.iter().enumerate() {
             peer.link.send(&Msg::Bundle {
@@ -1480,7 +1521,7 @@ impl Lan {
         };
         let Some(g) = &mut h.game else { return };
         let oldest = g.hashes.front().map_or(0, |&(t, _)| t);
-        let mut found = Vec::new();
+        let (mut found, mut matched) = (Vec::new(), Vec::new());
         g.theirs.retain(|&(player, tick, hash)| {
             if tick < oldest {
                 return false;
@@ -1489,12 +1530,24 @@ impl Lan {
                 Some(&(_, mine)) => {
                     if mine != hash && !g.desynced.contains(&player) {
                         found.push((player, tick));
+                    } else if mine == hash {
+                        matched.push((player, tick));
                     }
                     false
                 }
                 None => true,
             }
         });
+        // A rejoiner has caught up once their world matches the host's at
+        // or past the turn they came back at: only then is their side
+        // theirs again (one that went out of sync replaying stays covered).
+        for (player, tick) in matched {
+            for p in h.peers.iter_mut().filter(|p| p.player == Some(player)) {
+                if p.catch_up_to.is_some_and(|t| tick >= t) {
+                    p.catch_up_to = None;
+                }
+            }
+        }
         for (player, tick) in found {
             g.desynced.push(player);
             let name = h

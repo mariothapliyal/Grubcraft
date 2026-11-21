@@ -17,7 +17,7 @@ use gc_ui::lobby::Tempo;
 
 use crate::buildings::Table;
 use crate::conquest;
-use crate::conquest_ai::mind_for;
+use crate::conquest_ai::{cover_mind, mind_for};
 
 /// The real game data, as a Conquest world reads it.
 pub(crate) struct Real {
@@ -148,6 +148,13 @@ impl<'a> Headless<'a> {
     /// No minds yet, reading this map's terrain.
     pub fn minds(&self) -> Minds {
         Minds::new(gc_match::terrain_view::ai_terrain(&self.map, &self.nav))
+    }
+
+    /// The mind that plays player `p`'s side for them after they dropped
+    /// out of a network match (`conquest_ai::cover_mind`), seeded `roll`.
+    pub fn cover_mind(&self, p: gc_sim::PlayerId, roll: u64) -> Mind {
+        let real = self.real;
+        cover_mind(&real.data, &real.table, &self.map, &self.sides, p, roll)
     }
 
     /// The mind for player `i` at `level`, its personality picked by
