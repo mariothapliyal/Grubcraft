@@ -1,10 +1,10 @@
 //! Heroes for the Steward (docs/43-heroes.md, docs/18-ai.md "Steward"):
-//! once it has a building that trains soldiers and Grub to spare, it puts
-//! up its faction's hero building by the hall; it hires a hero as soon as
-//! it may (one a tier), in the order the roster lists them, and revives a
-//! fallen one as soon as it can pay, after its buildings and tier have had
-//! their turn to save. Heroes march with the army like any
-//! regiment.
+//! once it is at the second tier, with a building that trains soldiers and
+//! an army enough, it puts up its faction's hero building by the hall
+//! (saving for it); it hires a hero as soon as it may (one a tier), in the
+//! order the roster lists them, and revives a fallen one as soon as it can
+//! pay, without holding back its buildings and tier to save for either.
+//! Heroes march with the army like any regiment.
 
 use gc_sim::Command;
 use gc_sim::structures::Refusal;
@@ -18,8 +18,8 @@ use super::{Clicks, Look, Steward, trains_fighters};
 const ARMY_FIRST: usize = 3;
 
 impl Steward {
-    /// The hero building to put up, if it is time: none yet, a building
-    /// that trains soldiers standing and the start of an army. Short of
+    /// The hero building to put up, if it is time: none yet, the second
+    /// tier, a building that trains soldiers standing and an army enough. Short of
     /// its price, the Steward saves for it.
     pub(super) fn hero_hall<'k>(
         &self,
@@ -32,7 +32,10 @@ impl Steward {
         }
         let trains =
             (look.mine.iter()).any(|m| m.finished() && trains_fighters(s, m.view.building));
-        (trains && look.army.len() >= ARMY_FIRST).then(|| (b, self.inner_spot(look)))
+        // Not while short of an army, nor before the second tier: a hero
+        // building early costs an army its first fight.
+        let ready = trains && look.army.len() >= ARMY_FIRST && !self.arming && look.tier >= 2;
+        ready.then(|| (b, self.inner_spot(look)))
     }
 
     /// Hire or revive the first hero it may, at a finished hero building
