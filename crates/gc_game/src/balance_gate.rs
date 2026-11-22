@@ -21,13 +21,7 @@ use gc_ai::Difficulty;
 use gc_data::Faction;
 use gc_ui::lobby::{DEFAULT_CONQUEST_MAP, MapSize};
 
-use crate::conquest_ai::tests::{ARMY_READY, MARKS, Played, level_named, play_pairs};
-
-/// Whether failures fail the test. Off while main itself is outside the
-/// band (the tournament of 2026-11-22 failed 8 pairs): the report still says
-/// FAIL, and `BALANCE_STRICT=1` makes it fail anyway. Turned on by the
-/// rebalance that brings main inside.
-const GATE_ON: bool = false;
+use crate::conquest_ai::tests::{ARMY_READY, MARKS, Played, env_number, level_named, play_pairs};
 
 /// A pair's win share must stay inside this band, percent.
 const BAND: (f64, f64) = (40.0, 60.0);
@@ -66,13 +60,6 @@ const MAPS: [ConquestMap; 2] = [
     },
 ];
 
-fn env_number(name: &str, default: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
 /// Wins of the pair's first faction and of its second over a set.
 #[derive(Clone, Copy, Default)]
 struct Tally {
@@ -110,6 +97,11 @@ impl Tally {
     }
 }
 
+/// Every set's tallies added up.
+fn total(sets: &[Tally]) -> Tally {
+    sets.iter().fold(Tally::default(), |a, &t| a.add(t))
+}
+
 /// Which side of the band a share is on: -1 below, 1 above, 0 inside.
 fn side_of(share: Option<f64>) -> i8 {
     match share {
@@ -123,7 +115,7 @@ fn side_of(share: Option<f64>) -> i8 {
 /// side and the interval over both lies wholly outside it, so noise alone
 /// seldom fails a pair that is really even.
 fn pair_fails(sets: &[Tally]) -> bool {
-    let all = sets.iter().fold(Tally::default(), |a, &t| a.add(t));
+    let all = total(sets);
     let side = side_of(sets[0].share());
     let agree = side != 0 && sets.iter().all(|t| side_of(t.share()) == side);
     let sure = all
@@ -141,7 +133,7 @@ fn judge(
     failures: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) -> (Tally, String) {
-    let all = sets.iter().fold(Tally::default(), |x, &t| x.add(t));
+    let all = total(sets);
     let fails = pair_fails(sets);
     let score = format!("{} ({}-{})", pct(all.share()), all.won, all.lost);
     if fails {
@@ -168,9 +160,8 @@ fn pct(s: Option<f64>) -> String {
     s.map_or("-".into(), |s| format!("{s:.0}%"))
 }
 
-fn clock(seconds: u32) -> String {
-    format!("{}:{:02}", seconds / 60, seconds % 60)
-}
+use gc_ai::lens::clock;
+use gc_sim::TICKS_PER_SECOND as TPS;
 
 /// What one faction did over its Conquest games.
 #[derive(Default)]
@@ -185,6 +176,11 @@ struct FactionLine {
     /// Worth of each unit in its army at the end of the games it won.
     winning_army: Vec<u32>,
     won: u32,
+}
+
+/// `x` as a whole percent of `total` (not 0), rounded.
+fn percent(x: u32, total: u32) -> u64 {
+    (100 * u64::from(x) + u64::from(total) / 2) / u64::from(total)
 }
 
 fn mean(v: &[u32]) -> Option<u32> {
@@ -208,10 +204,7 @@ fn top(by: &[u32], names: &[String], n: usize, total: u32) -> String {
     ranked
         .iter()
         .take(n)
-        .map(|&(u, w)| {
-            let share = (100 * u64::from(w) + u64::from(total) / 2) / u64::from(total);
-            format!("{} {share}%", names[u])
-        })
+        .map(|&(u, w)| format!("{} {}%", names[u], percent(w, total)))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -228,13 +221,13 @@ fn balance_tournament() {
         .and_then(|v| level_named(&v))
         .unwrap_or(Difficulty::Veteran);
     let maps = std::env::var("BALANCE_MAPS").unwrap_or_else(|_| "ribcage,grown".into());
-    let chosen: Vec<&ConquestMap> = MAPS
-        .iter()
-        .filter(|m| maps.split(',').any(|k| k.trim() == m.key))
+    let maps: Vec<&ConquestMap> = (maps.split(',').map(str::trim))
+        .filter(|k| !k.is_empty())
+        .map(|k| {
+            (MAPS.iter().find(|m| m.key == k))
+                .unwrap_or_else(|| panic!("BALANCE_MAPS: no map {k:?}; ribcage or grown"))
+        })
         .collect();
-    let keys = maps.split(',').filter(|k| !k.trim().is_empty()).count();
-    assert_eq!(chosen.len(), keys, "BALANCE_MAPS takes ribcage and grown");
-    let maps = chosen;
     let field = std::env::var("BALANCE_FIELD").as_deref() != Ok("off");
 
     let data = crate::data::load();
@@ -247,12 +240,12 @@ fn balance_tournament() {
     // `BALANCE_FACTION=Brood` plays only the pairs with that faction in
     // them, for tuning (the gate itself plays every pair).
     let only = std::env::var("BALANCE_FACTION").unwrap_or_default();
-    let has = |f: usize| format!("{:?}", Faction::ALL[f]).eq_ignore_ascii_case(&only);
+    let fname = |f: usize| Faction::ALL[f].name();
+    let has = |f: usize| fname(f).eq_ignore_ascii_case(&only);
     let pairs: Vec<(usize, usize)> = (0..n)
         .flat_map(|a| (a + 1..n).map(move |b| (a, b)))
         .filter(|&(a, b)| only.is_empty() || has(a) || has(b))
         .collect();
-    let fname = |f: usize| format!("{:?}", Faction::ALL[f]);
 
     let mut failures = Vec::new();
     let mut warnings = Vec::new();
@@ -302,7 +295,7 @@ fn balance_tournament() {
                         None => t.open += 1,
                     }
                     if let Some(v) = p.verdict {
-                        length.push(v.tick / gc_sim::TICKS_PER_SECOND);
+                        length.push(v.tick);
                     }
                     let i = usize::from(f[0] != a);
                     ka += p.sides[i].ledger.killed;
@@ -329,9 +322,8 @@ fn balance_tournament() {
                 let l = &mut lines[f[i]];
                 let l_ = &side.ledger;
                 l.games += 1;
-                let tick = gc_sim::TICKS_PER_SECOND;
-                l.ready.extend(l_.army_ready.map(|t| t / tick));
-                l.first_kill.extend(l_.first_kill.map(|t| t / tick));
+                l.ready.extend(l_.army_ready);
+                l.first_kill.extend(l_.first_kill);
                 for (k, m) in [5, 10].into_iter().enumerate() {
                     let at = MARKS.iter().position(|&x| x == m).expect("a mark");
                     if l_.reached[at] {
@@ -368,18 +360,14 @@ fn balance_tournament() {
         for (f, l) in lines.iter().enumerate() {
             let rate = |k: usize| {
                 let (g, m, c) = l.income[k];
-                if c == 0 {
-                    "-".into()
-                } else {
-                    format!("{}/{}", g / c, m / c)
-                }
+                g.checked_div(c)
+                    .map_or("-".into(), |g| format!("{g}/{}", m / c))
             };
             let other = l.kills_other;
             let total: u32 = l.kills.iter().sum::<u32>() + other;
             let mut kills = top(&l.kills, &names, 3, total);
             if total > 0 {
-                let share = (100 * u64::from(other) + u64::from(total) / 2) / u64::from(total);
-                kills += &format!(", other {share}%");
+                kills += &format!(", other {}%", percent(other, total));
             }
             out += &format!(
                 "| {} | {} | {} | {} | {} of {} | {} | {} | {} | {kills} | {} |\n",
@@ -415,13 +403,13 @@ fn balance_tournament() {
                 .map(|&(_, x)| x)
                 .min();
             if let Some(o) = others
-                && r + RUSH_SECONDS <= o
+                && r + RUSH_SECONDS * TPS <= o
             {
                 failures.push(format!(
                     "{}: first army ready at {}, {} s before the next faction's ({})",
                     fname(f),
                     clock(r),
-                    o - r,
+                    (o - r) / TPS,
                     clock(o)
                 ));
             }
@@ -429,7 +417,7 @@ fn balance_tournament() {
         let first = known.iter().map(|&(_, r)| r).min();
         let last = known.iter().map(|&(_, r)| r).max();
         if let (Some(lo), Some(hi)) = (first, last)
-            && hi - lo > EVEN_SECONDS
+            && hi - lo > EVEN_SECONDS * TPS
         {
             let slow = known
                 .iter()
@@ -437,7 +425,7 @@ fn balance_tournament() {
                 .map(|&(f, _)| fname(f));
             warnings.push(format!(
                 "first armies are {} s apart ({} to {}, slowest {}); the even early game aims for {EVEN_SECONDS} s",
-                hi - lo,
+                (hi - lo) / TPS,
                 clock(lo),
                 clock(hi),
                 slow.unwrap_or_default()
@@ -452,7 +440,7 @@ fn balance_tournament() {
             FIELD_SETS[0], FIELD_SETS[1]
         );
         let mut fpairs = crate::field_balance::pairs();
-        let named = |f: gc_ui::lobby::Faction| format!("{:?}", f).eq_ignore_ascii_case(&only);
+        let named = |f: Faction| f.name().eq_ignore_ascii_case(&only);
         fpairs.retain(|&(a, b)| only.is_empty() || named(a) || named(b));
         let sets: Vec<Vec<(u64, u64)>> = FIELD_SETS
             .iter()
@@ -503,7 +491,10 @@ fn balance_tournament() {
     if std::fs::create_dir_all(&dir).is_ok() {
         let _ = std::fs::write(dir.join("tournament.md"), &report);
     }
-    let strict = GATE_ON || std::env::var("BALANCE_STRICT").as_deref() == Ok("1");
+    // Failures fail the test only with `BALANCE_STRICT=1`, which the
+    // workflows set once main is inside the band (on 2026-11-22 it failed
+    // 8 pairs, so for now the report says FAIL and the test passes).
+    let strict = std::env::var("BALANCE_STRICT").as_deref() == Ok("1");
     if strict {
         assert!(
             failures.is_empty(),
@@ -511,9 +502,7 @@ fn balance_tournament() {
             failures.join("\n")
         );
     } else if !failures.is_empty() {
-        println!(
-            "(report only: the gate is off until main is inside the band; BALANCE_STRICT=1 fails it)"
-        );
+        println!("(report only: BALANCE_STRICT=1 makes these failures fail the test)");
     }
 }
 

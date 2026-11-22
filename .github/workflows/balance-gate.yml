@@ -7,7 +7,8 @@ name: Balance gate
 # outside 40 to 60% on both seed sets, or a faction's first army is ready a
 # minute before everyone else's. A PR that means to move balance that far
 # says why in its description and adds the `balance-accepted` label: the
-# tournament still runs and reports, but no longer fails the PR.
+# tournament still runs and reports, but no longer fails the PR. Until main
+# is inside the band it only reports (GATE below).
 # Every other PR leaves the tournament to the batch (batch.yml).
 on:
   pull_request:
@@ -70,9 +71,16 @@ jobs:
         with:
           alsa: 'true'
       - name: Conquest on two maps and Field Battles, both seed sets
-        continue-on-error: ${{ contains(github.event.pull_request.labels.*.name, 'balance-accepted') }}
         shell: bash
+        env:
+          # Report only while main is outside the band (Mario, 2026-11-22):
+          # when the rebalance brings main inside, GATE becomes 1 here and
+          # in batch.yml, and failures fail the PR unless it is labelled
+          # balance-accepted.
+          GATE: '0'
+          ACCEPTED: ${{ contains(github.event.pull_request.labels.*.name, 'balance-accepted') }}
         run: |
+          if [ "$GATE" = 1 ] && [ "$ACCEPTED" != true ]; then export BALANCE_STRICT=1; fi
           mkdir -p target/balance
           cargo test --release -p gc_game balance_tournament -- --ignored --nocapture 2>&1 | tee target/balance/tournament.txt
       - name: Report on the run page

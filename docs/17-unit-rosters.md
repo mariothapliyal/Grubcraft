@@ -590,9 +590,9 @@ Fights went from about 95-120 s to 105-140 s, whole battles from about 175 s to 
 - **Where it runs.**
   - In the batch (`batch.yml`), in place of the old `conquest_balance` and `roster_field_table` steps.
   - On every pull request that changes a file listed in `scripts/balance-paths` (unit stats, rosters, combat, morale, the economy, start stores, the tournament itself), or that carries the `balance` label (`balance-gate.yml`). A PR that means to move balance past the band says why and adds `balance-accepted`.
-  - In `scripts/pre-pr-check.sh` on a full run when such a file changed (`BALANCE=1` forces it, `BALANCE=0` skips it).
-- **Running it by hand.** `cargo test --release -p gc_game balance_tournament -- --ignored --nocapture`. `BALANCE_FACTION=Brood` plays only that faction's pairs. `BALANCE_MAPS=ribcage` plays one map, and `BALANCE_FIELD=off` leaves out the Field Battles. `BALANCE_GAMES` and `BALANCE_BATTLES` change the counts, and `BALANCE_LEVEL` the level.
-- **Report only for now.** On 2026-11-22 main failed 8 pairs, so `GATE_ON` is false: the report says FAIL, but the test passes unless `BALANCE_STRICT=1` is set. The rebalance that brings main inside the band turns it on.
+  - In `scripts/pre-pr-check.sh` with `BALANCE=1`.
+- **Running it by hand.** `cargo test --release -p gc_game balance_tournament -- --ignored --nocapture`. `BALANCE_FACTION=Brood` (or `"Ember Clans"`) plays only that faction's pairs. `BALANCE_MAPS=ribcage` plays one map, and `BALANCE_FIELD=off` leaves out the Field Battles. `BALANCE_GAMES` and `BALANCE_BATTLES` change the counts, and `BALANCE_LEVEL` the level.
+- **Report only for now.** On 2026-11-22 main failed 8 pairs (5 after the Brood start fix), so the report says FAIL but the test fails only with `BALANCE_STRICT=1`, which the workflows don't set yet (`GATE` in `balance-gate.yml`, `BALANCE_STRICT` in `batch.yml`). The rebalance that brings main inside the band sets them.
 
 ### Weapon flags and mass
 

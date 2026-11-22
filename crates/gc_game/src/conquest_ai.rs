@@ -941,7 +941,7 @@ pub(crate) mod tests {
             .or_else(|| v.parse().ok().map(Difficulty::from_index))
     }
 
-    fn env_number(name: &str, default: u64) -> u64 {
+    pub(crate) fn env_number(name: &str, default: u64) -> u64 {
         std::env::var(name)
             .ok()
             .and_then(|v| v.parse().ok())

@@ -101,6 +101,9 @@ jobs:
       - name: Balance tournament (Conquest on two maps, Field Battles on the rosters)
         if: ${{ !cancelled() }}
         shell: bash
+        # Report only until main is inside the band; then BALANCE_STRICT: '1'.
+        env:
+          BALANCE_STRICT: '0'
         run: cargo test --release -p gc_game balance_tournament -- --ignored --nocapture 2>&1 | tee target/balance/tournament.txt
       - name: Tournament report on the run page
         if: ${{ !cancelled() }}
