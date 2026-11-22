@@ -655,7 +655,7 @@ impl World {
         let Some(c) = &self.conquest else {
             return;
         };
-        if c.heroes.iter().all(|h| h.dead()) && c.heroes.zones().is_empty() {
+        if c.heroes.iter().all(Hero::dead) && c.heroes.zones().is_empty() {
             return;
         }
         if self.tick > 0 && self.tick.is_multiple_of(60 * TICKS_PER_SECOND) {
