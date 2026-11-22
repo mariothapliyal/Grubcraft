@@ -156,11 +156,19 @@ fn river_at(xz: vec2<f32>) -> vec2<f32> {
     );
 }
 
-// How steeply the water's own level falls at `xz`, in tiles a tile: high at
-// a highland river's falls, nothing where a swollen river's rise slopes.
+// How steeply the water's own level falls at `xz`, in tiles a tile, between
+// water on both sides: high at a highland river's falls, nothing where a
+// swollen river's rise slopes or where the level steps down over a bank.
 fn water_fall(xz: vec2<f32>) -> f32 {
-    return abs(river_at(xz + vec2<f32>(0.5, 0.0)).y - river_at(xz - vec2<f32>(0.5, 0.0)).y)
-        + abs(river_at(xz + vec2<f32>(0.0, 0.5)).y - river_at(xz - vec2<f32>(0.0, 0.5)).y);
+    var fall = 0.0;
+    for (var k = 0; k < 2; k++) {
+        let d = select(vec2<f32>(0.0, 0.5), vec2<f32>(0.5, 0.0), k == 0);
+        let a = river_at(xz + d);
+        let b = river_at(xz - d);
+        let wet = g.misc.x + a.x > height_at(xz + d) && g.misc.x + b.x > height_at(xz - d);
+        fall += select(0.0, abs(a.y - b.y), wet);
+    }
+    return fall;
 }
 
 // The water's surface at `xz`: the water line, raised to the tile's own
