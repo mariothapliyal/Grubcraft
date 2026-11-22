@@ -327,6 +327,14 @@ const COMMANDER_FLAG: [f32; 3] = [2.6, 1.8, 0.25];
 const SHOOTING_TICKS: u32 = 24;
 /// Ground height for the cameras: the terrain, or the water's surface where
 /// it is deeper than the bed.
+/// Where the bodies of the fallen lie on the field for a crow to stand on:
+/// those come to rest (not flying from a blow, not sinking to make room).
+fn lying_bodies(puppets: &Puppets) -> impl Iterator<Item = Vec2> + '_ {
+    (puppets.corpses())
+        .filter(|c| c.age >= 0.0 && c.lift == 0.0 && c.sink == 0.0)
+        .map(|c| aftermath::body_at(c.pos, c.facing))
+}
+
 fn ground_of(map: &Map, p: Vec2) -> f32 {
     map.surface_at(p.x, p.y)
 }
@@ -4839,6 +4847,11 @@ impl Running {
                 .filter(|r| reveal || world.sees(viewer, r.handle))
                 .map(|r| from_fx_vec(r.position)),
         );
+        self.tend_ruins(
+            dt.as_secs_f32() * fx_speed,
+            live && !viewing && !self.commander,
+            &cull,
+        );
         // Blows behind the menu, in Commander View (where the soldiers are
         // blocks) and under the unit viewer show nothing, and don't pile up.
         if viewing || self.commander || !live {
@@ -7113,6 +7126,8 @@ impl Running {
                             .map(|(h, _)| h);
                         self.aftermath
                             .wiped(regiment, at, facing, tint, dead, victor);
+                        // The crows that come stand on the bodies.
+                        self.aftermath.bodies(at, lying_bodies(&self.puppets));
                     }
                 }
                 Event::Contact { regiment, foe } => {
@@ -8758,6 +8773,58 @@ impl Running {
                 },
                 part: self.buildings.town_part(s.building),
             });
+        }
+    }
+
+    /// What the dead leave in the land, `dt` seconds of effects time on:
+    /// once a second, a hamlet with enough of the fallen the viewer has seen
+    /// among its houses is ruined and crows come to roost on it, and a crow
+    /// whose body has sunk away (to make room for newer dead) comes down to
+    /// the ground. Then, when `showing`, the smoke of the ruins that still
+    /// smoulder, on screen and in sight.
+    fn tend_ruins(&mut self, dt: f32, showing: bool, cull: &gc_render::Cull) {
+        let ruins = self.ambient.hamlets.due(dt);
+        let bodies = self.aftermath.bodies_due(dt);
+        if ruins || bodies {
+            let lying: Vec<Vec2> = lying_bodies(&self.puppets).collect();
+            if bodies {
+                self.aftermath.keep_bodies(&lying);
+            }
+            if ruins {
+                let (reveal, fog) = (self.reveal_all, &self.fog);
+                let seen: Vec<Vec2> = (lying.into_iter())
+                    .filter(|p| reveal || fog.sees_tile((p.x.floor() as i32, p.y.floor() as i32)))
+                    .collect();
+                let (map, scenery) = (&self.heightmap, &self.scenery);
+                for i in self.ambient.hamlets.ruin_where(&seen) {
+                    let hamlets = &self.ambient.hamlets;
+                    let roofs = hamlets.roofs(
+                        i,
+                        |m| scenery.height_of(m),
+                        |p| ground_of(map, p),
+                        |t| scenery.occupied_at(t),
+                    );
+                    let (centre, reach) = (hamlets.centre(i), hamlets.reach(i));
+                    self.aftermath.roost(centre, reach, roofs.into_iter());
+                }
+            }
+        }
+        if !showing || dt <= 0.0 {
+            return;
+        }
+        let (reveal, fog) = (self.reveal_all, &self.fog);
+        let hamlets = &self.ambient.hamlets;
+        for i in (0..hamlets.len()).filter(|&i| hamlets.ruined(i)) {
+            for (at, r, done) in hamlets.smouldering(i, |t| self.scenery.occupied_at(t)) {
+                let tile = (at.x.floor() as i32, at.z.floor() as i32);
+                if !cull.on_screen(at, r + 4.0) || !(reveal || fog.sees_tile(tile)) {
+                    continue;
+                }
+                // From the charred wall to one side, so a crow on the
+                // ridge sits clear of it, dying down as it burns out.
+                let side = Vec3::new(r * 0.45, 0.6, r * 0.2);
+                self.effects.hearth(at + side, r * 0.5 * (1.0 - done), dt);
+            }
         }
     }
 

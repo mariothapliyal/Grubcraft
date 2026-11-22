@@ -5,6 +5,12 @@
 //! bazaar. They are scenery models placed once from the map's own objects
 //! (a hash of the site's tile, so a place always looks the same), picture
 //! only: nothing blocks soldiers and nothing is stored in the simulation.
+//!
+//! A hamlet a battle is fought in is ruined: once enough of the fallen lie
+//! among its houses, they are burnt out and smoulder a while, its fences
+//! and stalls are knocked flat, its people hide indoors for good, and crows
+//! come to roost on its roofs (`aftermath::Aftermath::roost`). A ruin is
+//! the viewer's picture too: it follows the dead the viewer has seen.
 
 use gc_map::Map;
 use gc_map::def::Kind;
@@ -18,6 +24,16 @@ const LEVEL: f32 = 0.45;
 const DRY: f32 = 0.2;
 /// Slack when two things' footprints meet, in tiles.
 const TOUCH: f32 = 0.3;
+
+/// Fallen soldiers lying among a hamlet's models that ruin it.
+pub const RUIN_DEAD: usize = 12;
+/// How long a ruined house smoulders, in seconds of effects time.
+pub const SMOULDER: f32 = 180.0;
+/// The tints of what a fire leaves: burnt timber and thatch, a scorched
+/// well, a burnt haystack (the scenery shader doubles them, 128 as made).
+const CHARRED: [u8; 3] = [50, 44, 40];
+const SCORCHED: [u8; 3] = [86, 80, 76];
+const ASH: [u8; 3] = [36, 33, 31];
 
 /// What a site is: how big its hamlet is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -412,6 +428,10 @@ pub struct Hamlets {
     sites: Vec<(Vec2, Vec<Extra>)>,
     /// What size each site is, in the same order.
     sizes: Vec<Size>,
+    /// Seconds since each site was ruined, if it has been.
+    ruined: Vec<Option<f32>>,
+    /// Seconds since the dead were last counted ([`Hamlets::due`]).
+    clock: f32,
 }
 
 /// How far from its middle a hamlet's models reach, in tiles.
@@ -434,7 +454,117 @@ impl Hamlets {
                 Some(((centre, lay(map, centre, o.at, size)), size))
             })
             .unzip();
-        Hamlets { sites, sizes }
+        let sizes: Vec<Size> = sizes;
+        Hamlets {
+            ruined: vec![None; sizes.len()],
+            sites,
+            sizes,
+            clock: 0.0,
+        }
+    }
+
+    /// `dt` seconds on (the ruins smoulder down): whether it is time to
+    /// count the dead in the hamlets still standing ([`Hamlets::ruin_where`]),
+    /// once a second.
+    pub fn due(&mut self, dt: f32) -> bool {
+        for r in self.ruined.iter_mut().flatten() {
+            *r += dt;
+        }
+        self.clock += dt;
+        if self.clock < 1.0 || self.ruined.iter().all(Option::is_some) {
+            return false;
+        }
+        self.clock = 0.0;
+        true
+    }
+
+    /// Ruin each standing hamlet with [`RUIN_DEAD`] of the fallen `lying`
+    /// among its models, and give the sites newly ruined.
+    pub fn ruin_where(&mut self, lying: &[Vec2]) -> Vec<usize> {
+        let ruin: Vec<usize> = (0..self.sites.len())
+            .filter(|&i| self.ruined[i].is_none())
+            .filter(|&i| {
+                let (centre, reach) = (self.sites[i].0, self.reach(i));
+                reach > 0.0
+                    && lying.iter().filter(|p| p.distance(centre) <= reach).count() >= RUIN_DEAD
+            })
+            .collect();
+        for &i in &ruin {
+            self.ruin(i);
+        }
+        ruin
+    }
+
+    /// Burn out site `i`: its houses and barn charred (left standing, for
+    /// the crows), its haystacks burnt, its fences and stalls knocked flat
+    /// a different way each.
+    fn ruin(&mut self, i: usize) {
+        self.ruined[i] = Some(0.0);
+        let mut rng = Rng::seeded(self.sites[i].0.x.to_bits() ^ self.sites[i].0.y.to_bits() << 7);
+        for e in &mut self.sites[i].1 {
+            let (tint, lean) = match e.model {
+                Model::GrubfolkWell => (SCORCHED, 0),
+                Model::Haystack => (ASH, 0),
+                Model::WattleFence => (CHARRED, 150 + (rng.unit() * 90.0) as u8),
+                Model::MarketStall => (CHARRED, 200 + (rng.unit() * 55.0) as u8),
+                _ => (CHARRED, 0),
+            };
+            e.tint = tint;
+            e.lean = lean;
+            e.fall = (rng.unit() * 255.0) as u8;
+        }
+    }
+
+    /// Whether site `i` has been ruined.
+    pub fn ruined(&self, i: usize) -> bool {
+        self.ruined[i].is_some()
+    }
+
+    /// The burnt houses of site `i` that are still smouldering, not built
+    /// over (`occupied`): each one's place on the ground, its radius, and how
+    /// far through its smouldering it is (0 to 1).
+    pub fn smouldering<'a>(
+        &'a self,
+        i: usize,
+        occupied: impl Fn((i32, i32)) -> bool + 'a,
+    ) -> impl Iterator<Item = (Vec3, f32, f32)> + 'a {
+        let left = self.ruined[i].map_or(1.0, |r| r / SMOULDER);
+        self.houses(i, occupied)
+            .filter(move |_| left < 1.0)
+            .map(move |e| (e.at, radius(e.model) * e.scale, left))
+    }
+
+    /// The roofs of site `i`'s houses and barn that are not built over
+    /// (`occupied`), for crows to sit on: where each top is, and how high
+    /// over the ground there, with `height` the height of a model.
+    pub fn roofs(
+        &self,
+        i: usize,
+        height: impl Fn(Model) -> f32,
+        ground: impl Fn(Vec2) -> f32,
+        occupied: impl Fn((i32, i32)) -> bool,
+    ) -> Vec<(Vec2, f32)> {
+        self.houses(i, occupied)
+            .map(|e| {
+                let at = Vec2::new(e.at.x, e.at.z);
+                (at, e.at.y + height(e.model) * e.scale - ground(at))
+            })
+            .filter(|&(_, up)| up > 0.5)
+            .collect()
+    }
+
+    /// Site `i`'s houses, huts and barn that are not built over.
+    fn houses<'a>(
+        &'a self,
+        i: usize,
+        occupied: impl Fn((i32, i32)) -> bool + 'a,
+    ) -> impl Iterator<Item = &'a Extra> + 'a {
+        self.sites[i].1.iter().filter(move |e| {
+            matches!(
+                e.model,
+                Model::GrubfolkHut | Model::GrubfolkHouse | Model::GrubfolkBarn
+            ) && !built_on(e, &occupied)
+        })
     }
 
     /// The models of the hamlets within `reach` tiles of `focus`, but not
@@ -459,7 +589,7 @@ impl Hamlets {
     }
 
     /// How many sites have been laid out.
-    pub(super) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.sites.len()
     }
 
@@ -470,7 +600,7 @@ impl Hamlets {
 
     /// How far from its middle site `i`'s models reach, in tiles; nothing
     /// if the site was left bare.
-    pub(super) fn reach(&self, i: usize) -> f32 {
+    pub fn reach(&self, i: usize) -> f32 {
         let (centre, extras) = &self.sites[i];
         extras
             .iter()
@@ -661,5 +791,59 @@ pub(super) mod tests {
         let left = h.near(Vec2::ZERO, 1.0e6, green).count();
         assert!(left < all && left > all - site(&h, at).len());
         assert_eq!(h.near(Vec2::ZERO, 1.0e6, |_| true).count(), 0);
+    }
+
+    #[test]
+    fn enough_dead_among_a_hamlet_ruin_it_and_only_it() {
+        let (map, sites) = flat();
+        let mut h = Hamlets::new(&map);
+        let centre = |k: usize| Vec2::new(sites[k].1.0 as f32 + 0.5, sites[k].1.1 as f32 + 0.5);
+        let fresh = site(&h, sites[0].1).to_vec();
+        // Not counted until a second has gone by.
+        assert!(!h.due(0.5));
+        assert!(h.due(0.5));
+        // A few dead, or many far off, ruin nothing.
+        let few = vec![centre(0) + Vec2::new(2.0, 0.0); RUIN_DEAD - 1];
+        let far = vec![centre(0) + Vec2::new(40.0, 0.0); RUIN_DEAD * 3];
+        assert!(h.ruin_where(&few).is_empty() && h.ruin_where(&far).is_empty());
+        let mut lying = few.clone();
+        lying.push(centre(0) + Vec2::new(-3.0, 1.0));
+        assert_eq!(h.ruin_where(&lying), vec![0]);
+        assert!(h.ruined(0) && !h.ruined(1) && !h.ruined(2));
+        // Ruined once only.
+        assert!(h.ruin_where(&lying).is_empty());
+        // The houses are charred and still stand; the fences are down; the
+        // models are where they were.
+        let ruin = site(&h, sites[0].1);
+        assert_eq!(ruin.len(), fresh.len());
+        for (e, was) in ruin.iter().zip(&fresh) {
+            assert_eq!((e.model, e.at, e.scale), (was.model, was.at, was.scale));
+            assert!(e.tint.iter().all(|&c| c < 100), "{:?} not burnt", e.model);
+            match e.model {
+                Model::WattleFence | Model::MarketStall => assert!(e.lean >= 150),
+                _ => assert_eq!(e.lean, 0),
+            }
+        }
+        // A roof for every house and the barn, at its model's height.
+        let roofs = h.roofs(0, |_| 2.0, |_| map.water_level() + 2.0, |_| false);
+        let houses = (fresh.iter())
+            .filter(|e| {
+                matches!(
+                    e.model,
+                    Model::GrubfolkHut | Model::GrubfolkHouse | Model::GrubfolkBarn
+                )
+            })
+            .count();
+        assert_eq!(roofs.len(), houses);
+        assert!(roofs.iter().all(|&(_, up)| (up - 2.0).abs() < 0.2));
+        assert!(
+            h.roofs(0, |_| 2.0, |_| 0.0, |_| true).is_empty(),
+            "built over"
+        );
+        // They smoulder a while, then the smoke is done.
+        assert_eq!(h.smouldering(0, |_| false).count(), houses);
+        assert_eq!(h.smouldering(1, |_| false).count(), 0);
+        h.due(SMOULDER);
+        assert_eq!(h.smouldering(0, |_| false).count(), 0);
     }
 }

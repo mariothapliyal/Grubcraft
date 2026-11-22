@@ -3,6 +3,8 @@
 //! fell, crows that come to the dead once the fighting has moved on, and
 //! the grime a regiment picks up the longer it fights (cloth darkens a good
 //! deal, skin and armour a little: the shader gives the tone byte only 8%).
+//! The crows stand on the bodies themselves, and a hamlet ruined by a fight
+//! keeps a roost of them on its roofs for the rest of the match.
 //!
 //! Only a picture. The simulation knows nothing of crows or grime; they
 //! follow the wipe-outs it tells (`Event::Losses` for a regiment that is
@@ -63,8 +65,21 @@ const MIN_CROWS: usize = 2;
 const MAX_CROWS: usize = 14;
 /// Crows settle within this many tiles of the flock's centre.
 const SPREAD: f32 = 3.5;
-/// Soldiers this close to a flock flush its crows into the air.
-const SCATTER_RADIUS: f32 = 5.0;
+/// Soldiers this far past where a flock's crows settle (its spread) flush
+/// them into the air.
+const SCATTER_BEYOND: f32 = 1.5;
+/// A crow on a body stands this high over the ground, on the torso.
+const BODY_TOP: f32 = 0.16;
+/// How far behind a fallen soldier's feet his chest lies, in tiles.
+const BODY_BACK: f32 = 0.3;
+/// A body a crow stands on is still there while a fallen soldier lies this
+/// close to it; looked at this often, in seconds.
+const BODY_KEEP: f32 = 0.35;
+const BODY_CHECK: f32 = 1.0;
+/// A ruined hamlet's roost: a crow on each roof, up to this many, and this
+/// many more on the ground.
+const ROOST_ROOFS: usize = 6;
+const ROOST_GROUND: usize = 2;
 /// How fast the crows of a flock take to the air when disturbed (a
 /// fraction of a flight a second) and come back to the ground.
 const SCARE_RISE: f32 = 2.0;
@@ -125,6 +140,51 @@ struct Flock {
     /// 0 with the crows on the ground, 1 with them all in the air.
     scare: f32,
     seed: u32,
+    /// Where crows sit up off the ground: the bodies on a battlefield (for
+    /// the crows after the standard's), the roofs of a ruined hamlet.
+    perches: Vec<Perch>,
+    /// How far from the centre its crows sit, in tiles.
+    spread: f32,
+    /// A ruined hamlet's roost, whose crows never leave.
+    roost: bool,
+}
+
+impl Flock {
+    fn new(at: Vec2, dead: usize, spread: f32, roost: bool, perches: Vec<Perch>) -> Flock {
+        Flock {
+            at,
+            dead,
+            age: 0.0,
+            scare: 0.0,
+            seed: at.x.to_bits().wrapping_mul(0x9E37_79B9) ^ at.y.to_bits(),
+            perches,
+            spread,
+            roost,
+        }
+    }
+
+    /// How many crows it has.
+    fn crows(&self) -> usize {
+        if self.roost {
+            self.perches.len() + ROOST_GROUND
+        } else {
+            crows_of(self.dead)
+        }
+    }
+
+    /// A battlefield flock that has not begun to leave, which more dead
+    /// near `at` join.
+    fn joins(&self, at: Vec2) -> bool {
+        !self.roost && self.age < CROW_STAY && self.at.distance(at) <= MERGE_RADIUS
+    }
+}
+
+/// A place a crow sits: a body or a roof, `up` tiles over the ground there
+/// (0 once a body has gone: the crow stands where it lay).
+#[derive(Clone, Copy, Debug)]
+struct Perch {
+    at: Vec2,
+    up: f32,
 }
 
 /// What is known of a regiment on the field.
@@ -143,6 +203,10 @@ pub struct Aftermath {
     /// Trophies taken so far (see [`Trophy::seq`]).
     taken: u32,
     flocks: Vec<Flock>,
+    /// The crows of ruined hamlets, one flock each.
+    roosts: Vec<Flock>,
+    /// Seconds since the bodies crows stand on were last looked at.
+    body_clock: f32,
     /// Per regiment slot.
     seen: Vec<Option<Seen>>,
     /// Scratch for [`Aftermath::advance`].
@@ -155,6 +219,7 @@ impl Aftermath {
         self.standards.clear();
         self.trophies.clear();
         self.flocks.clear();
+        self.roosts.clear();
         self.seen.clear();
     }
 
@@ -207,8 +272,7 @@ impl Aftermath {
                 |s| s.age,
             );
         }
-        let near = |f: &&mut Flock| f.age < CROW_STAY && f.at.distance(at) <= MERGE_RADIUS;
-        if let Some(f) = self.flocks.iter_mut().find(near) {
+        if let Some(f) = self.flocks.iter_mut().find(|f| f.joins(at)) {
             // The same fight going on: more crows for the dead, and if none
             // have come yet, a fresh wait.
             f.dead = dead;
@@ -217,14 +281,71 @@ impl Aftermath {
             }
             return;
         }
-        let flock = Flock {
-            at,
-            dead,
-            age: 0.0,
-            scare: 0.0,
-            seed: at.x.to_bits().wrapping_mul(0x9E37_79B9) ^ at.y.to_bits(),
-        };
+        let flock = Flock::new(at, dead, SPREAD, false, Vec::new());
         push_oldest(&mut self.flocks, MAX_FLOCKS, flock, |f| f.age);
+    }
+
+    /// The fallen soldiers `lying` (where each body is, see [`body_at`])
+    /// round the flock that a wipe-out at `at` brought: its crows after the
+    /// standard's each take one to stand on, nearest its centre first. A
+    /// second wipe-out there adds bodies for the crows that have none.
+    pub fn bodies(&mut self, at: Vec2, lying: impl Iterator<Item = Vec2>) {
+        let Some(f) = self.flocks.iter_mut().find(|f| f.joins(at)) else {
+            return;
+        };
+        let room = (MAX_CROWS - 1).saturating_sub(f.perches.len());
+        let mut near: Vec<Vec2> = lying
+            .filter(|p| p.distance(f.at) <= DEAD_RADIUS)
+            .filter(|p| !f.perches.iter().any(|q| q.at.distance(*p) < BODY_KEEP))
+            .collect();
+        near.sort_by(|a, b| {
+            a.distance_squared(f.at)
+                .total_cmp(&b.distance_squared(f.at))
+        });
+        let perches = near
+            .into_iter()
+            .take(room)
+            .map(|at| Perch { at, up: BODY_TOP });
+        f.perches.extend(perches);
+    }
+
+    /// Whether to look again that the bodies crows stand on are still there
+    /// ([`Aftermath::keep_bodies`]), `dt` seconds on.
+    pub fn bodies_due(&mut self, dt: f32) -> bool {
+        self.body_clock += dt;
+        let any = || (self.flocks.iter()).any(|f| f.perches.iter().any(|p| p.up > 0.0));
+        if self.body_clock < BODY_CHECK || !any() {
+            return false;
+        }
+        self.body_clock = 0.0;
+        true
+    }
+
+    /// The bodies still `lying` on the field: a crow whose body has gone
+    /// (sunk to make room for newer dead) stands on the ground where it was.
+    pub fn keep_bodies(&mut self, lying: &[Vec2]) {
+        let perches = self.flocks.iter_mut().flat_map(|f| f.perches.iter_mut());
+        for p in perches.filter(|p| p.up > 0.0) {
+            if !lying
+                .iter()
+                .any(|q| q.distance_squared(p.at) <= BODY_KEEP * BODY_KEEP)
+            {
+                p.up = 0.0;
+            }
+        }
+    }
+
+    /// A hamlet with its middle at `at` and its models reaching `reach`
+    /// tiles out has been ruined: crows come to roost on its `roofs` (where
+    /// each top is, and how high over the ground there) and on the green, and
+    /// stay for the rest of the match, put up whenever soldiers come by.
+    pub fn roost(&mut self, at: Vec2, reach: f32, roofs: impl Iterator<Item = (Vec2, f32)>) {
+        if self.roosts.iter().any(|r| r.at == at) {
+            return;
+        }
+        let perches = roofs.take(ROOST_ROOFS).map(|(at, up)| Perch { at, up });
+        let flock = Flock::new(at, 0, reach, true, perches.collect());
+        self.roosts.push(flock);
     }
 
     /// Regiment `winner` takes a standard of `tint`'s colour; past three, its
@@ -258,7 +379,11 @@ impl Aftermath {
     /// `dt` seconds on: standards and flocks age and expire, and crows near
     /// soldiers (`living`: where they stand) take to the air.
     pub fn advance(&mut self, dt: f32, living: impl Iterator<Item = Vec2>) {
-        if self.standards.is_empty() && self.flocks.is_empty() && self.trophies.is_empty() {
+        if self.standards.is_empty()
+            && self.flocks.is_empty()
+            && self.trophies.is_empty()
+            && self.roosts.is_empty()
+        {
             return;
         }
         self.living.clear();
@@ -271,10 +396,11 @@ impl Aftermath {
             t.age += dt;
         }
         self.trophies.retain(|t| t.age < TROPHY_SECONDS);
-        for f in &mut self.flocks {
+        for f in self.flocks.iter_mut().chain(&mut self.roosts) {
             f.age += dt;
-            let disturbed = (self.living.iter())
-                .any(|p| p.distance_squared(f.at) <= SCATTER_RADIUS * SCATTER_RADIUS);
+            let scatter = f.spread + SCATTER_BEYOND;
+            let disturbed =
+                (self.living.iter()).any(|p| p.distance_squared(f.at) <= scatter * scatter);
             f.scare = if disturbed {
                 (f.scare + SCARE_RISE * dt).min(1.0)
             } else {
@@ -304,9 +430,9 @@ impl Aftermath {
     /// Whether the standard a flock was drawn to (the first to fall at its
     /// centre) is still standing, with its splintered stub for a crow.
     fn perch_standing(&self, f: &Flock) -> bool {
-        self.standards
-            .iter()
-            .any(|s| s.at == f.at && s.age < STANDARD_SECONDS - STANDARD_FADE)
+        !f.roost
+            && (self.standards.iter())
+                .any(|s| s.at == f.at && s.age < STANDARD_SECONDS - STANDARD_FADE)
     }
 
     /// The standards regiments carry off, as `pose` places each carrier
@@ -347,13 +473,16 @@ impl Aftermath {
         out: &mut Vec<BoxInstance>,
         room: usize,
     ) {
-        for f in &self.flocks {
+        for f in self.flocks.iter().chain(&self.roosts) {
             let mid = Vec3::new(f.at.x, ground(f.at), f.at.y);
-            if !sees(mid + Vec3::Y * CIRCLE_HEIGHT, SPREAD + CIRCLE_RADIUS * 2.0) {
+            if !sees(
+                mid + Vec3::Y * CIRCLE_HEIGHT,
+                f.spread + CIRCLE_RADIUS * 2.0,
+            ) {
                 continue;
             }
             let perch = self.perch_standing(f);
-            for k in 0..crows_of(f.dead) {
+            for k in 0..f.crows() {
                 if out.len() >= room {
                     return;
                 }
@@ -373,13 +502,16 @@ impl Aftermath {
         out: &mut Vec<Bird>,
         room: usize,
     ) {
-        for f in &self.flocks {
+        for f in self.flocks.iter().chain(&self.roosts) {
             let mid = Vec3::new(f.at.x, ground(f.at), f.at.y);
-            if !sees(mid + Vec3::Y * CIRCLE_HEIGHT, SPREAD + CIRCLE_RADIUS * 2.0) {
+            if !sees(
+                mid + Vec3::Y * CIRCLE_HEIGHT,
+                f.spread + CIRCLE_RADIUS * 2.0,
+            ) {
                 continue;
             }
             let perch = self.perch_standing(f);
-            for k in 0..crows_of(f.dead) {
+            for k in 0..f.crows() {
                 if out.len() >= room {
                     return;
                 }
@@ -419,6 +551,13 @@ pub fn worn(color: [u8; 3], tone: u8, dirt: f32) -> ([u8; 3], u8) {
         color.map(|c| (f32::from(c) * shade).round() as u8),
         (f32::from(tone) * (1.0 - dirt)).round() as u8,
     )
+}
+
+/// Where the body of a soldier lying at `pos` (his feet's place, as
+/// `puppets::Corpse` gives it), who faced `facing` when he fell, is for a
+/// crow to stand on: his chest, a little behind his feet, as he falls back.
+pub fn body_at(pos: Vec2, facing: Vec2) -> Vec2 {
+    pos - facing * BODY_BACK
 }
 
 fn crows_of(dead: usize) -> usize {
@@ -481,7 +620,11 @@ fn bird(
     if t < 0.0 {
         return None;
     }
-    let leaves = CROW_STAY + 2.0 * k as f32;
+    let leaves = if s.roost {
+        f32::INFINITY
+    } else {
+        CROW_STAY + 2.0 * k as f32
+    };
     let gone = s.age - leaves;
     if gone > CROW_LEAVING {
         return None;
@@ -494,15 +637,25 @@ fn bird(
         (1.0 - smooth(circling, circling + 2.0, t)).max(s.scare)
     };
     let away = gone.max(0.0);
-    // Crow 0 comes down on the standard's stub (when it still stands), the
-    // others on the ground among the dead. Crow 0 keeps to the place of the
-    // standard whatever happens to it, so if the standard is dropped (too
-    // many on the field) it only comes down to the ground there.
-    let perched = perch && k == 0;
-    let spot = if k == 0 {
-        s.at
-    } else {
-        s.at + Vec2::from_angle(TAU * h(3)) * (SPREAD * h(4).sqrt())
+    // On a battlefield crow 0 comes down on the standard's stub (when it
+    // still stands), the others on the bodies of the dead (as many as were
+    // found) and the rest on the ground among them. Crow 0 keeps to the
+    // place of the standard whatever happens to it, so if the standard is
+    // dropped (too many on the field) it only comes down to the ground
+    // there. A roost's crows take the roofs first, then the green.
+    let standard = !s.roost && k == 0;
+    let slot = if s.roost { Some(k) } else { k.checked_sub(1) };
+    let sits = slot.and_then(|j| s.perches.get(j));
+    let sat = match sits {
+        _ if standard && perch => PERCH_HEIGHT,
+        Some(p) => p.up,
+        None => 0.0,
+    };
+    let perched = sat > 0.0;
+    let spot = match sits {
+        _ if standard => s.at,
+        Some(p) => p.at,
+        None => s.at + Vec2::from_angle(TAU * h(3)) * (SPREAD * h(4).sqrt()),
     };
     let theta = TAU * h(5) + s.age * CIRCLE_SPEED * (0.8 + 0.4 * h(6));
     let radius = CIRCLE_RADIUS * (0.7 + 0.6 * h(7)) + away * 5.0;
@@ -517,9 +670,8 @@ fn bird(
     } else {
         (s.age * 0.35 + TAU * h(13)).sin().max(0.97) - 0.97
     };
-    // Its height over the ground it is above: the stub's top when it sits,
+    // Its height over the ground it is above: the top of what it sits on,
     // the circle's when aloft, blended with how far aloft it is.
-    let sat = if perched { PERCH_HEIGHT } else { 0.0 };
     let facing = if aloft > 0.5 {
         Vec2::from_angle(theta + TAU / 4.0)
     } else {
@@ -742,6 +894,85 @@ mod tests {
         // ...and the crow that was on it comes down where it sat, it does
         // not hop off sideways.
         assert!(bare.iter().any(|b| b.pos == Vec2::new(30.0, 30.0)));
+    }
+
+    fn settled(a: &Aftermath) -> Vec<Bird> {
+        let mut birds = Vec::new();
+        a.birds(flat, |_, _| true, &mut birds, usize::MAX);
+        birds
+    }
+
+    #[test]
+    fn crows_stand_on_the_bodies_and_come_down_when_one_is_gone() {
+        let mut a = after_a_wipe_out();
+        let near: Vec<Vec2> = (0..5).map(|k| Vec2::new(31.0 + k as f32, 30.5)).collect();
+        // A body too far off draws none.
+        let far = Vec2::new(30.0 + DEAD_RADIUS + 1.0, 30.0);
+        a.bodies(Vec2::new(30.0, 30.0), near.iter().copied().chain([far]));
+        a.advance(CROW_ARRIVE + 60.0, std::iter::empty());
+        let birds = settled(&a);
+        let on = |b: &Bird| near.contains(&b.pos) && b.lift == BODY_TOP;
+        assert_eq!(birds.iter().filter(|b| on(b)).count(), near.len());
+        assert!(birds.iter().all(|b| b.pos != far));
+        // Still the standard's crow on its stub.
+        assert_eq!(birds.iter().filter(|b| b.lift == PERCH_HEIGHT).count(), 1);
+        // The same bodies again add nothing; one that has sunk away leaves
+        // its crow standing on the ground where it lay.
+        a.bodies(Vec2::new(30.0, 30.0), near.iter().copied());
+        assert!(a.bodies_due(BODY_CHECK));
+        a.keep_bodies(&near[1..]);
+        let birds = settled(&a);
+        assert_eq!(birds.iter().filter(|b| on(b)).count(), near.len() - 1);
+        let gone = birds.iter().find(|b| b.pos == near[0]).unwrap();
+        assert!(gone.lift < BODY_TOP + 0.4 && gone.lift != BODY_TOP);
+        // Soldiers walking up put the body crows up with the rest.
+        for _ in 0..10 {
+            a.advance(0.2, [Vec2::new(31.0, 30.0)].into_iter());
+        }
+        assert!(settled(&a).iter().all(|b| b.aloft > 0.9));
+    }
+
+    #[test]
+    fn a_ruined_hamlet_keeps_its_roost_on_the_roofs_for_good() {
+        let mut a = Aftermath::default();
+        let centre = Vec2::new(80.0, 80.0);
+        let roofs = [(Vec2::new(85.0, 80.0), 2.1), (Vec2::new(75.0, 80.0), 1.6)];
+        a.roost(centre, 9.0, roofs.into_iter());
+        // Ruined twice is one roost.
+        a.roost(centre, 9.0, roofs.into_iter());
+        assert!(settled(&a).is_empty(), "the crows come a while after");
+        a.advance(CROW_ARRIVE + 60.0, std::iter::empty());
+        let birds = settled(&a);
+        assert_eq!(birds.len(), roofs.len() + ROOST_GROUND);
+        for (at, up) in roofs {
+            assert!(
+                birds
+                    .iter()
+                    .any(|b| b.pos == at && b.lift == up && b.aloft == 0.0)
+            );
+        }
+        // Soldiers at the edge of the hamlet put them all up; they come back.
+        for _ in 0..10 {
+            a.advance(0.2, [Vec2::new(89.5, 80.0)].into_iter());
+        }
+        assert!(settled(&a).iter().all(|b| b.aloft > 0.9));
+        // Long after any battlefield flock would have gone, they are there.
+        a.advance(FLOCK_SECONDS * 10.0, std::iter::empty());
+        let birds = settled(&a);
+        assert_eq!(birds.len(), roofs.len() + ROOST_GROUND);
+        assert_eq!(
+            birds
+                .iter()
+                .filter(|b| b.lift > 1.5 && b.aloft == 0.0)
+                .count(),
+            2
+        );
+        // A wipe-out in the ruin brings its own flock, not more roost.
+        a.wiped(handle(3), centre, Vec2::X, [90; 3], 30, None);
+        assert_eq!(a.roosts.len(), 1);
+        assert_eq!(a.flocks.len(), 1);
+        a.clear();
+        assert!(a.roosts.is_empty());
     }
 
     #[test]

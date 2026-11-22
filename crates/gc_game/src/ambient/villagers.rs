@@ -529,6 +529,11 @@ impl Villagers {
             {
                 continue;
             }
+            // A ruin has nobody left to come out.
+            if hamlets.ruined(i) {
+                self.bare.insert(i);
+                continue;
+            }
             let alarm = fights.iter().any(|f| f.distance(centre) < ALARM);
             match found(hamlets, i, alarm, &occupied) {
                 Some(g) => {
@@ -541,8 +546,10 @@ impl Villagers {
                 }
             }
         }
-        for g in self.groups.values_mut() {
-            if fights.iter().any(|f| f.distance(g.centre) < ALARM) {
+        for (&i, g) in &mut self.groups {
+            // The people of a hamlet ruined while they were about hide
+            // indoors and stay there.
+            if hamlets.ruined(i) || fights.iter().any(|f| f.distance(g.centre) < ALARM) {
                 g.alarm = CALM;
             } else {
                 g.alarm = (g.alarm - dt).max(0.0);
@@ -860,5 +867,23 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(seen(&a), seen(&b));
+    }
+
+    #[test]
+    fn the_people_of_a_ruined_hamlet_hide_for_good_and_none_are_made_in_a_ruin() {
+        let (map, sites) = crate::ambient::hamlets::tests::flat();
+        let mut h = Hamlets::new(&map);
+        let at = |k: usize| Vec2::new(sites[k].1.0 as f32 + 0.5, sites[k].1.1 as f32 + 0.5);
+        let mut v = Villagers::default();
+        run(&mut v, &h, at(0), 50, NOBODY);
+        assert!(count_seen(&v, at(0)) > 0);
+        let dead = vec![at(0); crate::ambient::hamlets::RUIN_DEAD];
+        assert_eq!(h.ruin_where(&dead), vec![0]);
+        run(&mut v, &h, at(0), 600, NOBODY);
+        assert_eq!(count_seen(&v, at(0)), 0, "still out in the ruin");
+        // Made afresh (the camera came back), a ruin has nobody.
+        let mut fresh = Villagers::default();
+        run(&mut fresh, &h, at(0), 10, NOBODY);
+        assert!(fresh.groups.values().all(|g| g.centre != at(0)));
     }
 }
