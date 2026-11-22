@@ -3445,7 +3445,7 @@ impl World {
             }
             _ => None,
         };
-        let look = |reach: Fx| {
+        let look = |reach: Fx, wide: bool| {
             let mut best: Option<(Fx, usize)> = None;
             let slack = reach + self.combat.max_step();
             self.combat.near_enemies(here, slack, owner, |j| {
@@ -3472,6 +3472,9 @@ impl World {
                 if d > reach
                     || best.is_some_and(|b| b.1 == j || (score, j) >= b)
                     || !self.vision.sees(owner, j, regs.owner[j])
+                    // Looking further, only one with open ground straight
+                    // to it: not over a wall or across deep water.
+                    || (wide && self.nav.blocks(owner, here, regs.position[j]))
                 {
                     return;
                 }
@@ -3492,12 +3495,12 @@ impl World {
             });
             best.map(|(_, j)| regs.handle(j))
         };
-        look(reach).or_else(|| match line {
+        look(reach, false).or_else(|| match line {
             Some((_, number))
                 if reach < brigades::HUNT_NEAR
                     && brigades::fights_near(regs, owner, number, here) =>
             {
-                look(brigades::HUNT_NEAR)
+                look(brigades::HUNT_NEAR, true)
             }
             _ => None,
         })

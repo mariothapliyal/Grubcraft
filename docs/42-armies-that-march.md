@@ -878,7 +878,7 @@ of the enemy's standing in line.
 2. **No one stands by.** While friends of its group fight within 25
    tiles (the same test the group halts by, now one function,
    `brigades::fights_near`), one with nothing in its own reach looks
-   as far as that, so a wing the enemy's line does not reach wheels
+   as far as that for a foe with open ground straight to it, so a wing the enemy's line does not reach wheels
    in on its flank, and one left behind when the group broke up joins
    the fight instead of walking past it.
 
@@ -904,9 +904,9 @@ the line standing, now all of it fights, and both sides lose more.
   opposite stands 26 tiles off when the group halts, goes for the next
   one in instead (10 tiles across): the halted body does not walk it on
   toward its own.
-- The wider look checks only sight and distance, like the 12-tile one:
-  across a river or a wall it may pick a foe it has no way to, and stand
-  turned aside until that foe breaks.
+- The wider look takes only a foe with open ground straight to it (not
+  over a wall or across deep water), so it misses one round a corner.
+  The 12-tile look is as before: sight and distance only.
 - Computer players give every order to one group the same brigade
   number, so friends still fighting from that group's last order count
   as fighting with its new one.
