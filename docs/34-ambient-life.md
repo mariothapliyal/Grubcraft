@@ -379,7 +379,7 @@ Workers' real traffic already wears paths, so nothing was added: workers are reg
 
 ## Stage 11 as built: herons, boar and bone jackals
 
-*2026-11-21. Game and creature pack only; a picture, nothing in the simulation, nothing hashed, saved or sent (`gc_sim`, `gc_net`, `gc_replay` and `gc_ai` are untouched).*
+*2026-11-22. Game and creature pack only; a picture, nothing in the simulation, nothing hashed, saved or sent (`gc_sim`, `gc_net`, `gc_replay` and `gc_ai` are untouched).*
 
 ### What a player sees
 
