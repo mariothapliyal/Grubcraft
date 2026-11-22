@@ -746,9 +746,10 @@ marcher arrives.
 - **Stepping back is its own small solver.** It tries a straight step,
   then squared ones, then shoulders friends, and only after 12 s
   marches back as on any order. Marching back that way from the start
-  would be one rule fewer, but measured so it pushed through
-  neighbours still stepping back themselves; worth another look before
-  stage 3 adds more crossings.
+  would be one rule fewer, but after only 4 s it already pushed
+  through neighbours still stepping back themselves (130
+  regiment-ticks of disorder in the crossing test, none at 12 s);
+  worth another look before stage 3 adds more crossings.
 - **Orders given a tick or two apart.** A regiment not yet given its
   order may make way for a moment for a friend ordered just before it
   (a computer player's orders for one army land over a few ticks). It
