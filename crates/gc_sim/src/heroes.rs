@@ -298,6 +298,7 @@ impl Heroes {
         };
         let h = &mut self.list[k];
         h.regiment = Some(r);
+        h.pending = None;
         h.at = at;
         set_level(regs, i, stats, growth, h.level);
         let full = full_hp(regs, stats, i);
@@ -370,6 +371,8 @@ impl Heroes {
             };
             let Some(i) = regs.resolve(r) else {
                 h.regiment = None;
+                // A cast it was walking to dies with it.
+                h.pending = None;
                 fall(regs, stats, units, h);
                 continue;
             };
@@ -411,8 +414,14 @@ impl Heroes {
                 Some(p) => {
                     h.u8(1 + p.slot);
                     p.target.hash_into(h);
-                    h.i32(p.toward.x.raw());
-                    h.i32(p.toward.y.raw());
+                    match p.toward {
+                        Some(t) => {
+                            h.u8(1);
+                            h.i32(t.x.raw());
+                            h.i32(t.y.raw());
+                        }
+                        None => h.u8(0),
+                    }
                 }
                 None => h.u8(0),
             }

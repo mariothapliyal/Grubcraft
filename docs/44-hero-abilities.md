@@ -123,6 +123,9 @@ Dropped (2026-11-22): Command Aura, Challenge, Wind Cut, Wanderer, Ward Talisman
   - Every effect is fixed-point and ordered by regiment index.
   - Ability damage never draws on the combat dice.
   - Everything is in the state hash: cooldowns, timed changes, stuns, zones and casts waiting on range.
+- **Walking to cast:** a hero that gets as near as it can and is still out of reach gives the cast up and says so. A new cast replaces the one it was walking to, and ends that walk. A hero that falls on its way forgets the cast, so a revived hero never walks off on an old order. An army handed to an ally casts for the ally.
+- **Within the tick:** casts that summon or raise (Fire Spirit, Spawn Brood, Swarm Tide, Raise Dead, Mass Grave) go off after the tick's dead are counted, so a summoned regiment never takes the slot of one just wiped out before its Tithe, corpses and experience are paid, and raising uses this tick's corpses. Mass Grave's regiment grows by every death in the tick, towers' and traps' too. The other casts go off before, so their kills count. A zone's pulses keep their time from the first.
+- **The field's 32 zones full:** an ability that leaves a zone (Thousand Cuts, Kitsune Storm, Leech Debt, Mass Grave) is refused before anything happens, with no cooldown spent.
 - **Bell Towers:** the Choir's Bell Tower silences faction powers near it, not hero abilities. A hero's ability is its own, as a regiment's attack is.
 - **Locked, cooling or stunned:** a cast order is still taken (in lockstep it has already left the player), and the hero does nothing; the game asks before sending, so a player only sees this when the state changed on the way.
 - **Computer players** (built, simpler than planned): every half second, each of their heroes casts the first of its two abilities, the ultimate first, that is ready and has a foe to go at.

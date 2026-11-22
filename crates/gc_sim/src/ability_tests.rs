@@ -651,3 +651,55 @@ fn raise_dead_needs_corpses_and_raises_as_many_as_lie_near_up_to_its_rank() {
     )));
     assert_eq!(w.hero_of(r).unwrap().cooling(0, w.tick_count()), 0);
 }
+
+#[test]
+fn a_new_cast_ends_the_walk_to_an_old_one_and_a_fallen_heros_walk_dies_with_it() {
+    let (mut w, r) = hero(Kit::Ronin, 6);
+    let far = CastTarget::Point(FxVec2::from_ints(64, 110));
+    assert!(cast(&mut w, r, 0, far));
+    w.tick(&[]);
+    let i = slot(&w, r);
+    assert!(w.regiments.target[i].is_some(), "walking to dash");
+    // Thousand Cuts goes off at once, and the walk to the dash ends.
+    assert!(cast(&mut w, r, 1, CastTarget::Hero));
+    assert!(w.hero_of(r).unwrap().pending.is_none());
+    assert!(w.regiments.target[i].is_none());
+
+    // A hero that falls on its way forgets the cast.
+    assert!(cast(&mut w, r, 0, far));
+    w.tick(&[]);
+    assert!(w.hero_of(r).unwrap().pending.is_some());
+    w.regiments.untouchable_left[i] = 0;
+    w.regiments.take_damage(i, u32::MAX / 2);
+    seconds(&mut w, 1);
+    let h = w.heroes().next().unwrap();
+    assert!(h.dead() && h.pending.is_none());
+}
+
+#[test]
+fn a_zones_pulses_keep_their_time_from_the_first() {
+    let (mut w, r) = hero(Kit::Onmyoji, 6);
+    let foe = spawn(&mut w, 1, LINE, 64, 80);
+    let fi = slot(&w, foe);
+    assert!(cast(
+        &mut w,
+        r,
+        1,
+        CastTarget::Point(FxVec2::from_ints(64, 84))
+    ));
+    let mut hp = w.regiments.hp_left(fi);
+    let mut hits = vec![];
+    for _ in 0..3 * TICKS_PER_SECOND {
+        let now = w.regiments.hp_left(fi);
+        if now < hp {
+            hits.push(w.tick_count());
+        }
+        hp = now;
+        w.tick(&[]);
+    }
+    assert!(hits.len() >= 2, "{hits:?}");
+    assert!(
+        hits.windows(2).all(|p| p[1] - p[0] == TICKS_PER_SECOND),
+        "{hits:?}"
+    );
+}

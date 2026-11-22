@@ -166,7 +166,7 @@ const PINNED: (u32, &[(&str, u64)]) = (
     98,
     &[
         ("conquest-evolve-tithe-1v1", 0xb1d201d26fc0c8f5),
-        ("conquest-heroes-1v1", 0x62246c7c37c180e6),
+        ("conquest-heroes-1v1", 0x8eb07979d6b23baa),
         ("conquest-ribcage-1v1", 0x9a4d3df21094528b),
         ("conquest-river-1v1", 0x84951cece3f23b03),
         ("field-1v1", 0x1080ec9c3a04a99d),

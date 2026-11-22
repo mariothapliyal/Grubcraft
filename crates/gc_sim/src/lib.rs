@@ -2254,6 +2254,7 @@ impl World {
                     .collect(&c.meters, &c.structures, &self.regiments, self.tick);
                 (c.heroes).earn(&mut self.regiments, &self.units, &c.units, &self.stances);
             }
+            self.abilities_late();
             self.raise_trained();
         }
         // What powers left on regiments wears off in any world, a copy of
