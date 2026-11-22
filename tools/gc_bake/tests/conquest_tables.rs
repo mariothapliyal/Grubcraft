@@ -120,7 +120,7 @@ fn starting_state_matches_the_economy_doc() {
         // docs/04-economy.md, "Starting state (Conquest)".
         for (name, count) in [
             ("Hands", 5),
-            ("Gnawer", 4),
+            ("Gnawer", 6),
             ("Tuner", 3),
             ("Ledger Clerk", 4),
             ("Caravan", 1),

@@ -6,7 +6,8 @@
   push to one. It runs the Linux checks GitHub CI runs on a PR: formatting,
   rules numbers, clippy, packs (when art or the bake tools changed), tests
   (including the clearance check), golden replays, the map check, benchmark
-  budgets and instruction counts. In a fresh cloud container it first
+  budgets and instruction counts, and the balance tournament (about 15
+  minutes) when the branch changes a file in `scripts/balance-paths`. In a fresh cloud container it first
   unpacks the shared build cache (`scripts/build-cache.sh`, the compiled
   third-party crates, about 30 s), so a first full run takes about 23
   minutes instead of 29; later runs are faster still.

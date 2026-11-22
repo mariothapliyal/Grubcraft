@@ -6,6 +6,8 @@
 #   scripts/pre-pr-check.sh --quick   tests only the crates this branch changed
 #   STRESS=gate scripts/pre-pr-check.sh   runs that stress scenario only
 #                                         (with --quick, adds it to the run)
+#   BALANCE=1 scripts/pre-pr-check.sh     runs the balance tournament too
+#                                         (a full run does when balance moved)
 #
 # Run it before opening a PR and before every push to one. It stops at the
 # first failure and prints the command to run again. What it leaves out, CI
@@ -25,7 +27,7 @@ quick=false
 case "${1:-}" in
   --quick) quick=true ;;
   "") ;;
-  *) sed -n '2,10p' "$0"; exit 2 ;;
+  *) sed -n '2,12p' "$0"; exit 2 ;;
 esac
 
 start=$SECONDS
@@ -133,6 +135,17 @@ if ! $quick; then
   else
     step "Benchmark instruction counts: skipped (valgrind not installed; CI runs it)"
   fi
+fi
+
+# A branch that changes unit stats, rosters, combat or the economy runs the
+# balance tournament, as its PR will (.github/workflows/balance-gate.yml).
+# BALANCE=1 runs it on any branch, BALANCE=0 skips it.
+if [ "${BALANCE:-}" = 1 ] || { ! $quick && [ "${BALANCE:-}" != 0 ] \
+    && grep -qE -f <(grep -vE '^(#|\s*$)' scripts/balance-paths) <<<"$changed"; }; then
+  step "Balance tournament (this branch moves balance)"
+  run cargo test --release -p gc_game balance_tournament -- --ignored --nocapture
+elif ! $quick; then
+  step "Balance tournament: skipped (no balance files changed; the batch runs it)"
 fi
 
 if ! $quick; then

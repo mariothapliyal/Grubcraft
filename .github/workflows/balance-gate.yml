@@ -1,0 +1,87 @@
+name: Balance gate
+
+# The balance tournament (docs/29, "Automatic balance tournament";
+# crates/gc_game/src/balance_gate.rs) on pull requests that change unit
+# stats, rosters, combat or the economy (the paths in scripts/balance-paths)
+# or carry the `balance` label. It fails when a pair of factions is clearly
+# outside 40 to 60% on both seed sets, or a faction's first army is ready a
+# minute before everyone else's. A PR that means to move balance that far
+# says why in its description and adds the `balance-accepted` label: the
+# tournament still runs and reports, but no longer fails the PR.
+# Every other PR leaves the tournament to the batch (batch.yml).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+# A push cancels the PR's older tournament. Adding or taking off any other
+# label (sim-next, say) runs in a group of its own, so it never cancels one.
+concurrency:
+  group: balance-${{ github.event.pull_request.number }}-${{ ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'balance' && github.event.label.name != 'balance-accepted') && github.run_id || 'tournament' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  decide:
+    name: Does this PR move balance?
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: check
+        env:
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # A label added or taken off reruns this only for the two
+          # balance labels, not for sim-next and the like.
+          if { [ "$ACTION" = labeled ] || [ "$ACTION" = unlabeled ]; } \
+             && [ "$LABEL" != balance ] && [ "$LABEL" != balance-accepted ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          changed=$(git diff --name-only "$(git merge-base "$BASE" HEAD)" HEAD)
+          if grep -qE -f <(grep -vE '^(#|\s*$)' scripts/balance-paths) <<<"$changed" \
+             || [[ " $LABELS " == *" balance "* ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No balance files changed and no balance label: the batch runs the tournament."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  tournament:
+    name: Balance tournament
+    needs: decide
+    if: needs.decide.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          alsa: 'true'
+      - name: Conquest on two maps and Field Battles, both seed sets
+        continue-on-error: ${{ contains(github.event.pull_request.labels.*.name, 'balance-accepted') }}
+        shell: bash
+        run: |
+          mkdir -p target/balance
+          cargo test --release -p gc_game balance_tournament -- --ignored --nocapture 2>&1 | tee target/balance/tournament.txt
+      - name: Report on the run page
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: cat target/balance/tournament.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: balance-tournament
+          path: target/balance/
+          retention-days: 30

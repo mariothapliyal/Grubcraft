@@ -144,6 +144,8 @@ mod aftermath;
 mod ambient;
 mod army_shape;
 mod atmosphere;
+#[cfg(test)]
+mod balance_gate;
 mod bridge_deck;
 mod bridge_kit;
 mod buildings;

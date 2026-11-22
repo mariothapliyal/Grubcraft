@@ -1,0 +1,13 @@
+# Files whose changes move faction balance (docs/29, "Automatic balance
+# tournament", the gate): a pull request that changes one runs the balance
+# tournament (.github/workflows/balance-gate.yml, and scripts/pre-pr-check.sh
+# before it is pushed). One extended regular expression a line, matched
+# against paths from the repository root. Other PRs that move balance (AI
+# battle code, say) add the `balance` label to run it.
+^data/units\.ron$
+^data/rosters/
+^crates/gc_sim/src/(combat|economy|morale|veterancy)\.rs$
+^crates/gc_sim/src/economy/
+^crates/gc_game/src/(roster|conquest)\.rs$
+^crates/gc_game/src/(balance_gate|field_balance)\.rs$
+^scripts/balance-paths$
