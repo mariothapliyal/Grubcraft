@@ -302,6 +302,7 @@ fn big_map_table() {
                     choice: gc_map::WILDS,
                     tiles,
                     seed,
+                    ring: 0,
                 }
                 .make();
                 let made = t0.elapsed();

@@ -2547,6 +2547,7 @@ mod tests {
             choice: gc_map::WILDS + 1,
             tiles: 512,
             seed: 3,
+            ring: 0,
         }
         .make();
         let amber = site_colour(Kind::Village).unwrap();

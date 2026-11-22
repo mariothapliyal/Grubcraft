@@ -33,12 +33,8 @@ fn lobby_map(settings: &LobbySettings, players: usize) -> Map {
             choice,
             tiles,
             seed,
-        } => FieldMap {
-            choice,
-            tiles,
-            seed,
-        }
-        .make(),
+            players,
+        } => FieldMap::new(choice, tiles, seed, usize::from(players)).make(),
         MapPreviewKey::Conquest { .. } => unreachable!("a Field Battle"),
     }
 }

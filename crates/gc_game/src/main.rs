@@ -110,7 +110,8 @@
 //! the menu.
 //!
 //! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general|warlord`
-//! starts a Field Battle against one computer player of that level;
+//! starts a Field Battle against one computer player of that level (with
+//! `--players N`, against N - 1 of them, each for themselves);
 //! `--conquest ribcage_pass|four_teeth|land-mixed|...` starts Conquest on that map (a
 //! shipped map's file or a lobby map's name), every other start held by an idle side;
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
@@ -556,6 +557,8 @@ struct Options {
     audio: bool,
     /// Start straight into a Field Battle against one AI of this level.
     battle: Option<u8>,
+    /// With `--battle`: how many play, each for themselves (2 to 6).
+    players: usize,
     /// Start straight into Conquest on this lobby Conquest map.
     conquest: Option<usize>,
     /// Open a LAN lobby at once (`--host`), or join one (`--join ADDRESS`
@@ -624,6 +627,7 @@ fn parse_args() -> Options {
         menu: None,
         audio: true,
         battle: None,
+        players: 2,
         time_of_day: None,
         sky: None,
         conquest: None,
@@ -722,6 +726,13 @@ fn parse_args() -> Options {
         let value = args.next().unwrap_or_default();
         let ok = match flag.as_str() {
             "--seed" => value.parse().map(|v| opts.seed = v).is_ok(),
+            "--players" => match value.parse() {
+                Ok(v @ 2..=6) => {
+                    opts.players = v;
+                    true
+                }
+                _ => false,
+            },
             "--map" => {
                 let def = gc_map::shipped(&value)
                     .map_or_else(|| gc_map::MapDef::load(std::path::Path::new(&value)), Ok);
@@ -910,7 +921,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--hidden-frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord [--players 2-6]] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--hidden-frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--season spring|summer|autumn|winter] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
@@ -2118,7 +2129,8 @@ impl App {
                 }
             }
             if let Some(level) = opts.battle {
-                let mut setup = battle::quick_battle(level, r.menu.settings(), opts.seed);
+                let mut setup =
+                    battle::quick_battle(level, r.menu.settings(), opts.seed, opts.players);
                 opts.set_sky(&mut setup);
                 r.start_match(MatchKind::Battle(setup));
             }
@@ -6381,11 +6393,7 @@ impl Running {
                         seed: gc_ui::lobby::conquest_map_seed(choice, r.seed),
                     }
                 } else {
-                    MapKey::Field(FieldMap {
-                        choice,
-                        tiles: r.map_tiles,
-                        seed: r.seed,
-                    })
+                    MapKey::Field(FieldMap::new(choice, r.map_tiles, r.seed, r.teams.len()))
                 };
                 Some((key, r.seed))
             }
@@ -6408,20 +6416,31 @@ impl Running {
             )),
             _ => None,
         };
-        let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.sim_nav_costs());
+        let mut nav = tagged_alloc::scope(Tag::Map, || self.heightmap.sim_nav_costs());
         if let MatchKind::Replay(r) = &kind {
             let (shown, stored) = (self.heightmap.ground(), r.setup().ground);
-            if r.map_tiles != self.heightmap.tiles
-                || r.nav != nav
+            // A replay whose map this build makes differently (another map
+            // maker's, most often) is drawn from the ground it stored, so
+            // the soldiers walk on the ground you see.
+            let differs = r.map_tiles != self.heightmap.tiles
                 || stored.heights != shown.heights
                 || stored.water_level != shown.water_level
                 || stored.cover != shown.cover
                 || (!stored.growth.is_empty() && stored.growth != shown.growth)
-                || stored.water_levels != shown.water_levels
-            {
-                map_note = Some(
-                    "This replay's map was made by another build: the ground may look different from where the soldiers walk.",
-                );
+                || stored.water_levels != shown.water_levels;
+            if differs {
+                let map = Arc::new(Map::from_ground(r.map_tiles, &stored));
+                if let Some(key) = self.map_key.take() {
+                    self.show_map(key, map);
+                    self.blocked_marks = blocked_marks(&r.nav, r.map_tiles);
+                }
+                nav.clone_from(&r.nav);
+                let older = r.header.map_maker.is_none_or(|m| m < gc_map::MAP_MAKER);
+                map_note = Some(if older {
+                    "This replay was recorded on an older map maker: its ground is drawn as it was played, without the land's colours."
+                } else {
+                    "This replay's map is made differently here: its ground is drawn as it was played, without the land's colours."
+                });
             }
         }
         let (teams, champions): (Vec<u8>, bool) = match &kind {
@@ -6663,7 +6682,16 @@ impl Running {
     /// Make the lobby map `key` names and put it on screen.
     fn use_map(&mut self, key: MapKey) {
         self.map_key = Some(key);
-        self.heightmap = make_map(key);
+        self.show_map(key, make_map(key));
+    }
+
+    /// Draw `map` as the ground, the minimap and the scenery (`key` seeds
+    /// the trees). [`Game::use_map`] gives it the map `key` makes; a replay
+    /// recorded on an older map maker gives it the map drawn from its
+    /// stored ground, and then leaves `map_key` unset so the next match
+    /// makes its own map again.
+    fn show_map(&mut self, key: MapKey, map: Arc<Map>) {
+        self.heightmap = map;
         self.decks_key = 0;
         self.wall_lines_key = 0;
         logln!(
@@ -6713,7 +6741,7 @@ impl Running {
                 &self.units.stats,
                 &self.units.factions,
                 &self.units.points,
-                terrain_view::field_starts(&self.heightmap),
+                &terrain_view::field_starts(&self.heightmap, setup.players.len()),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
                 &mut self.minds,
@@ -6780,6 +6808,7 @@ impl Running {
             header.players = replays::players(&self.parties);
             header.recorded_by = Some(me);
             header.map = Some(setup.settings.map as u8);
+            header.map_maker = Some(gc_map::MAP_MAKER);
             header.unit_names = unit_names;
         }
     }
@@ -10129,11 +10158,8 @@ impl From<MapPreviewKey> for MapKey {
                 choice,
                 tiles,
                 seed,
-            } => MapKey::Field(FieldMap {
-                choice,
-                tiles,
-                seed,
-            }),
+                players,
+            } => MapKey::Field(FieldMap::new(choice, tiles, seed, usize::from(players))),
             MapPreviewKey::Conquest {
                 choice,
                 tiles,
@@ -10626,6 +10652,7 @@ mod tests {
             choice: gc_map::MEASURED,
             tiles: 512,
             seed: 0x6772_7562,
+            ring: 0,
         };
         assert_eq!(key, MapKey::Field(wilds));
     }

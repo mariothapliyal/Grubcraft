@@ -488,4 +488,4 @@ clearing woods is the second (below).
 ## Not in this plan
 
 Water levels per tile, dams and debris (docs/39). Three- and five-player
-layouts. A new art pass for the habitats.
+layouts (built 2026-11-22 for Measured Field Battles, see [27](27-living-land.md#three-and-five-players)). A new art pass for the habitats.
