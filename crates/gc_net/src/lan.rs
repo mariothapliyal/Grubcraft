@@ -110,10 +110,13 @@ const BURST_GAP: Duration = Duration::from_millis(60);
 /// the input delay are waiting (a rejoin, or a stall).
 const CATCH_UP_AFTER: u32 = 8;
 /// Every this many turns (two seconds) a joiner looks at the fewest turns
-/// it had waiting meanwhile, and plays all but [`SPARE_KEPT`] of them
-/// ahead of its clock.
+/// it had waiting meanwhile, and plays all but [`SPARE_KEPT`] of them (or
+/// what the delay sets aside, if more) at twice the pace.
 const SPARE_EVERY: u32 = 40;
 const SPARE_KEPT: u32 = 1;
+/// More spare turns than this waiting go at twice the pace at once,
+/// without waiting for the next look.
+const BACKLOG: u32 = 2;
 
 /// What this machine runs, for the version gate and the map check.
 #[derive(Clone, Debug)]
@@ -331,7 +334,7 @@ struct ClientGame {
     /// `looked` turns played on time.
     spare: u32,
     looked: u32,
-    /// Turns to play ahead of the clock, moving it earlier.
+    /// Spare turns to play at twice the pace, moving the clock earlier.
     rush: u32,
     outbox: Vec<PlayerCommand>,
     /// Joined a match already under way (a rejoin after a restart), and
@@ -2408,6 +2411,12 @@ impl ClientGame {
         self.ready.len() as u32 > self.delay + CATCH_UP_AFTER
     }
 
+    /// Spare turns kept against a slow one: a turn, or what the host's
+    /// delay sets aside for an uneven link.
+    fn spare_kept(&self) -> u32 {
+        SPARE_KEPT.max(self.delay.saturating_sub(1))
+    }
+
     /// Start a new look at the fewest turns waiting.
     fn reset_spare(&mut self) {
         self.spare = u32::MAX;
@@ -2433,33 +2442,47 @@ fn client_turn(g: &mut ClientGame, now: Instant, length: Duration) -> Option<Vec
     }
     let late = g.due.is_none();
     let due = *g.due.get_or_insert(now);
-    let early = now < due;
-    if early && !g.behind() && g.rush == 0 {
+    if now < due && !g.behind() {
         return None;
     }
     // After a stall, don't rush the turns that piled up on the clock.
     let stalled = now > due + length * 2;
-    if early {
-        // Catching up or draining spare turns: the clock stays, so it
-        // moves a turn earlier.
-        g.rush = g.rush.saturating_sub(1);
+    if now < due {
+        // Far behind: as fast as it can, and the clock stays, so it moves
+        // a turn earlier.
     } else {
-        g.due = Some(if stalled { now } else { due } + length);
+        let base = if stalled { now } else { due };
+        // Spare turns play at twice the pace, so the clock moves earlier
+        // half a turn at a time, at most one turn a frame.
+        let step = if g.rush > 0 { length / 2 } else { length };
+        g.rush = g.rush.saturating_sub(1);
+        g.due = Some(base + step);
     }
     g.next_turn += 1;
     let turn = g.ready.pop_front();
+    let waiting = g.ready.len() as u32;
+    let extra = waiting.saturating_sub(g.spare_kept());
     if late || stalled {
+        // Turns that came in a burst are spare already.
+        g.rush = extra;
         g.reset_spare();
+    } else if extra > BACKLOG {
+        // A backlog (a stall caught up, the end of a rejoin): off at once.
+        g.rush = g.rush.max(extra);
     } else {
-        g.spare = g.spare.min(g.ready.len() as u32);
+        g.spare = g.spare.min(waiting);
         g.looked += 1;
         if g.looked >= SPARE_EVERY {
-            g.rush = g.spare.saturating_sub(SPARE_KEPT);
+            g.rush = g.spare.saturating_sub(g.spare_kept());
             g.reset_spare();
         }
     }
     if g.rejoining {
-        g.kept_up = if g.behind() { 0 } else { g.kept_up + 1 };
+        g.kept_up = if waiting > g.delay + 1 {
+            0
+        } else {
+            g.kept_up + 1
+        };
         g.rejoining = g.kept_up < CAUGHT_UP_TURNS;
     }
     turn

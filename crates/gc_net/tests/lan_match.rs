@@ -1264,7 +1264,7 @@ fn the_host_knows_which_sides_nobody_commands() {
     assert_eq!(done, m.worlds[1].tick_count());
     assert!(total >= back, "{total} of {back}");
     assert_eq!(m.lans[2].rejoin_progress(), None);
-    m.run(&[], back + 40, Match::turns(back + 40));
+    m.run(&[], back + 80, Match::turns(back + 80));
     m.settle();
     assert_eq!(m.lans[0].uncommanded(), []);
     assert_eq!(m.lans[1].rejoin_progress(), None);

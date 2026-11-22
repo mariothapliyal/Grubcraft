@@ -29,27 +29,27 @@ Classic lockstep makes every player wait for every other player's input each tur
 
 The host never waits for clients. A client whose packet arrives late only has *its own* command land a turn later. A client that falls behind (slow CPU, bad Wi-Fi burst) catches up by simulating buffered turns slightly faster; only if a client falls far behind does the host gently slow the turn rate for everyone (time dilation) instead of freezing the game.
 
-The host's own commands go through the same delay, so hosting gives no advantage.
+The host's own commands go through the same delay, but they skip the trip to the host and back, so they reach play about a round trip sooner than a joiner's (see Order lag below).
 
 ### Input delay
 - `D` adapts to measured conditions: `D = ceil((2 × jitter + 10 ms) / 50 ms)` for the most uneven link, from 1 to 8 turns. Jitter is the smoothed mean deviation of the round trip (the way TCP keeps it). Every match starts at 2 turns. *Until 2026-11-22 the formula also added half the round trip, which bought nothing:* a joiner's clock starts when the first turns reach it, so the trip is already behind it, and only a turn slower than those first ones eats into its buffer (see Order lag below).
 - On a steady link, however far (wired LAN, Wi-Fi, Tailscale direct or relayed), that is 1 turn (50 ms). Only a link whose trips vary a lot, such as a poor mobile connection, needs 2 or more. The host looks again every second and moves the delay by one turn at a time. It goes up as soon as it is too short, and down only after three looks in a row found it longer than needed.
-- **A joiner's clock is a jitter buffer** (`client_turn` in `lan.rs`): it plays one turn per 50 ms while turns are waiting. When a turn is due and hasn't come, the clock moves to when it does, so the next ones, as slow, come in time. Every 2 seconds it looks at the fewest turns it had waiting meanwhile and plays all but one of them ahead of its clock, so a network that got faster, or a stall it has caught up on, doesn't leave it further behind the host than it needs to be. With more than 8 turns over the delay waiting (a rejoin, or a long stall) it catches up as fast as it can.
+- **A joiner's clock is a jitter buffer** (`client_turn` in `lan.rs`): it plays one turn per 50 ms while turns are waiting. When a turn is due and hasn't come, the clock starts again when it does, so the next ones, as slow, come in time. It keeps one spare turn waiting against a slow one (or delay minus one, if the host raised the delay for an uneven link), and plays turns beyond that at twice the pace, at most one a frame, so the world speeds up briefly instead of jumping: at once for a backlog of more than two (a stall caught up, turns that came in a burst, the end of a rejoin), and otherwise when the fewest turns waiting over the last 2 seconds were more than it keeps, so a network that got faster doesn't leave it further behind the host than it needs to be. With more than 8 turns over the delay waiting (a rejoin, or a long stall) it catches up as fast as it can.
 - **Local feedback hides the delay:** the moment you click, you hear the unit acknowledge, see the move marker, the formation preview and the selection flash. Units start moving 50 to 100 ms later, which feels instant in an RTS.
 
 ### Order lag
 
-Measured 2026-11-22 (`crates/gc_net/tests/order_lag.rs`; `cargo test -p gc_net --test order_lag -- --ignored --nocapture` prints the table). A host and one joiner run the real `Lan` code with the game's frame loop (60 frames a second: receive, send the frame's orders, then play every due turn) on the in-memory network, each clicking an order about every 0.7 s for two minutes. The lag runs from the click to the frame that simulates the tick carrying the order out, on the machine that gave it; drawing that frame adds up to one more frame. The one-way times are guesses at each kind of link (Tailscale direct within New Zealand is roughly 10 to 30 ms each way; through a relay in Sydney, 40 to 70 ms). Hitches count frames where the joiner had a turn due and none to play, over the last 115 s.
+Measured 2026-11-22 (`crates/gc_net/tests/order_lag.rs`; `cargo test -p gc_net --test order_lag -- --ignored --nocapture` prints the table). A host and one joiner run the real `Lan` code with the game's frame loop (60 frames a second: receive, send the frame's orders, then play every due turn) on the in-memory network, each clicking an order about every 0.7 s for two minutes. The lag runs from the click to the frame that simulates the tick carrying the order out, on the machine that gave it; drawing that frame adds up to one more frame. The one-way times are guesses at each kind of link (Tailscale direct within New Zealand is roughly 10 to 30 ms each way; through a relay in Sydney, 40 to 70 ms). Hitches count turn slots the joiner missed (a turn due and none come) and frames where it played two turns at once, over the last 115 s.
 
 | Link | One way | Before: delay, host / joiner lag (mean) | After: delay, host / joiner lag (mean, p95) | Hitches after |
 |---|---|---|---|---|
-| Same computer | 0-1 ms | 1 turn, 72 / 105 ms | 1 turn, 73 / 90 ms (97 / 115) | 0 |
-| Home Wi-Fi | 2-8 ms, 1% lost | 1 turn, 76 / 107 ms | 1 turn, 74 / 100 ms (96 / 126) | 0 |
-| Tailscale, same city | 8-16 ms | 1 turn, 78 / 126 ms | 1 turn, 74 / 70 ms (96 / 98) | 0 |
-| Tailscale, across NZ | 15-30 ms, 1% lost | 2 turns, 123 / 182 ms | 1 turn, 77 / 145 ms (100 / 169) | 0 |
-| Tailscale relay (Sydney) | 40-70 ms, 1% lost | 3 turns, 152 / 292 ms | 1 turn, 75 / 227 ms (96 / 257) | 1 |
-| Poor link | 80-160 ms, 3% lost | 5 turns, 234 / 481 ms | 2 turns, 123 / 370 ms (148 / 424) | 2 |
-| Across NZ, then relayed halfway | 15-30, then 40-70 ms | 3 turns, 144 / 222 ms | 1 turn, 77 / 174 ms (100 / 230) | 1 |
+| Same computer | 0-1 ms | 1 turn, 72 / 105 ms | 1 turn, 73 / 64 ms (97 / 95) | 0 |
+| Home Wi-Fi | 2-8 ms, 1% lost | 1 turn, 76 / 107 ms | 1 turn, 74 / 111 ms (96 / 134) | 0 |
+| Tailscale, same city | 8-16 ms | 1 turn, 78 / 126 ms | 1 turn, 74 / 95 ms (96 / 129) | 0 |
+| Tailscale, across NZ | 15-30 ms, 1% lost | 2 turns, 123 / 182 ms | 1 turn, 77 / 140 ms (100 / 169) | 1 |
+| Tailscale relay (Sydney) | 40-70 ms, 1% lost | 3 turns, 152 / 292 ms | 1 turn, 75 / 229 ms (96 / 257) | 0 |
+| Poor link | 80-160 ms, 3% lost | 5 turns, 234 / 481 ms | 2 turns, 123 / 372 ms (148 / 424) | 2 |
+| Across NZ, then relayed halfway | 15-30, then 40-70 ms | 3 turns, 144 / 222 ms | 1 turn, 77 / 168 ms (100 / 230) | 1 |
 
 Before, no row hitched, at the cost of a delay that grew with distance. Where the lag goes now:
 

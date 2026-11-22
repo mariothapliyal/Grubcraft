@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use common::{STEP, join, lan, pass, profile};
 use gc_fixed::{Fx, FxVec2, Pcg32};
-use gc_net::Lan;
 use gc_net::net::{MemoryNet, Net};
+use gc_net::{Lan, TURN};
 use gc_sim::{Command, PlayerCommand, RegimentHandle};
 use gc_ui::lobby::{LobbySettings, NetEvent, Network, SlotEdit};
 
@@ -93,8 +93,9 @@ struct Lag {
     joiner: Vec<u64>,
     /// The input delay the match settled on, in turns.
     delay: u32,
-    /// Frames, after the first five seconds of measuring, where the
-    /// joiner had a turn due but none had come: its world hitched.
+    /// After the first five seconds of measuring, turn slots the joiner
+    /// missed (a turn due and none come) and frames where it played two
+    /// turns at once: its world hitched or jumped.
     hitches: u32,
 }
 
@@ -136,13 +137,16 @@ impl Machine {
         self.sent.append(&mut self.clicked);
         self.lan.submit(orders);
         while let Some(turn) = self.lan.next_turn(now_net) {
-            // Frames come every 17 ms and turns every 50: a gap of four
-            // frames means one went by with a turn due and none to play.
-            if let Some(last) = self.last_turn
-                && measuring
-                && now - last >= FRAME * 4
-            {
-                self.hitches += 1;
+            if measuring {
+                // Frames come every 17 ms and turns every 50, so a gap of
+                // four frames or more missed a turn slot for each 50 ms
+                // over 17; two turns in one frame jump.
+                let gap = self.last_turn.map_or(Duration::ZERO, |last| now - last);
+                if gap >= FRAME * 4 {
+                    self.hitches += ((gap - FRAME) / TURN.as_millis() as u32).as_millis() as u32;
+                } else if gap.is_zero() && self.last_turn.is_some() {
+                    self.hitches += 1;
+                }
             }
             self.last_turn = Some(now);
             for c in &turn {
