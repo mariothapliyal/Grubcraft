@@ -1314,9 +1314,15 @@ fn the_host_knows_which_sides_nobody_commands() {
     m.run(&[], back / 2, Match::turns(back));
     assert!(m.worlds[1].tick_count() < back);
     assert_eq!(m.lans[0].uncommanded(), [1]);
+    // Alex's game shows how far it has caught up; Sam's shows nothing.
+    let (done, total) = m.lans[1].rejoin_progress().expect("catching up");
+    assert_eq!(done, m.worlds[1].tick_count());
+    assert!(total >= back, "{total} of {back}");
+    assert_eq!(m.lans[2].rejoin_progress(), None);
     m.run(&[], back + 40, Match::turns(back + 40));
     m.settle();
     assert_eq!(m.lans[0].uncommanded(), []);
+    assert_eq!(m.lans[1].rejoin_progress(), None);
     assert!(m.same_worlds());
     assert_eq!(m.desyncs(), []);
 }
