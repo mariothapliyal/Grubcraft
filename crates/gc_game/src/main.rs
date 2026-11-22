@@ -332,6 +332,11 @@ const ARMY_POLE: [f32; 3] = [0.25, 7.0, 0.25];
 const ARMY_FLAG: [f32; 3] = [3.2, 2.0, 0.2];
 /// A regiment whose volley left this many ticks ago or less is shooting.
 const SHOOTING_TICKS: u32 = 24;
+/// Control group `n`'s name, as the HUD shows it: key 0 is group 10.
+fn army_label(n: usize) -> usize {
+    (n + 9) % 10 + 1
+}
+
 /// A standard at `pos`: a pole, and a flag of `color` flying from its
 /// top to the right of `facing`. Gives the flag's middle and how high its
 /// foot is lifted, to mark it.
@@ -2975,6 +2980,15 @@ impl Running {
         self.plan_order(order);
         if let Some((n, army)) = self.army_plan.take() {
             self.armies[n] = Some(army);
+        } else {
+            // Ordered other than as a whole army, they leave their places.
+            for army in self.armies.iter_mut().flatten() {
+                for h in &mut army.held {
+                    if h.is_some_and(|h| self.selected.contains(&h)) {
+                        *h = None;
+                    }
+                }
+            }
         }
         self.send_planned(hunt, queue);
     }
@@ -3332,14 +3346,15 @@ impl Running {
     /// Alt+n sends the selection to join army n, n recalls it (Shift adds
     /// it), and n twice quickly centres the camera on it.
     fn control_group(&mut self, n: usize) {
+        if self.input.command && self.input.shift {
+            self.lock_army(n);
+            return;
+        }
         if self.input.command {
             self.control_groups[n].clear();
             self.control_groups[n].extend_from_slice(&self.selected);
-            let was = self.armies[n].take();
-            if self.input.shift {
-                self.lock_army(n);
-            } else if was.is_some() {
-                self.say(format!("Group {} saved: no longer an army.", n));
+            if self.armies[n].take().is_some() {
+                self.say(format!("Group {} saved: no longer an army.", army_label(n)));
             }
             return;
         }
@@ -3374,8 +3389,9 @@ impl Running {
         }
     }
 
-    /// Ctrl/Cmd+Shift+n: lock group n (just saved from the selection) as
-    /// an army, keeping the shape it stands in now for its group orders.
+    /// Ctrl/Cmd+Shift+n: save the selection as group n and lock it as an
+    /// army, keeping the shape it stands in now for its group orders. A
+    /// refusal leaves group n as it was.
     fn lock_army(&mut self, n: usize) {
         if self.watching.is_some() {
             self.say("That is off while you watch a replay.".into());
@@ -3386,25 +3402,31 @@ impl Running {
             self.say("Select two or more regiments to make an army.".into());
             return;
         };
+        self.control_groups[n].clear();
+        self.control_groups[n].extend_from_slice(&self.selected);
         self.armies[n] = Some(army);
         self.ui_sound(sounds::UiSound::Select);
         self.say(format!(
-            "Army {n}: its {} regiments keep this shape on every group order. Alt+{n} sends others to join it.",
+            "Army {}: its {} regiments keep this shape on every group order. Alt+{n} sends others to join it.",
+            army_label(n),
             self.selected.len()
         ));
     }
 
     /// The army the selection is, all of it and nothing else, if any.
     fn army_selected(&self) -> Option<usize> {
-        if self.selected.len() < 2 {
+        let regiments = &self.world.regiments;
+        let selected = (self.selected.iter())
+            .filter(|&&h| regiments.get(h).is_some())
+            .count();
+        if selected < 2 {
             return None;
         }
-        let regiments = &self.world.regiments;
         (0..self.armies.len()).find(|&n| {
             let mut alive =
                 (self.control_groups[n].iter()).filter(|&&h| regiments.get(h).is_some());
             self.armies[n].is_some()
-                && alive.clone().count() == self.selected.len()
+                && alive.clone().count() == selected
                 && alive.all(|h| self.selected.contains(h))
         })
     }
@@ -3419,7 +3441,8 @@ impl Running {
         }
         let Some(mut army) = self.armies[n].clone() else {
             self.say(format!(
-                "Group {n} is not an army: Ctrl+Shift+{n} makes the selection one."
+                "Group {} is not an army: Ctrl+Shift+{n} makes the selection one.",
+                army_label(n)
             ));
             return;
         };
@@ -3430,7 +3453,10 @@ impl Running {
             .filter(|&h| regiments.get(h).is_some_and(|r| r.owner == side))
             .collect();
         if newcomers.is_empty() {
-            self.say(format!("Select regiments to send to army {n}."));
+            self.say(format!(
+                "Select regiments to send to army {}.",
+                army_label(n)
+            ));
             return;
         }
         let members: Vec<RegimentHandle> = (self.control_groups[n].iter())
@@ -3438,6 +3464,17 @@ impl Running {
             .copied()
             .collect();
         self.fill_group_with(&members);
+        // An army on the march is joined where it is going.
+        for m in self
+            .group
+            .iter_mut()
+            .filter(|m| !newcomers.contains(&m.handle))
+        {
+            if let Some(goal) = self.world.goal(m.handle) {
+                m.position = goal;
+                m.facing = self.world.goal_facing(m.handle).unwrap_or(m.facing);
+            }
+        }
         let brigade = if newcomers.len() > 1 {
             self.next_brigade()
         } else {
@@ -3445,17 +3482,22 @@ impl Running {
         };
         self.group_commands.clear();
         if !army.join(&mut self.group, brigade, &mut self.group_commands) {
-            self.say(format!("Army {n} has no regiment left in its places."));
+            self.say(format!(
+                "Army {} is out of its shape: order it as a whole once, then send others to join it.",
+                army_label(n)
+            ));
             return;
         }
+        battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
         self.armies[n] = Some(army);
         self.control_groups[n].extend_from_slice(&newcomers);
         let k = newcomers.len();
         self.selected = newcomers;
         self.send_planned(false, false);
         self.say(format!(
-            "Sent {k} {} to join army {n}.",
-            buildings::plural(k, "regiment", "regiments")
+            "Sent {k} {} to join army {}.",
+            buildings::plural(k, "regiment", "regiments"),
+            army_label(n)
         ));
     }
 
@@ -7055,8 +7097,9 @@ impl Running {
             let (mid, lift) =
                 push_standard(&mut self.instances, at, facing, pole, flag, [cr, cg, cb]);
             // Its number, in bars down the flag.
-            let step = flag[1] / (n as f32 + 1.0);
-            for k in 0..n {
+            let bars = army_label(n);
+            let step = flag[1] / (bars as f32 + 1.0);
+            for k in 0..bars {
                 self.instances.push(BoxInstance {
                     pos: mid.to_array(),
                     facing: facing.to_array(),
@@ -7108,6 +7151,9 @@ impl Running {
             let own = (self.world.goal(h))
                 .filter(|&g| brigade.is_some() && way_end != Some(g))
                 .map(|g| (from_fx_vec(g), r.hunting, true));
+            // Its place is where the way drawn already ends: plate it there.
+            let shared_end = (route.is_empty() && own.is_none() && way_end.is_some())
+                .then_some((from, r.hunting, true));
             let queue = self.world.regiments.queued(h).unwrap_or_default();
             let marches = queue.iter().filter_map(|step| match step {
                 gc_sim::orders::Step::Move { target, hunt, .. } => {
@@ -7125,6 +7171,7 @@ impl Running {
                         own.is_none() && k + 1 == route.len(),
                     )
                 })
+                .chain(shared_end)
                 .chain(own)
                 .chain(marches);
             for (to, hunting, end) in legs {
@@ -9989,8 +10036,8 @@ impl Running {
     fn army_shape_line(&self) -> String {
         if let Some(n) = self.army_selected() {
             return format!(
-                "Army {}: group orders keep its shape. Ctrl+{0} unlocks it, Alt+{0} sends others to join it",
-                n
+                "Army {}: group orders keep its shape. Ctrl+{n} unlocks it, Alt+{n} sends others to join it",
+                army_label(n)
             );
         }
         format!(

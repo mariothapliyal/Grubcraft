@@ -934,9 +934,12 @@ the line standing, now all of it fights, and both sides lose more.
   army `number` to join it. An army remembers which regiment holds each
   place in its shape (`arrange::Army`: each holds its own when locked,
   and each order to the army hands out the places afresh, left to right
-  by kind). Where the army stands now is fitted from where the holders
-  stand (`Army::standing`), so it is found again after the army has
-  moved, turned or lost regiments. The holders keep their places and are
+  by kind; one ordered any other way leaves its place). Where the army
+  stands now is fitted from where the holders stand, or are marching to
+  (`Army::standing`), so it is found again after the army has moved,
+  turned or lost regiments, and an army on the march is joined where it
+  is going. An army whose regiments all left their places (an `Alt` drag,
+  say) says so, and is joined again once ordered as a whole. The holders keep their places and are
   not ordered; each newcomer takes a free place of its kind (one left by
   a regiment lost), else any free place, else stands behind
   (`Army::join`), sent as one brigade if there are several. They join the
@@ -945,7 +948,8 @@ the line standing, now all of it fights, and both sides lose more.
   selected and sent with `Alt+number`.
 - **One standard.** Each army of the side you command shows one tall pole
   over its middle with a wide flag in your colour and as many pale bars
-  across it as its number key (none for 0), growing as the Commander View
+  across it as its group's number (ten for key 0, the HUD's group 10),
+  growing as the Commander View
   pulls back. Each regiment keeps its own morale banner.
 - **One route.** Regiments marching in one brigade show their shared way
   once (from the first of them), with a short leg from its end to each
