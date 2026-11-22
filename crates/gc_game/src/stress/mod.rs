@@ -36,6 +36,7 @@ mod forest;
 mod forest_pass;
 mod gate;
 mod gated_towns;
+mod heroes;
 mod mountain;
 mod new_orders;
 mod orders;
@@ -94,6 +95,7 @@ const SCENARIOS: &[Scenario] = &[
     brigade::BIG_GATE,
     evolve_tithe::SCENARIO,
     charges::SCENARIO,
+    heroes::SCENARIO,
     dropped::SCENARIO,
 ];
 

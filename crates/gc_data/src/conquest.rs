@@ -21,7 +21,7 @@ pub const POWERS_PATH: &str = "data/powers";
 pub const BUILDING_SCHEMA: u32 = 15;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
-pub const CONQUEST_UNIT_SCHEMA: u32 = 7;
+pub const CONQUEST_UNIT_SCHEMA: u32 = 8;
 /// Bump whenever [`PowerRecord`]'s layout or meaning changes.
 pub const POWER_SCHEMA: u32 = 4;
 /// An index field that names nothing.
@@ -304,10 +304,12 @@ pub enum Class {
     Siege = 8,
     Support = 9,
     Monster = 10,
+    /// A hero (docs/43-heroes.md): one levelling character.
+    Hero = 11,
 }
 
 impl Class {
-    pub const ALL: [Class; 11] = [
+    pub const ALL: [Class; 12] = [
         Class::Worker,
         Class::Light,
         Class::Spear,
@@ -319,6 +321,7 @@ impl Class {
         Class::Siege,
         Class::Support,
         Class::Monster,
+        Class::Hero,
     ];
 
     pub fn from_u8(v: u8) -> Option<Class> {
@@ -343,11 +346,15 @@ pub const UNIT_HATCHES: u16 = 1 << 10;
 pub const UNIT_CONSUMED: u16 = 1 << 11;
 /// Choir: a worker that builds and mends but does not gather (schema 3).
 pub const UNIT_BUILDS_ONLY: u16 = 1 << 12;
-const UNIT_FLAGS: u16 = (1 << 13) - 1;
+/// A hero (schema 8, docs/43-heroes.md): hired once at its building,
+/// levels up, and is revived when it falls.
+pub const UNIT_HERO: u16 = 1 << 13;
+const UNIT_FLAGS: u16 = (1 << 14) - 1;
 
 /// One unit a Conquest player can field: its battle stats exactly as a
-/// `data/units.ron` entry bakes, and how it is raised. Heroes are not in
-/// this table.
+/// `data/units.ron` entry bakes, and how it is raised. The heroes come
+/// after every faction's other units (schema 8), so adding them moved no
+/// unit's place.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
 pub struct ConquestUnitRecord {
@@ -384,6 +391,12 @@ pub struct ConquestUnitRecord {
     /// finished, for a regiment to cocoon into it (the Chrysalis Chamber),
     /// as an index into the building table; [`NONE`] otherwise.
     pub unlocked_at: u16,
+    /// A hero's growth each level past the first (schema 8): hit points
+    /// per model, melee damage and missile damage. 0 for others.
+    pub level_hp: u16,
+    pub level_melee: u16,
+    pub level_missile: u16,
+    pub reserved: u16,
 }
 
 impl ConquestUnitRecord {
@@ -401,6 +414,11 @@ impl ConquestUnitRecord {
 
     pub fn worker(&self) -> bool {
         self.class() == Class::Worker
+    }
+
+    /// Whether it is a hero.
+    pub fn hero(&self) -> bool {
+        self.flags & UNIT_HERO != 0
     }
 
     /// Whether it shuttles cargo between a main building and a trade post
@@ -787,6 +805,23 @@ pub fn validate_conquest_unit(
     if u.trained_at != NONE && u.train_ticks == 0 {
         return Err("a trained unit needs a train time");
     }
+    if u.hero() != (u.class() == Class::Hero) {
+        return Err("a hero has the hero class and flag, and nothing else has either");
+    }
+    if !u.hero() && (u.level_hp | u.level_melee | u.level_missile) != 0 {
+        return Err("only a hero grows by level");
+    }
+    if u.hero() && (u.trained_at == NONE || u.stats.models != 1) {
+        return Err("a hero is one model, hired at a building");
+    }
+    if (u.level_melee > 0 && u.stats.melee_damage == 0)
+        || (u.level_missile > 0 && u.stats.missile_damage == 0)
+    {
+        return Err("a hero grows only the damage it has");
+    }
+    if u.reserved != 0 {
+        return Err("reserved is 0");
+    }
     Ok(())
 }
 
@@ -799,7 +834,7 @@ mod tests {
         // Changing these means bumping the schemas.
         assert_eq!(size_of::<BuildingRecord>(), 72);
         assert_eq!(align_of::<BuildingRecord>(), 4);
-        assert_eq!(size_of::<ConquestUnitRecord>(), 100);
+        assert_eq!(size_of::<ConquestUnitRecord>(), 108);
         assert_eq!(align_of::<ConquestUnitRecord>(), 4);
         assert_eq!(size_of::<PowerRecord>(), 48);
         assert_eq!(align_of::<PowerRecord>(), 4);

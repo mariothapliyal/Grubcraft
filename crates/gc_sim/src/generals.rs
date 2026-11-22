@@ -151,7 +151,6 @@ impl Generals {
         if tick.is_multiple_of(TICKS_PER_SECOND) {
             self.pick_due(regs, units, tick);
         }
-        regs.led.fill(false);
         for p in 0..MAX_PARTIES {
             let Some(mut g) = self.list[p] else {
                 continue;
@@ -306,13 +305,14 @@ fn enemy_in_sight(
     seen
 }
 
-/// Regiment `i`'s side's regiments within [`LEAD_TILES`] of it (its own
-/// included).
-fn each_led(
+/// Regiment `i`'s side's regiments within `tiles` of it (its own
+/// included): [`LEAD_TILES`] for a general.
+pub(crate) fn each_led(
     regs: &Regiments,
     combat: &Combat,
     stances: &Stances,
     i: usize,
+    tiles: i32,
     mut f: impl FnMut(usize),
 ) {
     let owner = regs.owner[i];
@@ -320,7 +320,7 @@ fn each_led(
     combat.each_near(
         &at,
         regs.position[i],
-        Fx::from_int(LEAD_TILES),
+        Fx::from_int(tiles),
         Whose::Friends(owner),
         |j| {
             if regs.owner[j] == owner {
@@ -333,7 +333,7 @@ fn each_led(
 /// Regiment `i`'s general leads his side's regiments near him this tick.
 fn lead(regs: &mut Regiments, combat: &Combat, stances: &Stances, i: usize) {
     let mut led = core::mem::take(&mut regs.led);
-    each_led(regs, combat, stances, i, |j| led[j] = true);
+    each_led(regs, combat, stances, i, LEAD_TILES, |j| led[j] = true);
     regs.led = led;
 }
 
@@ -343,7 +343,7 @@ fn lead(regs: &mut Regiments, combat: &Combat, stances: &Stances, i: usize) {
 fn speak(regs: &mut Regiments, combat: &Combat, stances: &Stances, i: usize, tick: u32) {
     let until = tick + SPEECH_SECONDS * TICKS_PER_SECOND;
     let mut heard = core::mem::take(&mut regs.heartened_until);
-    each_led(regs, combat, stances, i, |j| heard[j] = until);
+    each_led(regs, combat, stances, i, LEAD_TILES, |j| heard[j] = until);
     regs.heartened_until = heard;
     let owner = regs.owner[i];
     for j in 0..regs.alive.len() {
@@ -381,7 +381,8 @@ fn fall(regs: &mut Regiments, units: &[UnitStats], stances: &Stances, g: &Genera
     }
 }
 
-fn near(a: FxVec2, b: FxVec2, tiles: i32) -> bool {
+/// Whether `a` and `b` are within `tiles` of each other.
+pub(crate) fn near(a: FxVec2, b: FxVec2, tiles: i32) -> bool {
     let r = Fx::from_int(tiles).raw() as u64;
     (a - b).length_sq_raw() <= r * r
 }

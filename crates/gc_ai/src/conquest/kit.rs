@@ -112,9 +112,11 @@ impl Kit {
         self.unit(id).is_some_and(|u| u.unit.worker)
     }
 
-    /// Whether `id` is one of this faction's fighting regiment types.
+    /// Whether `id` is one of this faction's fighting regiment types, or
+    /// one of its heroes, who march and fight with the army.
     pub fn is_fighter(&self, id: UnitId) -> bool {
-        self.unit(id).is_some_and(|u| u.fighter)
+        self.unit(id)
+            .is_some_and(|u| u.fighter || u.unit.hero.is_some())
     }
 
     /// The unit type that trades: the Concord's Caravan.
@@ -266,6 +268,14 @@ impl Kit {
     /// The forms a regiment of `from` can evolve into.
     pub fn evolutions(&self, from: UnitId) -> impl Iterator<Item = &KitUnit> + '_ {
         (self.units.iter()).filter(move |u| u.unit.evolves_from == Some(from))
+    }
+
+    /// The building that hires the faction's heroes.
+    pub fn hero_hall(&self) -> Option<&KitBuilding> {
+        let at = (self.units.iter())
+            .find(|u| u.unit.hero.is_some())
+            .and_then(|u| u.unit.trained_at)?;
+        self.building(at)
     }
 
     /// The building that collects Tithe: the Concord's Reliquary.

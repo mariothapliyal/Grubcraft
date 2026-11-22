@@ -33,7 +33,7 @@ const STEPS: [Step; 6] = [
     Step {
         title: "Train",
         scene: train,
-        text: "Select a finished building and press a button to hire regiments. Up to five wait in its queue.",
+        text: "Select a finished building and press a button to hire regiments (five can queue). Heroes come from your hero building.",
     },
     Step {
         title: "Command",

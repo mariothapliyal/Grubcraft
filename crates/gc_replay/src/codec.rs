@@ -237,6 +237,16 @@ impl Writer {
         self.var(u.evolves_from.map_or(0, |b| u64::from(b) + 1));
         self.var(u.unlocked_at.map_or(0, |b| u64::from(b) + 1));
         self.bool(u.undead);
+        // Format 56: heroes.
+        match u.hero {
+            Some(g) => {
+                self.bool(true);
+                self.var(u64::from(g.hp));
+                self.var(u64::from(g.melee));
+                self.var(u64::from(g.missile));
+            }
+            None => self.bool(false),
+        }
     }
 
     /// A caravan's trade post (format 24 on).
@@ -980,6 +990,13 @@ impl<'a> Reader<'a> {
             u.evolves_from = self.maybe_id()?;
             u.unlocked_at = self.maybe_id()?;
             u.undead = self.bool()?;
+        }
+        if format >= 56 && self.bool()? {
+            u.hero = Some(gc_sim::heroes::HeroGrowth {
+                hp: self.var_as()?,
+                melee: self.var_as()?,
+                missile: self.var_as()?,
+            });
         }
         Some(u)
     }

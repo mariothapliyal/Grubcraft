@@ -253,7 +253,8 @@ mod tests {
                     .map(move |i| (i, f))
             })
             .collect();
-        assert_eq!(all.len(), 38);
+        // 38 troops and the 12 heroes (docs/43).
+        assert_eq!(all.len(), 50);
         for (n, &(unit, faction)) in all.iter().enumerate() {
             // The foe: the next listed troop of another faction.
             let foe = all

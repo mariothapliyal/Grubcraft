@@ -285,6 +285,12 @@ pub enum Refusal {
     /// A hiring with no hamlet near where it was cast that no enemy holds
     /// (see [`crate::tithe`]).
     NoHamlet,
+    /// A hero its owner already has, standing or in training (see
+    /// [`crate::heroes`]).
+    HeroTaken,
+    /// As many heroes as its owner's tier allows (one a tier), counting
+    /// the fallen and those in training.
+    HeroLimit,
 }
 
 /// Bits of [`BuildingStats::flags`].

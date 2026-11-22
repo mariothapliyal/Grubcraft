@@ -46,14 +46,20 @@ pub fn rank_damage_percent(rank: u8) -> u64 {
     100 + RANK_DAMAGE_PERCENT * u64::from(rank)
 }
 
-/// Percent of its usual damage regiment `i` deals for its rank.
+/// Percent of its usual melee damage regiment `i` deals for its rank, or
+/// for its level if it is a hero (see [`crate::heroes`]).
 pub(crate) fn damage_percent(regs: &Regiments, i: usize) -> u64 {
-    rank_damage_percent(rank_of(regs, i))
+    rank_damage_percent(rank_of(regs, i)) + u64::from(regs.melee_bonus[i])
+}
+
+/// [`damage_percent`] for its volleys.
+pub(crate) fn missile_percent(regs: &Regiments, i: usize) -> u64 {
+    rank_damage_percent(rank_of(regs, i)) + u64::from(regs.missile_bonus[i])
 }
 
 /// Regiment `killer` killed `men` soldiers of unit `victim`, with a volley
 /// if `shot`: their hit points, in thousandths of its own full hit points
-/// (half for a volley), go to its experience.
+/// (half for a volley), go to its experience. A hero gains no ranks.
 pub(crate) fn credit(
     regs: &mut Regiments,
     units: &[UnitStats],
@@ -62,6 +68,10 @@ pub(crate) fn credit(
     men: u16,
     shot: bool,
 ) {
+    // Heroes have levels instead (see [`crate::heroes`]).
+    if regs.hero_level[killer] > 0 {
+        return;
+    }
     let own = u64::from(regs.full_hp(killer, &units[regs.unit[killer] as usize]));
     let theirs = u64::from(units[victim as usize].hp_per_model);
     // Rounded, so a band that kills its own worth man by man gets there.

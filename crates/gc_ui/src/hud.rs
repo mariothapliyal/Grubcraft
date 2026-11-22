@@ -284,6 +284,9 @@ pub struct Selection<'a> {
     /// edge. Empty for none, and the row only shows for two or more
     /// regiments.
     pub shapes: &'a [ShapeChip<'a>],
+    /// A hero alone: its hit points left and at full. The health bar shows
+    /// those, and there is no morale bar (a hero never routs).
+    pub hero_hp: Option<(u32, u32)>,
 }
 
 /// One army shape to choose from: a preset, or a shape you saved.
@@ -1634,7 +1637,9 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
         draw.text_bold(x, y + 8, 1, theme::INK, &fit(s.name, chars));
         y += 34;
     }
-    let count = if s.regiments > 1 {
+    let count = if let Some((left, full)) = s.hero_hp {
+        format!("{left} of {full} hit points")
+    } else if s.regiments > 1 {
         format!("{} regiments, {} soldiers", s.regiments, s.models)
     } else if s.rank > 0 {
         // The rank first, so a narrow panel cuts the count instead.
@@ -1653,8 +1658,11 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
     let pct_w = 5 * CELL_W;
     let bar_x = x + label_w;
     let bar_w = (w - label_w - pct_w).max(20);
-    let health = s.models as f32 / s.max_models.max(1) as f32;
-    for (label, frac, color, mark) in [
+    let health = match s.hero_hp {
+        Some((left, full)) => left as f32 / full.max(1) as f32,
+        None => s.models as f32 / s.max_models.max(1) as f32,
+    };
+    let bars = [
         ("Health", health, health_color(health), s.break_at),
         (
             s.state.label(),
@@ -1662,7 +1670,9 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
             s.state.bar(),
             0,
         ),
-    ] {
+    ];
+    let shown = if s.hero_hp.is_some() { 1 } else { 2 };
+    for &(label, frac, color, mark) in &bars[..shown] {
         draw.text_bold(x, y - 3, 1, theme::INK, label);
         let bar = Rect::new(bar_x, y, bar_w, 12);
         ink_meter(draw, bar, frac, color);
@@ -3247,6 +3257,17 @@ mod tests {
             ..selection()
         };
         assert!(drew(&with_selection(Some(broken), &[card(1)]), "Routing"));
+        // A hero alone: its hit points, and no morale (it never routs).
+        let hero = Selection {
+            name: "The Daimyo",
+            models: 1,
+            max_models: 1,
+            hero_hp: Some((300, 340)),
+            ..selection()
+        };
+        let d = with_selection(Some(hero), &[card(1)]);
+        assert!(drew(&d, "300of340hitpoints") && drew(&d, "88%"));
+        assert!(!drew(&d, "Morale"));
     }
 
     /// Whether `d` drew `text` (spaces ignored) as a run of glyphs.
