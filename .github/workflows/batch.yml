@@ -73,9 +73,14 @@ jobs:
           SWEEP: '1'
 
   balance:
-    # The win tables (docs/17, the faction balance memory notes). Only the
-    # Warlord contest asserts; the tables are printed for a thread to read
-    # and kept as balance-report.
+    # The balance tournament (docs/29, "Automatic balance tournament";
+    # crates/gc_game/src/balance_gate.rs): every pair of factions in
+    # Conquest on two maps and in Field Battles on the lobby's rosters, both
+    # seed sets. Its report goes on the run page and in balance-report; it
+    # says FAIL when a pair is clearly outside 40 to 60% or a faction's first
+    # army comes a minute before everyone else's, but only fails the job
+    # once BALANCE_STRICT below is '1' (when main is inside the band). The Warlord contest
+    # asserts too; the sandbox units.ron table is printed only.
     name: Balance runs
     needs: changed
     if: needs.changed.outputs.run == 'true'
@@ -94,14 +99,17 @@ jobs:
         if: ${{ !cancelled() }}
         shell: bash
         run: AI_BATTLES=48 cargo test -p gc_match --release faction_table -- --ignored --nocapture 2>&1 | tee target/balance/faction-table.txt
-      - name: Full roster Field Battle table
+      - name: Balance tournament (Conquest on two maps, Field Battles on the rosters)
         if: ${{ !cancelled() }}
         shell: bash
-        run: cargo test -p gc_game --release roster_field_table -- --ignored --nocapture 2>&1 | tee target/balance/roster-field-table.txt
-      - name: Conquest balance (Ribcage Pass, Veteran)
+        # Report only until main is inside the band; then BALANCE_STRICT: '1'.
+        env:
+          BALANCE_STRICT: '0'
+        run: cargo test --release -p gc_game balance_tournament -- --ignored --nocapture 2>&1 | tee target/balance/tournament.txt
+      - name: Tournament report on the run page
         if: ${{ !cancelled() }}
         shell: bash
-        run: AI_GAMES=4 cargo test --release -p gc_game conquest_balance -- --ignored --nocapture 2>&1 | tee target/balance/conquest-balance.txt
+        run: cat target/balance/tournament.md >> "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:

@@ -140,7 +140,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 97;
+pub const SIM_VERSION: u32 = 99;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -3392,7 +3392,7 @@ impl World {
                 } else if regs.target[i].is_some()
                     && regs.attack_target[i].is_none()
                     && (self.tick + i as u32).is_multiple_of(orders::HUNT_EVERY)
-                    && let Some(foe) = self.foe_near(i)
+                    && let Some(foe) = self.foe_near(i, hunt)
                     && self.charge_at(self.regiments.handle(i), foe)
                 {
                     let plan = orders::Plan {
@@ -3417,35 +3417,93 @@ impl World {
 
     /// The nearest enemy regiment slot `i`'s side can see, standing (and
     /// not on a wall, out of the reach of those below) and within
-    /// [`orders::HUNT_RADIUS`] of it (or its bows' reach, if further).
+    /// [`orders::HUNT_RADIUS`] of it (or its bows' reach, if further); for
+    /// one advancing in line, the one opposite it (see below).
     /// Looked up in last tick's combat grid, so a regiment that
     /// only arrived this tick is noticed at the next look.
-    fn foe_near(&self, i: usize) -> Option<RegimentHandle> {
+    fn foe_near(&self, i: usize, hunt: orders::Step) -> Option<RegimentHandle> {
         let regs = &self.regiments;
         let owner = regs.owner[i];
         let reach = self.units[regs.unit[i] as usize]
             .range
             .max(orders::HUNT_RADIUS);
         let here = regs.position[i];
-        let mut best: Option<(Fx, usize)> = None;
-        let slack = reach + self.combat.max_step();
-        self.combat.near_enemies(here, slack, owner, |j| {
-            if !regs.alive[j]
-                || regs.on_wall[j]
-                || regs.morale_state[j].broken()
-                || !self.stances.hostile(owner, regs.owner[j])
-            {
-                return;
+        // One advancing in line with a brigade takes the enemy opposite
+        // it, not whichever is nearest: across the way counts double (and
+        // back along it, behind, double too), and a foe friends already
+        // fight or go for counts as further by the hunt's reach for each,
+        // so a line takes on a line. And while friends of its line fight
+        // near by, one with nothing in reach looks as far as its brigade
+        // halts for them, so a wing the enemy's line does not reach wheels
+        // in on its flank instead of walking on past.
+        let line = match hunt {
+            orders::Step::Move {
+                brigade, target, ..
+            } if brigade != 0 => {
+                let ahead = (self.brigades.heading(i)).unwrap_or((target - here).normalized());
+                (ahead != FxVec2::ZERO).then_some((ahead, brigade))
             }
-            let d = (regs.position[j] - here).length();
-            if d <= reach
-                && best.is_none_or(|b| (d, j) < b)
-                && self.vision.sees(owner, j, regs.owner[j])
+            _ => None,
+        };
+        let look = |reach: Fx, wide: bool| {
+            let mut best: Option<(Fx, usize)> = None;
+            let slack = reach + self.combat.max_step();
+            self.combat.near_enemies(here, slack, owner, |j| {
+                if !regs.alive[j]
+                    || regs.on_wall[j]
+                    || regs.morale_state[j].broken()
+                    || !self.stances.hostile(owner, regs.owner[j])
+                {
+                    return;
+                }
+                let to = regs.position[j] - here;
+                let d = to.length();
+                let mut score = line.map_or(d, |(ahead, _)| {
+                    let along = to.dot(ahead);
+                    let along = if along < Fx::ZERO {
+                        Fx::ZERO - along * 2
+                    } else {
+                        along
+                    };
+                    along + to.dot(brigades::right_of(ahead)).abs() * 2
+                });
+                // (A regiment filed in more than one cell is met more than
+                // once.)
+                if d > reach
+                    || best.is_some_and(|b| b.1 == j || (score, j) >= b)
+                    || !self.vision.sees(owner, j, regs.owner[j])
+                    // Looking further, only one with open ground straight
+                    // to it: not over a wall or across deep water.
+                    || (wide && self.nav.blocks(owner, here, regs.position[j]))
+                {
+                    return;
+                }
+                if line.is_some() {
+                    let foe = Some(regs.handle(j));
+                    let on = (0..regs.alive.len())
+                        .filter(|&k| {
+                            (regs.attack_target[k] == foe || regs.engaged[k] == foe)
+                                && regs.alive[k]
+                                && regs.owner[k] == owner
+                        })
+                        .count();
+                    score += orders::HUNT_RADIUS * on as i32;
+                }
+                if best.is_none_or(|b| (score, j) < b) {
+                    best = Some((score, j));
+                }
+            });
+            best.map(|(_, j)| regs.handle(j))
+        };
+        look(reach, false).or_else(|| match line {
+            Some((_, number))
+                if reach < brigades::HUNT_NEAR
+                    && brigades::fights_near(regs, owner, number, here) =>
             {
-                best = Some((d, j));
+                look(brigades::HUNT_NEAR, true)
             }
-        });
-        best.map(|(_, j)| regs.handle(j))
+            _ => None,
+        })
     }
 
     /// Where regiment slot `i` falls back to: [`combat::FALL_BACK_TILES`]
@@ -4066,6 +4124,12 @@ impl World {
             Some((_, end)) => Some(end),
             None => self.regiments.target[i],
         }
+    }
+
+    /// The facing regiment `h` was ordered to take where it is going, if
+    /// any.
+    pub fn goal_facing(&self, h: RegimentHandle) -> Option<Angle> {
+        self.regiments.target_facing[self.regiments.resolve(h)?]
     }
 
     /// Volleys in flight, for drawing arrows.

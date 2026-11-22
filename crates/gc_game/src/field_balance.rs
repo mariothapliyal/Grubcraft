@@ -46,6 +46,38 @@ fn setup(a: F, b: F, map_seed: u64) -> MatchStart {
 fn roster_field_table() {
     let n: u64 = std::env::var("AI_BATTLES").map_or(24, |v| v.parse().unwrap());
     let from: u64 = std::env::var("AI_FROM").map_or(1, |v| v.parse().unwrap());
+    let mut pairs = pairs();
+    if let Ok(only) = std::env::var("AI_PAIR") {
+        pairs.retain(|(a, b)| only.split(',').all(|f| f == a.name() || f == b.name()));
+    }
+    let army = std::env::var_os("AI_ARMY").is_some();
+    for (&(a, b), (won, lost)) in pairs.iter().zip(play_pairs(&pairs, from, n, army)) {
+        println!(
+            "{:>15} v {:<15} won {won:>3}, lost {lost:>3}, undecided {:>3}  ({:.0}%)",
+            a.name(),
+            b.name(),
+            n - won - lost,
+            100.0 * won as f64 / n as f64,
+        );
+    }
+}
+
+/// Every pair of factions, in `F::ALL` order.
+pub(crate) fn pairs() -> Vec<(F, F)> {
+    let mut pairs = Vec::new();
+    for (i, &a) in F::ALL.iter().enumerate() {
+        for &b in &F::ALL[i + 1..] {
+            pairs.push((a, b));
+        }
+    }
+    pairs
+}
+
+/// `n` battles of each of `pairs` from seed `from`, swapping ends every
+/// battle, each pair on a thread of its own: the first faction's wins and
+/// losses (battles nobody had won after ten minutes are neither). With
+/// `army` it prints the armies of each pair's first battle.
+pub(crate) fn play_pairs(pairs: &[(F, F)], from: u64, n: u64, army: bool) -> Vec<(u64, u64)> {
     let data = crate::data::load();
     let tables = gc_match::Tables {
         units: (data.conquest_units.iter())
@@ -58,18 +90,9 @@ fn roster_field_table() {
             .map(roster::field_points)
             .collect(),
     };
-    let mut pairs = Vec::new();
-    for (i, &a) in F::ALL.iter().enumerate() {
-        for &b in &F::ALL[i + 1..] {
-            pairs.push((a, b));
-        }
-    }
-    if let Ok(only) = std::env::var("AI_PAIR") {
-        pairs.retain(|(a, b)| only.split(',').all(|f| f == a.name() || f == b.name()));
-    }
     let limit = 10 * 60 * gc_sim::TICKS_PER_SECOND;
-    let tables = &tables;
-    let rows: Vec<String> = std::thread::scope(|s| {
+    let (tables, data) = (&tables, &data);
+    std::thread::scope(|s| {
         let jobs: Vec<_> = pairs
             .iter()
             .map(|&(a, b)| {
@@ -87,8 +110,7 @@ fn roster_field_table() {
                         let map = crate::MapKey::from(map).make();
                         let mut m =
                             gc_match::play::Match::new(&setup, seed, &map, tables, false, None);
-                        // `AI_ARMY` prints the armies of the first battle.
-                        if seed == from && std::env::var_os("AI_ARMY").is_some() {
+                        if seed == from && army {
                             for p in 0..2 {
                                 let mut army: Vec<String> = (m.world.regiments.iter())
                                     .filter(|r| r.owner == p)
@@ -125,19 +147,10 @@ fn roster_field_table() {
                             None => {}
                         }
                     }
-                    format!(
-                        "{:>15} v {:<15} won {won:>3}, lost {lost:>3}, undecided {:>3}  ({:.0}%)",
-                        a.name(),
-                        b.name(),
-                        n - won - lost,
-                        100.0 * won as f64 / n as f64,
-                    )
+                    (won, lost)
                 })
             })
             .collect();
         jobs.into_iter().map(|j| j.join().unwrap()).collect()
-    });
-    for row in rows {
-        println!("{row}");
-    }
+    })
 }
