@@ -107,7 +107,7 @@ Sandbox only (and offline Field Battles, wherever `B` places regiments; off in C
 ## Selection and control
 
 - Left-click / drag-box to select. Double-click selects all of that type on screen (*not built yet*).
-- **Control groups** `1` to `0` (`Ctrl+number` to set); double-tap to centre.
+- **Control groups** `1` to `0` (`Ctrl+number` to set); double-tap to centre. `Ctrl+Shift+number` locks one as a standing army that keeps its shape between orders, and `Alt+number` sends the selection to join it ([42](42-armies-that-march.md#standing-armies-in-full)).
 - **Group formation:** when several regiments are ordered to move with a right-drag (or a right-click on the ground), they arrange themselves by role along the dragged line: melee in the front line, ranged behind it with support in the middle, cavalry on the wings, engines and workers at the back. The shape is chosen with `O` or the army-shape chips in the panel (Line, Deep, Hammer, Square, Plain, or one of your own; see below). This is the single most important "feels like a commander" feature.
 - `Tab` cycles sub-groups within a mixed selection (for abilities). *Not built; `Tab` switches the side you command in the sandbox.*
 - **Smart cast:** abilities fire on key-press at the cursor (option for click-to-confirm).

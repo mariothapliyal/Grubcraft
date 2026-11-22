@@ -4126,6 +4126,12 @@ impl World {
         }
     }
 
+    /// The facing regiment `h` was ordered to take where it is going, if
+    /// any.
+    pub fn goal_facing(&self, h: RegimentHandle) -> Option<Angle> {
+        self.regiments.target_facing[self.regiments.resolve(h)?]
+    }
+
     /// Volleys in flight, for drawing arrows.
     pub fn volleys(&self) -> impl Iterator<Item = combat::VolleyView> + '_ {
         self.combat.volleys()

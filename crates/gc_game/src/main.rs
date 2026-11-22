@@ -77,7 +77,9 @@
 //! drum and horn. Shift+V in the sandbox shows every regiment, hidden or not.
 //! Ctrl (or Cmd) + a number key saves the selection as a control group; the
 //! number recalls it (Shift adds it), and pressing it twice quickly centres
-//! the camera on it.
+//! the camera on it. Ctrl+Shift + a number locks it as an army that keeps
+//! its shape on every group order, and Alt + a number sends the selection
+//! to join that army.
 //!
 //! The game opens on the main menu (Play, Sandbox, Replays, Unit viewer,
 //! Settings, Guide); Esc brings it back during a match. Play hosts or joins
@@ -232,7 +234,7 @@ use gc_render::{
     BoxInstance, FrameParams, HitStyle, Renderer, RendererOptions, SoldierBatch, SoldierInstance,
     Terrain, UiQuad,
 };
-use gc_sim::arrange::Shape;
+use gc_sim::arrange::{Army, Shape};
 use gc_sim::events::Event;
 use gc_sim::formation::{GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
@@ -325,8 +327,48 @@ const COMMANDER_OUT: f32 = 160.0;
 const COMMANDER_BLOCK_HEIGHT: f32 = 0.6;
 const COMMANDER_POLE: [f32; 3] = [0.3, 5.0, 0.3];
 const COMMANDER_FLAG: [f32; 3] = [2.6, 1.8, 0.25];
+/// An army's one standard (docs/42, "Standing armies"): a tall pole at
+/// its middle with a wide flag, and a bar on the flag for each step of its
+/// number (the key it is on).
+const ARMY_POLE: [f32; 3] = [0.25, 7.0, 0.25];
+const ARMY_FLAG: [f32; 3] = [3.2, 2.0, 0.2];
 /// A regiment whose volley left this many ticks ago or less is shooting.
 const SHOOTING_TICKS: u32 = 24;
+/// Control group `n`'s name, as the HUD shows it: key 0 is group 10.
+fn army_label(n: usize) -> usize {
+    (n + 9) % 10 + 1
+}
+
+/// A standard at `pos`: a pole, and a flag of `color` flying from its
+/// top to the right of `facing`. Gives the flag's middle and how high its
+/// foot is lifted, to mark it.
+fn push_standard(
+    instances: &mut Vec<BoxInstance>,
+    pos: Vec2,
+    facing: Vec2,
+    pole: [f32; 3],
+    flag: [f32; 3],
+    color: [u8; 3],
+) -> (Vec2, f32) {
+    instances.push(BoxInstance {
+        pos: pos.to_array(),
+        facing: facing.to_array(),
+        size: pole,
+        color: [60, 48, 36, 0],
+        lift: 0.0,
+    });
+    let mid = pos + Vec2::new(facing.y, -facing.x) * (flag[0] / 2.0);
+    let lift = pole[1] - flag[1];
+    instances.push(BoxInstance {
+        pos: mid.to_array(),
+        facing: facing.to_array(),
+        size: flag,
+        color: [color[0], color[1], color[2], 0],
+        lift,
+    });
+    (mid, lift)
+}
+
 /// Ground height for the cameras: the terrain, or the water's surface where
 /// it is deeper than the bed.
 fn ground_of(map: &Map, p: Vec2) -> f32 {
@@ -1001,6 +1043,13 @@ struct Running {
     /// Regiments inside a box select, live while dragging.
     boxed: Vec<RegimentHandle>,
     control_groups: [Vec<RegimentHandle>; 10],
+    /// The shape each control group locked as an army keeps between
+    /// orders, and who holds each place in it
+    /// (docs/42-armies-that-march.md, "Standing armies").
+    armies: [Option<Army>; 10],
+    /// An army's places as the planned group order leaves them, kept when
+    /// the order is sent (a drag's preview plans orders never sent).
+    army_plan: Option<(usize, Army)>,
     last_group_key: Option<(usize, Instant)>,
     /// When the last right-click order was given, and to whom: a second
     /// one to the same selection soon after runs (see [`Self::run`]).
@@ -1969,6 +2018,8 @@ impl App {
             last_brigade: 0,
             boxed: Vec::with_capacity(64),
             control_groups: Default::default(),
+            armies: Default::default(),
+            army_plan: None,
             last_group_key: None,
             last_right: None,
             attack_mark: None,
@@ -2926,12 +2977,35 @@ impl Running {
         // Each player's numbers are its own, so two players ordering
         // one owner's regiments (an army handed over) never share one.
         if self.selected.len() > 1 {
-            const EACH: u16 = gc_sim::brigades::PLAYER_NUMBERS / gc_sim::MAX_PARTIES as u16;
-            self.last_brigade = self.last_brigade % EACH + 1;
-            let side = u16::from(self.sandbox.side) % gc_sim::MAX_PARTIES as u16;
-            order.brigade = side * EACH + self.last_brigade;
+            order.brigade = self.next_brigade();
         }
         self.plan_order(order);
+        if let Some((n, army)) = self.army_plan.take() {
+            self.armies[n] = Some(army);
+        } else {
+            // Ordered other than as a whole army, they leave their places.
+            for army in self.armies.iter_mut().flatten() {
+                for h in &mut army.held {
+                    if h.is_some_and(|h| self.selected.contains(&h)) {
+                        *h = None;
+                    }
+                }
+            }
+        }
+        self.send_planned(hunt, queue);
+    }
+
+    /// A new brigade number of the side you command for a group order.
+    fn next_brigade(&mut self) -> u16 {
+        const EACH: u16 = gc_sim::brigades::PLAYER_NUMBERS / gc_sim::MAX_PARTIES as u16;
+        self.last_brigade = self.last_brigade % EACH + 1;
+        let side = u16::from(self.sandbox.side) % gc_sim::MAX_PARTIES as u16;
+        side * EACH + self.last_brigade
+    }
+
+    /// Send `self.group_commands` (a planned group order), each shown at
+    /// once by its mark; `hunt` and `queue` as [`Self::issue_march`].
+    fn send_planned(&mut self, hunt: bool, queue: bool) {
         if !self.group_commands.is_empty() {
             self.ui_sound(sounds::UiSound::Move);
         }
@@ -3090,9 +3164,19 @@ impl Running {
     fn fill_group(&mut self) {
         let regiments = &self.world.regiments;
         self.selected.retain(|&h| regiments.get(h).is_some());
+        let selected = std::mem::take(&mut self.selected);
+        self.fill_group_with(&selected);
+        self.selected = selected;
+    }
+
+    /// Fill `self.group` with the living of `regiments`, as
+    /// [`Self::fill_group`] does with the selection.
+    fn fill_group_with(&mut self, regiments: &[RegimentHandle]) {
         self.group.clear();
-        for &h in &self.selected {
-            let r = self.world.regiments.get(h).unwrap();
+        for &h in regiments {
+            let Some(r) = self.world.regiments.get(h) else {
+                continue;
+            };
             let mut m = GroupMember::of(&r, &self.world.units()[r.unit as usize]);
             if let Some(&role) = self.units.roles.get(r.unit as usize) {
                 m.role = role;
@@ -3107,18 +3191,29 @@ impl Running {
     fn plan_order(&mut self, mut order: GroupOrder) {
         self.fill_group();
         self.group_commands.clear();
+        self.army_plan = None;
         // Alt on a dragged line draws it deep: the drag is the front, every
         // regiment keeps its frontage and those that don't fit stand behind
         // (one regiment alone just goes there, as it stands).
-        let how = if self.input.alt && order.width.is_some() {
-            if self.group.len() < 2 {
-                order.width = None;
-            }
-            gc_sim::arrange::Arrangement::Preset(gc_sim::arrange::Preset::Deep)
+        let deep = self.input.alt && order.width.is_some();
+        if deep && self.group.len() < 2 {
+            order.width = None;
+        }
+        // An army keeps its own shape, unless drawn deep.
+        let army = (!deep).then(|| self.army_selected()).flatten();
+        if let Some(n) = army
+            && let Some(mut a) = self.armies[n].clone()
+        {
+            a.order(&mut self.group, order, &mut self.group_commands);
+            self.army_plan = Some((n, a));
         } else {
-            self.army_shapes.arrangement()
-        };
-        gc_sim::arrange::arranged_move(&mut self.group, order, how, &mut self.group_commands);
+            let how = if deep {
+                gc_sim::arrange::Arrangement::Preset(gc_sim::arrange::Preset::Deep)
+            } else {
+                self.army_shapes.arrangement()
+            };
+            gc_sim::arrange::arranged_move(&mut self.group, order, how, &mut self.group_commands);
+        }
         battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
     }
 
@@ -3248,12 +3343,25 @@ impl Running {
         }
     }
 
-    /// Number keys: Ctrl/Cmd + n saves the selection as group n, n recalls it
-    /// (Shift adds it), and n twice quickly centres the camera on it.
+    /// Number keys: Ctrl/Cmd+n saves the selection as group n (with
+    /// Shift, locked as an army that keeps its shape between orders),
+    /// Alt+n sends the selection to join army n, n recalls it (Shift adds
+    /// it), and n twice quickly centres the camera on it.
     fn control_group(&mut self, n: usize) {
+        if self.input.command && self.input.shift {
+            self.lock_army(n);
+            return;
+        }
         if self.input.command {
             self.control_groups[n].clear();
             self.control_groups[n].extend_from_slice(&self.selected);
+            if self.armies[n].take().is_some() {
+                self.say(format!("Group {} saved: no longer an army.", army_label(n)));
+            }
+            return;
+        }
+        if self.input.alt {
+            self.join_army(n);
             return;
         }
         let (regiments, side) = (&self.world.regiments, self.sandbox.side);
@@ -3281,6 +3389,118 @@ impl Running {
             let centre = sum / self.control_groups[n].len() as f32;
             self.look_at(centre);
         }
+    }
+
+    /// Ctrl/Cmd+Shift+n: save the selection as group n and lock it as an
+    /// army, keeping the shape it stands in now for its group orders. A
+    /// refusal leaves group n as it was.
+    fn lock_army(&mut self, n: usize) {
+        if self.watching.is_some() {
+            self.say("That is off while you watch a replay.".into());
+            return;
+        }
+        self.fill_group();
+        let Some(army) = Army::lock(&self.group) else {
+            self.say("Select two or more regiments to make an army.".into());
+            return;
+        };
+        self.control_groups[n].clear();
+        self.control_groups[n].extend_from_slice(&self.selected);
+        self.armies[n] = Some(army);
+        self.ui_sound(sounds::UiSound::Select);
+        self.say(format!(
+            "Army {}: its {} regiments keep this shape on every group order. Alt+{n} sends others to join it.",
+            army_label(n),
+            self.selected.len()
+        ));
+    }
+
+    /// The army the selection is, all of it and nothing else, if any.
+    fn army_selected(&self) -> Option<usize> {
+        let regiments = &self.world.regiments;
+        let selected = (self.selected.iter())
+            .filter(|&&h| regiments.get(h).is_some())
+            .count();
+        if selected < 2 {
+            return None;
+        }
+        (0..self.armies.len()).find(|&n| {
+            let mut alive =
+                (self.control_groups[n].iter()).filter(|&&h| regiments.get(h).is_some());
+            self.armies[n].is_some()
+                && alive.clone().count() == selected
+                && alive.all(|h| self.selected.contains(h))
+        })
+    }
+
+    /// Alt+n: the selected regiments not in army n join it: each is sent to
+    /// the place the army's shape has for it about where the army stands
+    /// now (a free place of its kind, or behind), and the army keeps them.
+    fn join_army(&mut self, n: usize) {
+        if self.watching.is_some() {
+            self.say("That is off while you watch a replay.".into());
+            return;
+        }
+        let Some(mut army) = self.armies[n].clone() else {
+            self.say(format!(
+                "Group {} is not an army: Ctrl+Shift+{n} makes the selection one.",
+                army_label(n)
+            ));
+            return;
+        };
+        let (regiments, side) = (&self.world.regiments, self.sandbox.side);
+        self.control_groups[n].retain(|&h| regiments.get(h).is_some_and(|r| r.owner == side));
+        let newcomers: Vec<RegimentHandle> = (self.selected.iter().copied())
+            .filter(|h| !self.control_groups[n].contains(h))
+            .filter(|&h| regiments.get(h).is_some_and(|r| r.owner == side))
+            .collect();
+        if newcomers.is_empty() {
+            self.say(format!(
+                "Select regiments to send to army {}.",
+                army_label(n)
+            ));
+            return;
+        }
+        let members: Vec<RegimentHandle> = (self.control_groups[n].iter())
+            .chain(&newcomers)
+            .copied()
+            .collect();
+        self.fill_group_with(&members);
+        // An army on the march is joined where it is going.
+        for m in self
+            .group
+            .iter_mut()
+            .filter(|m| !newcomers.contains(&m.handle))
+        {
+            if let Some(goal) = self.world.goal(m.handle) {
+                m.position = goal;
+                m.facing = self.world.goal_facing(m.handle).unwrap_or(m.facing);
+            }
+        }
+        let brigade = if newcomers.len() > 1 {
+            self.next_brigade()
+        } else {
+            0
+        };
+        self.group_commands.clear();
+        if !army.join(&mut self.group, brigade, &mut self.group_commands) {
+            self.say(format!(
+                "Army {} is out of its shape: order it as a whole once, then send others to join it.",
+                army_label(n)
+            ));
+            return;
+        }
+        battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
+        self.armies[n] = Some(army);
+        self.control_groups[n].extend_from_slice(&newcomers);
+        let k = newcomers.len();
+        self.selected = newcomers;
+        self.send_planned(false, false);
+        self.say(format!(
+            "Sent {k} {} to join army {}.",
+            buildings::plural(k, "regiment", "regiments"),
+            army_label(n)
+        ));
     }
 
     /// Ground height for the cameras: the terrain, or the water's surface
@@ -4393,24 +4613,15 @@ impl Running {
                     color: [235, 230, 210, 0],
                     lift: 0.0,
                 });
-                let side = Vec2::new(facing.y, -facing.x);
-                let pole = COMMANDER_POLE.map(|v| v * zoom);
-                let flag_size = COMMANDER_FLAG.map(|v| v * zoom);
-                self.instances.push(BoxInstance {
-                    pos: pos.to_array(),
-                    facing: facing.to_array(),
-                    size: pole,
-                    color: [60, 48, 36, 0],
-                    lift: 0.0,
-                });
                 let flag = banner.unwrap_or([cr, cg, cb, 0]);
-                self.instances.push(BoxInstance {
-                    pos: (pos + side * (flag_size[0] / 2.0)).to_array(),
-                    facing: facing.to_array(),
-                    size: flag_size,
-                    color: [flag[0], flag[1], flag[2], 0],
-                    lift: pole[1] - flag_size[1],
-                });
+                push_standard(
+                    &mut self.instances,
+                    pos,
+                    facing,
+                    COMMANDER_POLE.map(|v| v * zoom),
+                    COMMANDER_FLAG.map(|v| v * zoom),
+                    [flag[0], flag[1], flag[2]],
+                );
                 // Keep the puppets marching (and falling) out of sight.
                 self.puppets.update_on(
                     &block,
@@ -4749,6 +4960,7 @@ impl Running {
                 );
             }
             self.push_routes();
+            self.push_army_standards();
         } else {
             // Blows told while the unit viewer is open show nothing.
             drop(self.siege.take_particles());
@@ -6340,6 +6552,7 @@ impl Running {
         self.hud.forget_readout();
         self.boxed.clear();
         self.control_groups = Default::default();
+        self.armies = Default::default();
         self.last_group_key = None;
         // Regiment handles are reissued: a leftover pick or cool-down from
         // the last match would match the new match's regiments.
@@ -6859,11 +7072,56 @@ impl Running {
         }
     }
 
+    /// Each army of the side you command shows one standard over its
+    /// middle, in its colour, with as many pale bars on the flag as the
+    /// key it is on (none for 0), raised as the Commander View pulls back.
+    fn push_army_standards(&mut self) {
+        let side = self.sandbox.side;
+        let [cr, cg, cb] = color_of(&self.parties, side);
+        let zoom = self.banner_zoom();
+        let (pole, flag) = (ARMY_POLE.map(|v| v * zoom), ARMY_FLAG.map(|v| v * zoom));
+        for n in 0..self.armies.len() {
+            if self.armies[n].is_none() {
+                continue;
+            }
+            let (mut sum, mut count) = (Vec2::ZERO, 0usize);
+            for &h in &self.control_groups[n] {
+                if let Some(r) = self.world.regiments.get(h).filter(|r| r.owner == side) {
+                    sum += drawn_position(&self.prev_positions, self.alpha, &r);
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                continue;
+            }
+            let at = sum / count as f32;
+            let facing = Vec2::Y;
+            let (mid, lift) =
+                push_standard(&mut self.instances, at, facing, pole, flag, [cr, cg, cb]);
+            // Its number, in bars down the flag.
+            let bars = army_label(n);
+            let step = flag[1] / (bars as f32 + 1.0);
+            for k in 0..bars {
+                self.instances.push(BoxInstance {
+                    pos: mid.to_array(),
+                    facing: facing.to_array(),
+                    size: [flag[0] * 0.8, step * 0.4, flag[2] + 0.05],
+                    color: [240, 232, 210, 0],
+                    lift: lift + step * (k as f32 + 1.0) - step * 0.2,
+                });
+            }
+        }
+    }
+
     /// Dotted lines along the routes of the selected regiments, on through
     /// each queued step, with a plate where each leg ends. Attack-move legs
     /// are red.
     fn push_routes(&mut self) {
         let mut dots = 0;
+        // A brigade's shared way is drawn once (docs/42, "Standing
+        // armies"): for the rest of it, only the last leg from where the
+        // way ends to each one's own place.
+        let mut ways: Vec<u16> = Vec::new();
         // The regiment the mouse rests on shows its route too.
         let hovered = self.hud.hover_own.filter(|h| !self.selected.contains(h));
         for h in self.selected.iter().copied().chain(hovered) {
@@ -6879,10 +7137,25 @@ impl Running {
             // march's end), then every queued march.
             // (In a brigade the route is the brigade's way, and its own
             // place lies a last leg on from that.)
-            let route = self.world.route(h);
+            let mut route = self.world.route(h);
+            let way_end = route.last().copied();
+            let brigade = self.world.brigade(h).map(|b| b.number);
+            if let Some(number) = brigade
+                && let Some(end) = way_end
+            {
+                if ways.contains(&number) {
+                    from = from_fx_vec(end);
+                    route = &[];
+                } else {
+                    ways.push(number);
+                }
+            }
             let own = (self.world.goal(h))
-                .filter(|&g| self.world.brigade(h).is_some() && route.last() != Some(&g))
+                .filter(|&g| brigade.is_some() && way_end != Some(g))
                 .map(|g| (from_fx_vec(g), r.hunting, true));
+            // Its place is where the way drawn already ends: plate it there.
+            let shared_end = (route.is_empty() && own.is_none() && way_end.is_some())
+                .then_some((from, r.hunting, true));
             let queue = self.world.regiments.queued(h).unwrap_or_default();
             let marches = queue.iter().filter_map(|step| match step {
                 gc_sim::orders::Step::Move { target, hunt, .. } => {
@@ -6900,6 +7173,7 @@ impl Running {
                         own.is_none() && k + 1 == route.len(),
                     )
                 })
+                .chain(shared_end)
                 .chain(own)
                 .chain(marches);
             for (to, hunting, end) in legs {
@@ -9762,6 +10036,12 @@ impl Running {
     }
 
     fn army_shape_line(&self) -> String {
+        if let Some(n) = self.army_selected() {
+            return format!(
+                "Army {}: group orders keep its shape. Ctrl+{n} unlocks it, Alt+{n} sends others to join it",
+                army_label(n)
+            );
+        }
         format!(
             "Army shape for group orders: {}. O: next, Shift+O: save the selection's",
             self.army_shapes.choice.label()

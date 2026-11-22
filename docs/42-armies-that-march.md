@@ -176,6 +176,7 @@ below.
     keeps its arrangement between orders, shows one banner and one
     route, and regiments raised later can be sent to join it (this is
     where the reinforcements work meets this one).
+    Built (no change to the rules): see "Standing armies in full" below.
 18. **Draw the road.** Hold a key and draw the way the army should go;
     the brigade follows the drawn line instead of the shortest one.
 19. **Column of march.** A brigade can be told to go in road column the
@@ -916,3 +917,54 @@ the line standing, now all of it fights, and both sides lose more.
   left alone. Pairing the whole line at once (sorting both lines along the way) would settle it, at the cost
   of a per-group plan the simulation's memory budget has no room for
   today.
+
+## Standing armies in full
+
+### What the player does
+
+- **Lock.** `Ctrl+Shift+number` saves the selection as that control group
+  and locks it as an army (two or more regiments). The shape it stands in
+  then is kept (`arrange::Shape::capture`, the same capture as
+  `Shift+O`'s saved shapes): every group order to the whole army, and
+  nothing else, puts each regiment back in its place in that shape about
+  the order's point and facing, whatever shape `O` has chosen. `Alt` on
+  a drag still draws it deep. `Ctrl+number` saves a plain group again and
+  says the army is no more.
+- **Join.** `Alt+number` sends the selected regiments that are not in
+  army `number` to join it. An army remembers which regiment holds each
+  place in its shape (`arrange::Army`: each holds its own when locked,
+  and each order to the army hands out the places afresh, left to right
+  by kind; one ordered any other way leaves its place). Where the army
+  stands now is fitted from where the holders stand, or are marching to
+  (`Army::standing`), so it is found again after the army has moved,
+  turned or lost regiments, and an army on the march is joined where it
+  is going. An army whose regiments all left their places (an `Alt` drag,
+  say) says so, and is joined again once ordered as a whole. The holders keep their places and are
+  not ordered; each newcomer takes a free place of its kind (one left by
+  a regiment lost), else any free place, else stands behind
+  (`Army::join`), sent as one brigade if there are several. They join the
+  group, and the next order to the army takes them with it. This is where
+  reinforcements meet armies: a refilled or newly raised regiment is
+  selected and sent with `Alt+number`.
+- **One standard.** Each army of the side you command shows one tall pole
+  over its middle with a wide flag in your colour and as many pale bars
+  across it as its group's number (ten for key 0, the HUD's group 10),
+  growing as the Commander View
+  pulls back. Each regiment keeps its own morale banner.
+- **One route.** Regiments marching in one brigade show their shared way
+  once (from the first of them), with a short leg from its end to each
+  one's own place, instead of a dotted line from every regiment along the
+  same road.
+
+All of it is on the ordering player's machine: armies are kept with the
+control groups, and orders reach the simulation as plain moves, so no
+rules number, replay or network message changed.
+
+### What it does not do yet
+
+- An army is forgotten with its control group at the end of a match, and
+  is not saved with a game.
+- Computer players do not lock armies (they already order their groups
+  as brigades).
+- The standard has no number drawn on it, only bars, and stands at the
+  plain middle of the army even when that is between two halves of it.
