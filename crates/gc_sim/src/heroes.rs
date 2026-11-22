@@ -60,6 +60,11 @@ pub const FALL: i16 = 10;
 pub const REVIVE_PERCENT: u32 = 50;
 pub const REVIVE_LEVEL_PERCENT: u32 = 15;
 
+/// Morale a regiment loses for each soldier a hero kills in melee
+/// (`morale::WHY_HERO`): a hero is a shock weapon, breaking lines it cuts
+/// into, though it can be pulled down.
+pub const HERO_SHOCK: i16 = 6;
+
 /// How a hero grows each level past the first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HeroGrowth {

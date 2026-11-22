@@ -108,6 +108,7 @@ fn run(real: &Real, report: &mut Report) {
         orders
     };
     let mut ended = None;
+    let mut hero_shaken = false;
     for t in 0..120 * SECOND {
         let orders = if t % SECOND == 0 {
             attack(&world)
@@ -115,6 +116,10 @@ fn run(real: &Real, report: &mut Report) {
             Vec::new()
         };
         report.tick(&mut world, &orders);
+        hero_shaken |= world
+            .regiments
+            .feedback(foe)
+            .is_some_and(|f| f.why & gc_sim::morale::WHY_HERO != 0);
         let gone = world.regiments.get(foe).is_none_or(|r| r.morale.broken());
         if gone || world.regiments.get(hero).is_none() {
             ended = Some(t);
@@ -140,6 +145,10 @@ fn run(real: &Real, report: &mut Report) {
     report.check(
         "the Daimyo and his Yari break the Skitterlings",
         ended.is_some() && world.regiments.get(hero).is_some(),
+    );
+    report.check(
+        "the Skitterlings lost heart to the Daimyo's kills",
+        hero_shaken,
     );
     report.check(
         "the Daimyo gained experience from the dead",

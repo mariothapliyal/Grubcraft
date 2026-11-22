@@ -184,12 +184,14 @@ pub mod why {
     pub const FIRE: u16 = 1 << 9;
     pub const WATER: u16 = 1 << 10;
     pub const CHAMPION: u16 = 1 << 11;
+    pub const HERO: u16 = 1 << 12;
 }
 
 /// The reasons, most serious first, with their short words.
-const REASONS: [(u16, &str); 12] = [
+const REASONS: [(u16, &str); 13] = [
     (why::REAR, "rear attack"),
     (why::FLANK, "flanked"),
+    (why::HERO, "hero's onslaught"),
     (why::GENERAL, "leader fell"),
     (why::ALLY_BROKE, "ally broke"),
     (why::OUTNUMBERED, "outnumbered"),

@@ -3512,6 +3512,11 @@ fn duel(
                 0 => Outcome::Wounded,
                 men => {
                     veterancy::credit(regs, units, i, regs.unit[j], men, false);
+                    // A hero's kills strike fear into the ranks it cuts.
+                    if regs.hero_level[i] > 0 {
+                        let points = crate::heroes::HERO_SHOCK.saturating_mul(men as i16);
+                        crate::morale::shake(regs, j, points, crate::morale::WHY_HERO);
+                    }
                     if regs.models[j] > 0 {
                         line = Line::of(regs, units, j, side, theirs_last_file);
                     }
