@@ -764,6 +764,21 @@ pub(crate) mod tests {
         }
     }
 
+    /// On a ring of three or five starts (Measured land for that many),
+    /// you take the first (furthest south), your allies the next ones
+    /// round, then each other team in turn.
+    #[test]
+    fn a_ring_seats_allies_side_by_side() {
+        let ring: Vec<Vec2> = (0..5).map(|i| Vec2::new(i as f32, 0.0)).collect();
+        // Two against three, you in the trio's second slot.
+        let starts = battle_starts(&[0, 1, 0, 1, 1], 1, &ring);
+        assert_eq!(starts, vec![ring[3], ring[0], ring[4], ring[1], ring[2]]);
+        // Everyone for themselves: each a start of their own, you first.
+        let three = &ring[..3];
+        let ffa = battle_starts(&[0, 1, 2], 2, three);
+        assert_eq!(ffa, vec![ring[1], ring[2], ring[0]]);
+    }
+
     /// The AI level called `name`, or the Veteran for no name.
     pub(crate) fn level(name: &str) -> Difficulty {
         if name.is_empty() {

@@ -413,11 +413,44 @@ mod tests {
         assert_eq!(at_320(4), 0x4810_c8ad_25ff_bc7c);
         // Grown land: erosion and the river lines (and their current) are
         // the parts most likely to drift, and each of the dials.
-        assert_eq!(hash(GROWN + 1), 0xe074_8d2a_70f5_2b14);
-        assert_eq!(hash(GROWN + 2), 0x5907_fd65_e138_8588);
-        assert_eq!(hash(GROWN + 3), 0x70cf_08d8_a817_2132);
+        assert_eq!(hash(GROWN + 1), 0x4703_8b16_3011_30c2);
+        assert_eq!(hash(GROWN + 2), 0x1ff1_ebb1_47ce_def2);
+        assert_eq!(hash(GROWN + 3), 0xf96d_3d17_4c9b_bd9a);
         // Measured fairness: the start search, its settling on the true
         // walks and the paired sites.
-        assert_eq!(hash(MEASURED + 2), 0xf164_1f72_b03f_38c9);
+        assert_eq!(hash(MEASURED + 2), 0x5ec5_f069_fb84_881e);
+        // Three and five players round a ring.
+        let ring = |tiles, seed, ring| {
+            FieldMap {
+                choice: MEASURED + 2,
+                tiles,
+                seed,
+                ring,
+            }
+            .make()
+            .hash()
+        };
+        assert_eq!(ring(256, 7, 3), 0xb239_9986_fa36_6314);
+        assert_eq!(ring(320, 1, 5), 0xeabe_c64d_5701_940d);
+    }
+
+    /// Only a Measured choice for three or five players puts its starts
+    /// round a ring.
+    #[test]
+    fn rings_are_for_three_or_five_on_measured_land() {
+        for players in 0..=6 {
+            for choice in 0..FIELD_MAPS.len() {
+                let ring = FieldMap::new(choice, 256, 1, players).ring;
+                let measured = (MEASURED..FIELD_MAPS.len()).contains(&choice);
+                let want = if measured && matches!(players, 3 | 5) {
+                    players as u8
+                } else {
+                    0
+                };
+                assert_eq!(ring, want, "{} with {players}", FIELD_MAPS[choice]);
+            }
+        }
+        let map = FieldMap::new(MEASURED + 1, 256, 2, 3).make();
+        assert_eq!(map.starts().len(), 3);
     }
 }

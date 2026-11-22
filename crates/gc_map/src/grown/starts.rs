@@ -53,26 +53,20 @@ const SIX: [Handout; 5] = [
 ];
 
 /// Every way the lobby hands out `k` starts: [`SIX`] for the six slots;
-/// for a ring of three or five ([`ring`]), everyone for themselves and
-/// every way to split it into two teams of neighbours (one against two,
-/// two against three).
+/// for a ring of three or five ([`ring`]), everyone for themselves. (Two
+/// teams on a ring stand as neighbours, so the middle of a team of three
+/// is always further from the enemy than its ends: that is the shape,
+/// not unfairness to search away. One against two is fair when every
+/// start's nearest enemy is.)
 fn handouts(k: usize) -> impl Iterator<Item = Handout> {
     let six = (k == START_PLATEAUS).then_some(SIX).into_iter().flatten();
-    let ring = (k != START_PLATEAUS)
-        .then_some(k)
-        .into_iter()
-        .flat_map(|k| {
-            (0..=k).map(move |split| {
-                let mut teams = [OUT; START_PLATEAUS];
-                for (i, t) in teams.iter_mut().enumerate().take(k) {
-                    *t = match split {
-                        0 => i as u8,
-                        s => u8::from((i + k + 1 - s) % k >= k / 2),
-                    };
-                }
-                teams
-            })
-        });
+    let ring = (k != START_PLATEAUS).then(|| {
+        let mut teams = [OUT; START_PLATEAUS];
+        for (i, t) in teams.iter_mut().enumerate().take(k) {
+            *t = i as u8;
+        }
+        teams
+    });
     six.chain(ring)
 }
 
@@ -242,7 +236,10 @@ fn spread(values: impl Iterator<Item = u32>) -> u32 {
 /// The worst spread, in thousandths, over every way the lobby hands the
 /// starts out ([`handouts`]): each start's walk to its nearest enemy,
 /// and, between teams of the same size, the longest walk between two
-/// allies (so help is as far away on every team).
+/// allies (so help is as far away on every team), at half weight: allies'
+/// walks may be twice as far apart as the enemies' before they count the
+/// same, since an army reaching a foe a minute sooner matters more than
+/// help arriving a minute later.
 pub(super) fn unfairness(walk: &Walks, k: usize) -> u32 {
     handouts(k)
         .map(|teams| {
@@ -274,7 +271,7 @@ pub(super) fn unfairness(walk: &Walks, k: usize) -> u32 {
                 })
                 .max()
                 .unwrap_or(0);
-            nearest.max(allies)
+            nearest.max(allies / 2)
         })
         .max()
         .unwrap_or(0)
@@ -495,4 +492,66 @@ pub(super) fn settle(
         }
     }
     (at, before)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A ring's starts stand evenly round the middle, inside the map, the
+    /// first the furthest south.
+    #[test]
+    fn a_ring_stands_evenly_round_the_middle() {
+        for n in [256usize, 320, 640, 768] {
+            for k in [3, 5] {
+                for seed in 0..20 {
+                    let ring = ring(n, k, seed);
+                    assert_eq!(ring.len(), k);
+                    let m = n as i32 / 2;
+                    let r2: Vec<i32> = ring
+                        .iter()
+                        .map(|&(x, y)| (x - m).pow(2) + (y - m).pow(2))
+                        .collect();
+                    let side2 = |a: Pos, b: Pos| (a.0 - b.0).pow(2) + (a.1 - b.1).pow(2);
+                    let sides: Vec<i32> =
+                        (0..k).map(|i| side2(ring[i], ring[(i + 1) % k])).collect();
+                    for v in [&r2, &sides] {
+                        let (lo, hi) = (*v.iter().min().unwrap(), *v.iter().max().unwrap());
+                        // (Whole tiles: within three tiles in length.)
+                        let root = gc_fixed::isqrt_u64(hi as u64) as i32;
+                        assert!(hi - lo <= 6 * root + 9, "{n} {k} {seed}: {v:?}");
+                    }
+                    for &(x, y) in &ring {
+                        assert!((n as i32 / 8..n as i32 * 7 / 8).contains(&x), "{ring:?}");
+                        assert!((n as i32 / 8..n as i32 * 7 / 8).contains(&y), "{ring:?}");
+                    }
+                    assert!(ring.iter().all(|s| s.1 <= ring[0].1), "{ring:?}");
+                }
+            }
+        }
+    }
+
+    /// Everyone for themselves on a ring is all a ring is scored on, and
+    /// the six slots on their five ways; teams of the same size compare
+    /// their allies' walks at half weight.
+    #[test]
+    fn unfairness_reads_every_handout() {
+        let mut walk: Walks = [[100; START_PLATEAUS]; START_PLATEAUS];
+        assert_eq!(unfairness(&walk, 3), 0);
+        // One start of three further from everyone: 110 against 100 and
+        // 100, 10 over a mean of 103.
+        for j in 0..3 {
+            if j != 0 {
+                walk[0][j] = 110;
+                walk[j][0] = 110;
+            }
+        }
+        assert_eq!(unfairness(&walk, 3), 97);
+        // The six slots: allies 0 and 1 (north) further apart than 2 and
+        // 3, with every foe as near: 40 over a mean of 120, halved.
+        let mut walk: Walks = [[100; START_PLATEAUS]; START_PLATEAUS];
+        walk[0][1] = 140;
+        walk[1][0] = 140;
+        assert_eq!(unfairness(&walk, 6), 166);
+    }
 }

@@ -35,6 +35,7 @@ mod biome;
 mod erode;
 pub(crate) mod field;
 mod levels;
+mod room;
 mod shape;
 mod starts;
 pub(crate) mod trails;
@@ -571,6 +572,15 @@ fn grow_uncached(n: usize, what: Grown) -> (Raster, Option<u32>) {
     let spread = (!mirrored)
         .then(|| refine_starts(&mut raster, shape, &mut seeds))
         .flatten();
+    // The same room round every start in play: a small Conquest map's
+    // four corners, else all of them.
+    let in_play: Vec<usize> = if what.heart && n < crate::def::BIG_MAP_TILES as usize {
+        (0..4).collect()
+    } else {
+        (0..raster.starts.len()).collect()
+    };
+    let step = standable(&raster);
+    room::even(&mut raster, &step, &in_play, seeds.next());
     (raster, spread)
 }
 
@@ -975,11 +985,12 @@ fn lay(tiles: i32, what: Grown) -> Option<MapDef> {
             })
     };
     // A Conquest map's north starts, west to east: the corners, and the
-    // middle between them with six.
-    let north = if six {
-        vec![starts[0], starts[4], starts[1]]
-    } else {
-        vec![starts[0], starts[1]]
+    // middle between them with six (none on a Field Battle map, whose
+    // starts may be a ring's).
+    let north = match (conquest, six) {
+        (false, _) => Vec::new(),
+        (true, true) => vec![starts[0], starts[4], starts[1]],
+        (true, false) => vec![starts[0], starts[1]],
     };
     // A Conquest map's shares and Heart, in place of the starts.
     if conquest {
@@ -1800,6 +1811,30 @@ mod fairness_probe {
     /// not a promise (the reroll keeps the fairer of two maps), so a seed
     /// that drifts over it after a generator change is a reason to look,
     /// not proof of a bug.
+    /// Three and five players round a ring are as fair (at the sizes the
+    /// lobby makes them for those players on Small).
+    #[test]
+    fn rings_of_starts_are_within_the_limit() {
+        for (tiles, ring) in [(256u32, 3), (320, 5)] {
+            for w in Wildness::ALL {
+                let what = Grown {
+                    seed: 1,
+                    wildness: w,
+                    fairness: Fairness::Measured,
+                    heart: false,
+                    ring,
+                };
+                let r = grow(tiles, what);
+                assert_eq!(r.starts.len(), usize::from(ring));
+                let spread = true_unfairness(&r, &standable(&r));
+                assert!(
+                    spread <= MEASURED_LIMIT,
+                    "{w:?} {tiles} ring {ring}: walks {spread} thousandths apart"
+                );
+            }
+        }
+    }
+
     #[test]
     fn measured_starts_are_within_the_limit() {
         for tiles in [256u32, 320] {
