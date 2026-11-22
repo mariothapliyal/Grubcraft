@@ -115,15 +115,16 @@ impl FieldMap {
     /// Measured choice with three or five ([`FieldMap::ring`]).
     pub fn new(choice: usize, tiles: u32, seed: u64, players: usize) -> FieldMap {
         let measured = (MEASURED..=MEASURED + wilds::Wildness::ALL.len()).contains(&choice);
-        let ring = match players {
-            3 | 5 if measured => players as u8,
-            _ => 0,
+        let fairness = if measured {
+            grown::Fairness::Measured
+        } else {
+            grown::Fairness::Mirrored
         };
         FieldMap {
             choice,
             tiles,
             seed,
-            ring,
+            ring: grown::ring_for(players, fairness),
         }
     }
 

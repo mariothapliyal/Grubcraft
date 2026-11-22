@@ -224,6 +224,11 @@ impl Map {
         };
         map.cover = layer(ground.cover);
         map.growth = layer(ground.growth);
+        if map.growth.is_empty() && !map.cover.is_empty() {
+            // The simulation lets growth follow the cover when it has none.
+            map.settle_growth();
+        }
+        // (After the growth: the stored footing is what was played on.)
         map.footing = layer(ground.footing);
         map.flow = layer(ground.flow);
         if ground.water_levels.len() == n {
@@ -232,19 +237,6 @@ impl Map {
         let thicket = gc_sim::Growth::Thicket as u8;
         if map.growth.contains(&thicket) {
             map.thicket = map.growth.iter().map(|&g| g == thicket).collect();
-        }
-        if map.growth.is_empty() && !map.cover.is_empty() {
-            // The simulation lets growth follow the cover when it has none.
-            let wood = gc_sim::Cover::Wood as u8;
-            map.growth = (map.cover.iter())
-                .map(|&c| {
-                    if c == wood {
-                        gc_sim::Growth::Woods as u8
-                    } else {
-                        gc_sim::Growth::Open as u8
-                    }
-                })
-                .collect();
         }
         map
     }

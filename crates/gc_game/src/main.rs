@@ -6202,29 +6202,32 @@ impl Running {
             )),
             _ => None,
         };
-        let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.sim_nav_costs());
+        let mut nav = tagged_alloc::scope(Tag::Map, || self.heightmap.sim_nav_costs());
         if let MatchKind::Replay(r) = &kind {
             let (shown, stored) = (self.heightmap.ground(), r.setup().ground);
-            // A replay recorded by another map maker, or whose map this
-            // build makes differently anyway, is drawn from the ground it
-            // stored, so the soldiers walk on the ground you see.
-            let drawn_from_stored = r.header.map_maker.is_some_and(|m| m != gc_map::MAP_MAKER)
-                || r.map_tiles != self.heightmap.tiles
+            // A replay whose map this build makes differently (another map
+            // maker's, most often) is drawn from the ground it stored, so
+            // the soldiers walk on the ground you see.
+            let differs = r.map_tiles != self.heightmap.tiles
                 || r.nav != nav
                 || stored.heights != shown.heights
                 || stored.water_level != shown.water_level
                 || stored.cover != shown.cover
                 || (!stored.growth.is_empty() && stored.growth != shown.growth)
                 || stored.water_levels != shown.water_levels;
-            if drawn_from_stored {
+            if differs {
                 let map = Arc::new(Map::from_ground(r.map_tiles, &stored));
                 if let Some(key) = self.map_key.take() {
                     self.show_map(key, map);
                     self.blocked_marks = blocked_marks(&r.nav, r.map_tiles);
                 }
-                map_note = Some(
-                    "This replay was recorded on an older map maker: its ground is drawn as it was played, without the land's colours.",
-                );
+                nav.clone_from(&r.nav);
+                let older = r.header.map_maker.is_none_or(|m| m != gc_map::MAP_MAKER);
+                map_note = Some(if older {
+                    "This replay was recorded on an older map maker: its ground is drawn as it was played, without the land's colours."
+                } else {
+                    "This replay's map is made differently here: its ground is drawn as it was played, without the land's colours."
+                });
             }
         }
         let (teams, champions): (Vec<u8>, bool) = match &kind {

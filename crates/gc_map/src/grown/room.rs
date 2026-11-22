@@ -10,16 +10,13 @@
 //! water, which no clearing moves.
 
 use super::field::{Grid, ONE, fbm};
-use super::{Habitat, Raster, scaled};
+use super::{Habitat, Raster, clear_radius, scaled};
 use crate::def::Pos;
+use crate::stamp::dist2;
 
 /// How far round a start its room is counted, in tiles on a 512-tile map:
 /// a Conquest base and its natural expansion.
 const REACH: i32 = 48;
-
-/// How far apart the starts' open room may be, in thousandths of their
-/// middle, once evened.
-pub(crate) const ROOM_LIMIT: u32 = 100;
 
 /// How far the starts are evened toward their middle: within this many
 /// thousandths of it, so a little is left to the land.
@@ -27,7 +24,7 @@ const TOWARD: u32 = 40;
 
 /// What a tile near a start holds, for its room.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Room {
+enum Room {
     /// Open, standable ground: room to build at once.
     Open,
     /// Scrub or woods a worker can clear.
@@ -37,7 +34,7 @@ pub(crate) enum Room {
 }
 
 /// What tile `i` holds, on `standable` ground (as `super::standable`).
-pub(crate) fn room_of(r: &Raster, standable: &[u8], i: usize) -> Room {
+fn room_of(r: &Raster, standable: &[u8], i: usize) -> Room {
     if standable[i] == 0 || r.thicket[i] {
         Room::Shut
     } else if r.cover[i] == gc_sim::Cover::Wood as u8 || r.habitat[i] == Habitat::ScrubEdge as u8 {
@@ -54,46 +51,32 @@ fn near(n: usize, at: Pos) -> impl Iterator<Item = (usize, i32)> {
     let n = n as i32;
     ((at.1 - reach).max(0)..(at.1 + reach + 1).min(n)).flat_map(move |y| {
         ((at.0 - reach).max(0)..(at.0 + reach + 1).min(n)).filter_map(move |x| {
-            let d2 = (x - at.0).pow(2) + (y - at.1).pow(2);
+            let d2 = dist2((x, y), at);
             (d2 <= reach * reach).then_some(((y * n + x) as usize, d2))
         })
     })
 }
 
-/// Each start's open tiles and cuttable tiles within [`REACH`].
-pub(crate) fn count(r: &Raster, standable: &[u8], starts: &[Pos]) -> Vec<(u32, u32)> {
+/// Each start's open tiles within [`REACH`].
+fn count(r: &Raster, standable: &[u8], starts: &[Pos]) -> Vec<u32> {
     let n = r.height.n;
-    starts
-        .iter()
+    (starts.iter())
         .map(|&s| {
-            near(n, s).fold((0, 0), |(open, cut), (i, _)| {
-                match room_of(r, standable, i) {
-                    Room::Open => (open + 1, cut),
-                    Room::Cuttable => (open, cut + 1),
-                    Room::Shut => (open, cut),
-                }
-            })
+            near(n, s)
+                .filter(|&(i, _)| room_of(r, standable, i) == Room::Open)
+                .count() as u32
         })
         .collect()
 }
 
-/// How unequal the starts' open room is: (most - least) / middle, in
-/// thousandths.
-pub(crate) fn spread(open: &[u32]) -> u32 {
-    let mut v = open.to_vec();
-    v.sort_unstable();
-    let (lo, hi, mid) = (v[0], v[v.len() - 1], v[v.len() / 2].max(1));
-    (u64::from(hi - lo) * 1000 / u64::from(mid)) as u32
-}
-
-/// Even out the open room round the starts numbered `in_play`, toward the
+/// Even out the open room round the first `in_play` starts, toward the
 /// middle of them (see the module notes). On land that is its own turned
 /// copy, each change is made to a tile and its turned copy alike, and
 /// only one start of each twin pair is worked on (its twin follows).
-pub(crate) fn even(r: &mut Raster, standable: &[u8], in_play: &[usize], seed: u32) {
+pub(crate) fn even(r: &mut Raster, standable: &[u8], in_play: usize, seed: u32) {
     let n = r.height.n;
     let last = n * n - 1;
-    let starts: Vec<Pos> = in_play.iter().map(|&k| r.starts[k]).collect();
+    let starts: Vec<Pos> = r.starts[..in_play].to_vec();
     // A ragged edge: the order tiles are cleared or grown in wanders by
     // up to a quarter of the reach.
     let wobble: Grid = fbm(n, seed, scaled(n, 12).max(4) * ONE, 3);
@@ -103,7 +86,8 @@ pub(crate) fn even(r: &mut Raster, standable: &[u8], in_play: &[usize], seed: u3
     };
     // What each start could clear (woods and scrub, nearest first) and
     // where scrub could grow (meadow past its clearing, furthest first).
-    let clearing = scaled(n, CLEARING);
+    // (Scrub never grows in a start's own clearing.)
+    let clearing = clear_radius(n);
     let (mut cut, mut grow): (Vec<Vec<usize>>, Vec<Vec<usize>>) = starts
         .iter()
         .map(|&s| {
@@ -126,7 +110,7 @@ pub(crate) fn even(r: &mut Raster, standable: &[u8], in_play: &[usize], seed: u3
             )
         })
         .unzip();
-    let open: Vec<u32> = count(r, standable, &starts).iter().map(|c| c.0).collect();
+    let open = count(r, standable, &starts);
     // The middle of the starts' room, held to what every start can reach:
     // no higher than the least a start could clear up to, no lower than
     // the most a start could grow down to (the middle of the two if they
@@ -197,26 +181,34 @@ pub(crate) fn even(r: &mut Raster, standable: &[u8], in_play: &[usize], seed: u3
     }
 }
 
-/// How far round a start scrub never grows, in tiles on a 512-tile map:
-/// its clearing.
-const CLEARING: i32 = 24;
-
 /// The meadow scrub can grow on.
 const MEADOW: [u8; 2] = [Habitat::Grassland as u8, Habitat::FlowerMeadow as u8];
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Fairness, Grown, grow, standable};
+    use super::super::{Fairness, Grown, grow, standable, starts_in_play};
     use super::*;
     use crate::wilds::Wildness;
 
+    /// How far apart the starts' open room may be, in thousandths of their
+    /// middle, once evened.
+    const ROOM_LIMIT: u32 = 100;
+
     /// The open room of the starts in play on grown land.
-    fn rooms(tiles: u32, what: Grown) -> Vec<(u32, u32)> {
+    fn rooms(tiles: u32, what: Grown) -> Vec<u32> {
         let r = grow(tiles, what);
         let step = standable(&r);
-        let four = what.heart && tiles < crate::def::BIG_MAP_TILES as u32;
-        let starts = &r.starts[..if four { 4 } else { r.starts.len() }];
-        count(&r, &step, starts)
+        let in_play = starts_in_play(tiles as usize, what.heart, r.starts.len());
+        count(&r, &step, &r.starts[..in_play])
+    }
+
+    /// How unequal the starts' open room is: (most - least) / middle, in
+    /// thousandths.
+    fn spread(open: &[u32]) -> u32 {
+        let mut v = open.to_vec();
+        v.sort_unstable();
+        let (lo, hi, mid) = (v[0], v[v.len() - 1], v[v.len() / 2].max(1));
+        (u64::from(hi - lo) * 1000 / u64::from(mid)) as u32
     }
 
     /// On Measured land, mirrored land and a Conquest map, of every
@@ -239,9 +231,8 @@ mod tests {
                         ring: 0,
                     };
                     let room = rooms(tiles, what);
-                    let open: Vec<u32> = room.iter().map(|c| c.0).collect();
                     assert!(
-                        spread(&open) <= ROOM_LIMIT,
+                        spread(&room) <= ROOM_LIMIT,
                         "{w:?} {tiles} {fairness:?} heart {heart} seed {seed}: {room:?}"
                     );
                 }
@@ -269,10 +260,9 @@ mod tests {
                         ring: 0,
                     };
                     let room = rooms(tiles, what);
-                    let open: Vec<u32> = room.iter().map(|c| c.0).collect();
                     println!(
                         "{tiles} {w:?} {fairness:?} heart {heart} seed {seed}: spread {} {room:?}",
-                        spread(&open)
+                        spread(&room)
                     );
                 }
             }

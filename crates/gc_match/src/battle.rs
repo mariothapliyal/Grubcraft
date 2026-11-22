@@ -347,6 +347,13 @@ fn zone_radius(placed: &[army::Placement], starts: &[Vec2], who: usize) -> i32 {
 /// side.
 pub fn battle_starts(teams: &[u8], me: usize, plateaus: &[Vec2]) -> Vec<Vec2> {
     if plateaus.len() != START_PLATEAUS {
+        // A ring is made for as many players as there are.
+        debug_assert!(
+            teams.len() <= plateaus.len(),
+            "{} on a ring of {}",
+            teams.len(),
+            plateaus.len()
+        );
         let mine = teams.get(me).copied();
         let first_of = |t: u8| teams.iter().position(|&x| x == t);
         let mut order: Vec<usize> = (0..teams.len()).collect();

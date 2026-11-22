@@ -18,7 +18,7 @@ use std::collections::BinaryHeap;
 use super::field::{Grid, ONE};
 use super::scaled;
 use crate::def::Pos;
-use crate::generate::START_PLATEAUS;
+use crate::generate::{START_PLATEAUS, plateaus};
 
 /// Ground rising faster than this between two tiles is too steep to march
 /// up for the search (a little under the nav rules' steep).
@@ -76,21 +76,17 @@ fn handouts(k: usize) -> impl Iterator<Item = Handout> {
 /// first the one furthest south (where this machine's player starts) and
 /// the rest going round from it.
 pub(super) fn ring(n: usize, k: usize, seed: u64) -> Vec<Pos> {
-    let n = n as i32;
-    let inset = if n >= crate::def::BIG_MAP_TILES {
-        n / 6
-    } else {
-        n / 4
-    };
-    let (middle, radius) = (n / 2, n / 2 - inset);
+    // As far out as the north and south slots' rows.
+    let (middle, radius) = (n as i32 / 2, n as i32 / 2 - plateaus(n as u32)[4].1);
     let step = (1u32 << 16) / k as u32;
     // A turn of less than half a step either way from due south (+y), so
     // the first start is still the one furthest south.
     let turn = (seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as u32 % step;
-    let first = (gc_fixed::Angle::QUARTER.0 as u32 + turn).wrapping_sub(step / 2);
+    let first =
+        gc_fixed::Angle::QUARTER.wrapping_add(gc_fixed::Angle(turn.wrapping_sub(step / 2) as u16));
     (0..k as u32)
         .map(|i| {
-            let a = gc_fixed::Angle((first + i * step) as u16);
+            let a = first.wrapping_add(gc_fixed::Angle((i * step) as u16));
             let along = |v: gc_fixed::Fx| (i64::from(radius) * i64::from(v.raw()) >> 16) as i32;
             (middle + along(a.cos()), middle + along(a.sin()))
         })

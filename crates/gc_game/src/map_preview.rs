@@ -24,14 +24,6 @@ struct Made {
     starts: Vec<[f32; 2]>,
 }
 
-/// The start plateaus of a `tiles` map, as fractions of its side.
-fn starts_of(tiles: u32) -> Vec<[f32; 2]> {
-    gc_map::plateaus(tiles)
-        .iter()
-        .map(|&(x, z)| [x as f32 / tiles as f32, z as f32 / tiles as f32])
-        .collect()
-}
-
 /// The worker: make each wanted map, newest request first (a request that
 /// has been overtaken is skipped). Ends when the game drops its end.
 fn work(jobs: mpsc::Receiver<MapPreviewKey>, made: mpsc::Sender<Made>) {
@@ -45,14 +37,12 @@ fn work(jobs: mpsc::Receiver<MapPreviewKey>, made: mpsc::Sender<Made>) {
         let starts = match key {
             // (Measured land moves the starts off the plateaus, or puts
             // three or five round a ring.)
-            MapPreviewKey::Field { tiles, .. } if matches!(map.starts().len(), 3 | 5 | 6) => {
+            MapPreviewKey::Field { tiles, .. } => {
                 let side = tiles as f32;
-                map.starts()
-                    .iter()
-                    .map(|&(x, z)| [x as f32 / side, z as f32 / side])
+                (gc_match::terrain_view::field_starts(&map).iter())
+                    .map(|p| (*p / side).to_array())
                     .collect()
             }
-            MapPreviewKey::Field { tiles, .. } => starts_of(tiles),
             MapPreviewKey::Conquest { .. } => {
                 let side = map.tiles as f32;
                 map.start_positions()
@@ -148,9 +138,12 @@ mod tests {
     #[test]
     fn starts_are_inside_the_map() {
         for tiles in [256, 320] {
-            let starts = starts_of(tiles);
-            assert_eq!(starts.len(), gc_map::START_PLATEAUS);
-            assert!(starts.iter().all(|s| s.iter().all(|&v| 0.0 < v && v < 1.0)));
+            let starts = gc_map::plateaus(tiles);
+            assert!(
+                starts
+                    .iter()
+                    .all(|&(x, z)| { [x, z].iter().all(|&v| 0 < v && v < tiles as i32) })
+            );
         }
     }
 

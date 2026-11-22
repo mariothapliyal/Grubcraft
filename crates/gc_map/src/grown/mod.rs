@@ -51,7 +51,7 @@ use crate::def::{
     CoverKind, CoverOp, Kind, Land, MapDef, Mode, Object, Pos, SetPiece, SetPieceKind, Shape,
     SizeClass, Symmetry, TerrainOp,
 };
-use crate::generate::plateaus;
+use crate::generate::{START_PLATEAUS, plateaus};
 use crate::recipe::{BASE, WATER, start_objects};
 use crate::stamp::dist2;
 use crate::wilds::Wildness;
@@ -254,6 +254,26 @@ pub struct Grown {
     /// six slots.
     #[serde(default)]
     pub ring: u8,
+}
+
+/// The [`Grown::ring`] for land of `fairness` made for `players`: three
+/// or five on Measured land stand round a ring, anything else in the six
+/// slots.
+pub fn ring_for(players: usize, fairness: Fairness) -> u8 {
+    match players {
+        3 | 5 if fairness == Fairness::Measured => players as u8,
+        _ => 0,
+    }
+}
+
+/// How many of the starts are in play: a small Conquest map's four
+/// corners (of `count`), else all of them.
+fn starts_in_play(n: usize, heart: bool, count: usize) -> usize {
+    if heart && n < crate::def::BIG_MAP_TILES as usize {
+        4
+    } else {
+        count
+    }
 }
 
 impl Grown {
@@ -572,15 +592,10 @@ fn grow_uncached(n: usize, what: Grown) -> (Raster, Option<u32>) {
     let spread = (!mirrored)
         .then(|| refine_starts(&mut raster, shape, &mut seeds))
         .flatten();
-    // The same room round every start in play: a small Conquest map's
-    // four corners, else all of them.
-    let in_play: Vec<usize> = if what.heart && n < crate::def::BIG_MAP_TILES as usize {
-        (0..4).collect()
-    } else {
-        (0..raster.starts.len()).collect()
-    };
+    // The same room round every start in play.
+    let in_play = starts_in_play(n, what.heart, raster.starts.len());
     let step = standable(&raster);
-    room::even(&mut raster, &step, &in_play, seeds.next());
+    room::even(&mut raster, &step, in_play, seeds.next());
     (raster, spread)
 }
 
@@ -870,10 +885,7 @@ pub fn describe(
         wildness,
         fairness,
         heart: false,
-        ring: match players {
-            3 | 5 if fairness == Fairness::Measured => players as u8,
-            _ => 0,
-        },
+        ring: ring_for(players, fairness),
     };
     lay(tiles, what).expect("a Field Battle map always has room for its starts")
 }
@@ -928,7 +940,7 @@ fn lay(tiles: i32, what: Grown) -> Option<MapDef> {
     let measured = what.fairness == Fairness::Measured;
     let conquest = what.heart;
     // Four starts (the corners) on a small Conquest map, else six.
-    let six = !conquest || tiles >= crate::def::BIG_MAP_TILES;
+    let six = starts_in_play(n, conquest, START_PLATEAUS) == START_PLATEAUS;
     let starts: Vec<Pos> = if measured {
         grow(tiles as u32, what).starts.clone()
     } else {
@@ -1805,12 +1817,6 @@ mod load_time {
 mod fairness_probe {
     use super::*;
 
-    /// On these seeds, Measured land's starts walk to their nearest enemies
-    /// within 10% of each other, for every way the lobby hands them out, on
-    /// the finished land as the nav rules walk it. The limit is a target,
-    /// not a promise (the reroll keeps the fairer of two maps), so a seed
-    /// that drifts over it after a generator change is a reason to look,
-    /// not proof of a bug.
     /// Three and five players round a ring are as fair (at the sizes the
     /// lobby makes them for those players on Small).
     #[test]
@@ -1835,6 +1841,12 @@ mod fairness_probe {
         }
     }
 
+    /// On these seeds, Measured land's starts walk to their nearest enemies
+    /// within 10% of each other, for every way the lobby hands them out, on
+    /// the finished land as the nav rules walk it. The limit is a target,
+    /// not a promise (the reroll keeps the fairer of two maps), so a seed
+    /// that drifts over it after a generator change is a reason to look,
+    /// not proof of a bug.
     #[test]
     fn measured_starts_are_within_the_limit() {
         for tiles in [256u32, 320] {
