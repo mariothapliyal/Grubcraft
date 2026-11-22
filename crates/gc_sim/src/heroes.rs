@@ -132,6 +132,12 @@ impl Hero {
     }
 }
 
+/// Hero slot `i`'s soldier's hit points at full health, with its levels'
+/// growth.
+pub(crate) fn full_hp(regs: &Regiments, stats: &UnitStats, i: usize) -> u16 {
+    stats.hp_per_model.saturating_add(regs.hp_bonus[i])
+}
+
 /// The level `xp` earns.
 pub fn level_of(xp: u32) -> u8 {
     1 + LEVELS.iter().filter(|&&t| xp >= t).count() as u8
@@ -294,7 +300,7 @@ impl Heroes {
         h.regiment = Some(r);
         h.at = at;
         set_level(regs, i, stats, growth, h.level);
-        let full = stats.hp_per_model.saturating_add(regs.hp_bonus[i]);
+        let full = full_hp(regs, stats, i);
         for k in 0..regs.models[i] {
             *regs.hp_mut(i, k as u8) = full;
         }
@@ -398,13 +404,7 @@ impl Heroes {
             h.u32(hero.xp);
             h.i32(hero.at.x.raw());
             h.i32(hero.at.y.raw());
-            match hero.kit {
-                Some(k) => {
-                    h.u8(1 + k.kit as u8);
-                    h.u16(k.summons.unwrap_or(u16::MAX));
-                }
-                None => h.u8(0),
-            }
+            HeroKit::hash_into(hero.kit, h);
             h.u32(hero.ready_at[0]);
             h.u32(hero.ready_at[1]);
             match hero.pending {

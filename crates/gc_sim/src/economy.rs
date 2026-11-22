@@ -912,6 +912,7 @@ impl Economy {
     }
 
     /// Ticks left of player `p`'s Market Crash.
+    #[cfg(test)]
     pub fn crashed_left(&self, p: PlayerId) -> u16 {
         self.crash_left.get(usize::from(p)).copied().unwrap_or(0)
     }

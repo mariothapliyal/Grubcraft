@@ -2864,7 +2864,7 @@ impl Combat {
             };
             // A cocoon takes blows and strikes none; nor does a regiment a
             // hero's ability has stunned.
-            if !strikes || regs.models[i] == 0 || regs.cocooned(i) || regs.stunned(i) {
+            if !strikes || regs.models[i] == 0 || regs.cannot_act(i) {
                 continue;
             }
             if !on_turn {
@@ -3021,8 +3021,7 @@ impl Combat {
                 || regs.target[i].is_some()
                 || regs.models[i] == 0
                 || regs.morale_state[i].broken()
-                || regs.cocooned(i)
-                || regs.stunned(i)
+                || regs.cannot_act(i)
             {
                 continue;
             }

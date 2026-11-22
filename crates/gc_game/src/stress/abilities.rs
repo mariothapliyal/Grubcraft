@@ -24,7 +24,7 @@ use gc_sim::{Command, PlayerId, RegimentHandle, TICKS_PER_SECOND, World};
 use super::arena::{Arena, EAST, Real, centre, hp, move_to, order, put_up, spawn};
 use super::{Report, Scenario};
 use crate::conquest;
-use crate::conquest_golden::nearest;
+use crate::conquest_golden::{hero_of, nearest, own};
 use crate::headless::Headless;
 
 pub(super) const SCENARIO: Scenario = Scenario {
@@ -36,13 +36,6 @@ pub(super) const SCENARIO: Scenario = Scenario {
 
 const TILES: u32 = 128;
 const SECOND: u32 = TICKS_PER_SECOND;
-
-fn hero_of(world: &World, p: PlayerId) -> Option<RegimentHandle> {
-    world
-        .heroes()
-        .find(|h| h.owner == p)
-        .and_then(|h| h.regiment)
-}
 
 fn cast(
     p: PlayerId,
@@ -194,9 +187,7 @@ fn a_computer_player_casts(real: &Real, report: &mut Report) {
         },
     );
     report.tick(&mut world, &[put]);
-    let structure = (world.structures().unwrap().iter())
-        .find(|v| v.owner == 0 && v.building == shrine)
-        .map(|v| v.handle);
+    let structure = own(&world, 0, Some(shrine)).first().map(|v| v.handle);
     let Some(structure) = structure else {
         report.check("the host puts up the Shrine", false);
         return;

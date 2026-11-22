@@ -159,13 +159,7 @@ impl ConquestUnit {
             }
             None => h.u8(0),
         }
-        match self.kit {
-            Some(k) => {
-                h.u8(1 + k.kit as u8);
-                h.u16(k.summons.unwrap_or(u16::MAX));
-            }
-            None => h.u8(0),
-        }
+        crate::abilities::HeroKit::hash_into(self.kit, h);
     }
 }
 

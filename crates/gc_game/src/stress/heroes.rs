@@ -22,6 +22,7 @@ use gc_sim::{Command, RegimentHandle, TICKS_PER_SECOND, World};
 
 use super::arena::{Arena, EAST, Real, WEST, centre, hp, move_to, order, put_up, spawn};
 use super::{Report, Scenario};
+use crate::conquest_golden::hero_of;
 
 pub(super) const SCENARIO: Scenario = Scenario {
     name: "heroes",
@@ -32,13 +33,6 @@ pub(super) const SCENARIO: Scenario = Scenario {
 
 const TILES: u32 = 128;
 const SECOND: u32 = TICKS_PER_SECOND;
-
-fn hero_handle(world: &World) -> Option<RegimentHandle> {
-    world
-        .heroes()
-        .find(|h| h.owner == 0)
-        .and_then(|h| h.regiment)
-}
 
 fn run(real: &Real, report: &mut Report) {
     let factions = [Some(Faction::EmberClans), Some(Faction::Brood)];
@@ -71,14 +65,14 @@ fn run(real: &Real, report: &mut Report) {
     let mut out = None;
     for t in 0..60 * SECOND {
         report.tick(&mut world, &[]);
-        if out.is_none() && hero_handle(&world).is_some() {
+        if out.is_none() && hero_of(&world, 0).is_some() {
             out = Some(t);
             break;
         }
     }
     report.metric("Daimyo out after", super::seconds(out));
     report.check("the Daimyo comes out of the Shrine", out.is_some());
-    let Some(hero) = hero_handle(&world) else {
+    let Some(hero) = hero_of(&world, 0) else {
         return;
     };
     report.check(
@@ -242,7 +236,7 @@ fn run(real: &Real, report: &mut Report) {
     let mut back = None;
     for t in 0..120 * SECOND {
         report.tick(&mut world, &[]);
-        if hero_handle(&world).is_some() {
+        if hero_of(&world, 0).is_some() {
             back = Some(t);
             break;
         }
@@ -261,14 +255,14 @@ fn run(real: &Real, report: &mut Report) {
     let revive = |world: &mut World, report: &mut Report, spot: FxVec2| {
         // Still standing from the last fight: taken off, so he comes back
         // whole.
-        if let Some(h) = hero_handle(world) {
+        if let Some(h) = hero_of(world, 0) {
             report.tick(world, &[order(0, Command::RemoveRegiment { regiment: h })]);
             report.tick(world, &[]);
         }
         report.tick(world, &[hire(daimyo)]);
         for _ in 0..120 * SECOND {
             report.tick(world, &[]);
-            if let Some(h) = hero_handle(world) {
+            if let Some(h) = hero_of(world, 0) {
                 report.tick(world, &[move_to(0, h, spot)]);
                 for _ in 0..30 * SECOND {
                     report.tick(world, &[]);
@@ -348,7 +342,7 @@ fn fresh_daimyo(real: &Real, report: &mut Report, seed: u64) -> Option<(World, R
     report.tick(&mut world, &[order(0, Command::Train { structure, unit })]);
     for _ in 0..60 * SECOND {
         report.tick(&mut world, &[]);
-        if let Some(h) = hero_handle(&world) {
+        if let Some(h) = hero_of(&world, 0) {
             return Some((world, h));
         }
     }

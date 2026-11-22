@@ -32,7 +32,6 @@ use crate::heroes::Hero;
 use crate::morale;
 use crate::powers::{put_down, rings_round, spot_among};
 use crate::regiments::{Regiments, hash_handle};
-use crate::stances::Stances;
 use crate::structures::Refusal;
 use crate::{Formation, PlayerId, RegimentHandle, TICKS_PER_SECOND, UnitId, UnitStats, World};
 
@@ -257,6 +256,19 @@ pub struct HeroKit {
     pub summons: Option<UnitId>,
 }
 
+impl HeroKit {
+    /// `kit`, or none, into the state hash.
+    pub(crate) fn hash_into(kit: Option<HeroKit>, h: &mut StateHasher) {
+        match kit {
+            Some(k) => {
+                h.u8(1 + k.kit as u8);
+                h.u16(k.summons.unwrap_or(u16::MAX));
+            }
+            None => h.u8(0),
+        }
+    }
+}
+
 /// The rank of ability `slot` (0 basic, 1 ultimate) a hero of `level`
 /// has: 0 while it is locked.
 pub fn rank(slot: u8, level: u8) -> u8 {
@@ -352,29 +364,16 @@ pub struct Zone {
 }
 
 impl Zone {
-    /// Where it is, as of the tick and the regiment it follows.
-    pub fn at(&self) -> FxVec2 {
-        self.at
-    }
-
-    pub fn tiles(&self) -> u8 {
-        self.tiles
-    }
-
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
         h.u8(self.owner);
         hash_handle(h, Some(self.hero));
         match self.pulse {
-            Pulse::Cuts { damage } => {
-                h.u8(0);
-                h.u16(damage);
-            }
-            Pulse::Storm { damage } => {
-                h.u8(1);
-                h.u16(damage);
-            }
-            Pulse::Leech { damage } => {
-                h.u8(2);
+            Pulse::Cuts { damage } | Pulse::Storm { damage } | Pulse::Leech { damage } => {
+                h.u8(match self.pulse {
+                    Pulse::Cuts { .. } => 0,
+                    Pulse::Storm { .. } => 1,
+                    _ => 2,
+                });
                 h.u16(damage);
             }
             Pulse::Grave { raised } => {
@@ -425,27 +424,6 @@ fn off_line(p: FxVec2, from: FxVec2, to: FxVec2) -> Fx {
     (p - (from + d * t)).length()
 }
 
-/// The living regiments hostile to `owner` (or friendly, if `friends`)
-/// whose blocks reach within `tiles` of `at`, in slot order.
-fn round(
-    regs: &Regiments,
-    units: &[UnitStats],
-    stances: &Stances,
-    owner: PlayerId,
-    friends: bool,
-    at: FxVec2,
-    tiles: Fx,
-) -> Vec<usize> {
-    (0..regs.alive.len())
-        .filter(|&j| {
-            regs.alive[j]
-                && regs.models[j] > 0
-                && stances.hostile(owner, regs.owner[j]) != friends
-                && within(regs, units, j, at, tiles)
-        })
-        .collect()
-}
-
 /// `total` shared evenly between `n`, the first `total % n` getting one
 /// more: the `k`th share.
 fn share(total: u32, n: usize, k: usize) -> u32 {
@@ -454,19 +432,6 @@ fn share(total: u32, n: usize, k: usize) -> u32 {
 }
 
 impl Regiments {
-    /// Slot `i` takes `hp` of ability damage: back ranks first, no dice,
-    /// no armour, and the block steps up as a rank empties. The soldiers
-    /// lost.
-    pub(crate) fn spell_hit(
-        &mut self,
-        units: &[UnitStats],
-        nav: &crate::nav::Nav,
-        i: usize,
-        hp: u32,
-    ) -> u16 {
-        crate::combat::hurt(self, units, nav, i, hp)
-    }
-
     /// Slot `i` is inspired for `ticks`: `attack` more melee attack,
     /// reloading `reload` percent faster, and (if `unshaken`) losing no
     /// morale to casualties. Over another inspiration it takes the larger
@@ -493,6 +458,12 @@ impl Regiments {
     /// Whether slot `i` is stunned.
     pub(crate) fn stunned(&self, i: usize) -> bool {
         self.stunned_left[i] > 0
+    }
+
+    /// Whether slot `i` can't strike, shoot or cast: stunned or in a
+    /// cocoon.
+    pub(crate) fn cannot_act(&self, i: usize) -> bool {
+        self.stunned(i) || self.cocooned(i)
     }
 
     /// Melee attack slot `i`'s inspiration adds.
@@ -544,17 +515,6 @@ impl Regiments {
             .map(|&h| u32::from(h))
             .sum()
     }
-
-    /// Regiment `h`'s ticks left stunned, inspired and untouchable.
-    pub fn spells_on(&self, h: RegimentHandle) -> (u16, u16, u16) {
-        self.resolve(h).map_or((0, 0, 0), |i| {
-            (
-                self.stunned_left[i],
-                self.inspired_left[i],
-                self.untouchable_left[i],
-            )
-        })
-    }
 }
 
 impl Hero {
@@ -572,8 +532,39 @@ impl Hero {
 
 impl World {
     /// Whether `player` could have hero regiment `hero` cast its ability
-    /// `slot` at `target` now, and if not, why. Reach is not checked: a
-    /// cast out of reach walks the hero there.
+    /// `slot` now, at some target: its own hero, an active ability its
+    /// level has opened, not cooling down, the hero free to act.
+    pub fn can_cast(
+        &self,
+        player: PlayerId,
+        hero: RegimentHandle,
+        slot: u8,
+    ) -> Result<(), Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        let h = c.heroes.of_regiment(hero).ok_or(Refusal::Unknown)?;
+        let i = self.regiments.resolve(hero).ok_or(Refusal::Unknown)?;
+        if !self.stances.can_command(player, self.regiments.owner[i]) {
+            return Err(Refusal::Unknown);
+        }
+        if h.ability(slot).is_none_or(|a| a.passive) {
+            return Err(Refusal::Unknown);
+        }
+        if rank(slot, h.level) == 0 {
+            return Err(Refusal::Locked);
+        }
+        if h.cooling(slot, self.tick) > 0 {
+            return Err(Refusal::Cooling);
+        }
+        if self.regiments.cannot_act(i) {
+            return Err(Refusal::Stunned);
+        }
+        Ok(())
+    }
+
+    /// Whether `player` could have hero regiment `hero` cast its ability
+    /// `slot` at `target` now ([`World::can_cast`], and a target of the
+    /// ability's kind), and if not, why. Reach is not checked: a cast out
+    /// of reach walks the hero there.
     pub fn cast_check(
         &self,
         player: PlayerId,
@@ -581,28 +572,9 @@ impl World {
         slot: u8,
         target: CastTarget,
     ) -> Result<(), Refusal> {
-        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
-        let k = c.heroes.index_of(hero).ok_or(Refusal::Unknown)?;
-        let h = c.heroes.get(k);
-        let i = self.regiments.resolve(hero).ok_or(Refusal::Unknown)?;
-        if !self.stances.can_command(player, self.regiments.owner[i]) {
-            return Err(Refusal::Unknown);
-        }
+        self.can_cast(player, hero, slot)?;
+        let h = self.hero_of(hero).ok_or(Refusal::Unknown)?;
         let a = h.ability(slot).ok_or(Refusal::Unknown)?;
-        if a.passive {
-            return Err(Refusal::Unknown);
-        }
-        // Why the hero can't cast it at all comes before a wrong target, so
-        // the game can ask with any target before the ability is aimed.
-        if rank(slot, h.level) == 0 {
-            return Err(Refusal::Locked);
-        }
-        if h.cooling(slot, self.tick) > 0 {
-            return Err(Refusal::Cooling);
-        }
-        if self.regiments.stunned(i) || self.regiments.cocooned(i) {
-            return Err(Refusal::Stunned);
-        }
         if !target.fits(a.aim) {
             return Err(Refusal::Unknown);
         }
@@ -614,8 +586,18 @@ impl World {
             if !foe || !self.faces(player, t) {
                 return Err(Refusal::Unseen);
             }
+            let foreclosure = h.kit.is_some_and(|k| k.kit == Kit::Usurer) && slot == 1;
+            if foreclosure && self.regiments.resolve(t).is_some_and(|j| self.sturdy(j)) {
+                return Err(Refusal::Sturdy);
+            }
         }
         Ok(())
+    }
+
+    /// Whether slot `j` stands at half strength or more: too sturdy for
+    /// Foreclosure.
+    fn sturdy(&self, j: usize) -> bool {
+        u32::from(self.regiments.models[j]) * 2 >= u32::from(self.regiments.full_models[j])
     }
 
     /// [`crate::Command::Cast`]: this tick if in reach, else the hero walks
@@ -665,7 +647,7 @@ impl World {
         for k in 0..n {
             self.go_cast(k);
         }
-        self.pulse_zones();
+        self.pulse(None);
     }
 
     /// Compound Interest: each standing Magnate's player banks a share of
@@ -707,7 +689,10 @@ impl World {
         let Some(i) = self.regiments.resolve(r) else {
             return call_off(self);
         };
-        if self.cast_check(h.owner, r, p.slot, p.target).is_err() {
+        if let Err(why) = self.cast_check(h.owner, r, p.slot, p.target) {
+            // It can no longer go off (the target hid, the hero was
+            // stunned): told, as a refusal at the cast is.
+            self.events.cast_refused(r, p.slot, why);
             return call_off(self);
         }
         let to = match p.target {
@@ -974,29 +959,30 @@ impl World {
             }
             (Kit::Usurer, _) => {
                 let j = foe.ok_or(Refusal::Unseen)?;
-                let models = self.regiments.models[j];
-                if u32::from(models) * 2 >= u32::from(self.regiments.full_models[j]) {
+                if self.sturdy(j) {
                     return Err(Refusal::Sturdy);
                 }
+                let models = self.regiments.models[j];
                 self.regiments.kill_last(j, usize::from(models / 3).max(1));
             }
         }
         // The zones' first pulses land with the cast.
-        self.pulse_zones_of(hero);
+        self.pulse(Some(hero));
         Ok(())
     }
 
-    /// The regiments round `at` (see [`round`]).
+    /// The living regiments hostile to `owner` (or friendly, if
+    /// `friends`) whose blocks reach within `tiles` of `at`, in slot order.
     fn round(&self, owner: PlayerId, friends: bool, at: FxVec2, tiles: i32) -> Vec<usize> {
-        round(
-            &self.regiments,
-            &self.units,
-            &self.stances,
-            owner,
-            friends,
-            at,
-            Fx::from_int(tiles),
-        )
+        let (regs, tiles) = (&self.regiments, Fx::from_int(tiles));
+        (0..regs.alive.len())
+            .filter(|&j| {
+                regs.alive[j]
+                    && regs.models[j] > 0
+                    && self.stances.hostile(owner, regs.owner[j]) != friends
+                    && within(regs, &self.units, j, at, tiles)
+            })
+            .collect()
     }
 
     /// The enemies of `owner` whose blocks reach within `half` of the
@@ -1020,7 +1006,7 @@ impl World {
         if !self.regiments.alive[j] || self.regiments.models[j] == 0 {
             return;
         }
-        self.regiments.spell_hit(&self.units, &self.nav, j, hp);
+        crate::combat::hurt(&mut self.regiments, &self.units, &self.nav, j, hp);
         if self.regiments.models[j] == 0 {
             self.regiments.vanish_from_fight(j);
             match &mut self.conquest {
@@ -1162,18 +1148,8 @@ impl World {
     }
 
     /// Every zone pulses when its time comes, and ends when its pulses
-    /// (or what it follows) are gone.
-    fn pulse_zones(&mut self) {
-        self.pulse(None);
-    }
-
-    /// The zones hero `hero` cast this tick pulse at once.
-    fn pulse_zones_of(&mut self, hero: RegimentHandle) {
-        self.pulse(Some(hero));
-    }
-
-    /// The zones (only those `first` cast, with no ticks to wait, for a
-    /// cast's first pulse) pulse.
+    /// (or what it follows) are gone; with `first`, only the zones hero
+    /// `first` cast this tick pulse, at once (a cast's first pulse).
     fn pulse(&mut self, first: Option<RegimentHandle>) {
         let Some(c) = &mut self.conquest else {
             return;
@@ -1212,32 +1188,15 @@ impl World {
 
     /// One pulse of zone `z`.
     fn pulse_once(&mut self, z: &mut Zone) {
-        let tiles = Fx::from_int(i32::from(z.tiles));
         match z.pulse {
             Pulse::Cuts { damage } => {
-                let foes = round(
-                    &self.regiments,
-                    &self.units,
-                    &self.stances,
-                    z.owner,
-                    false,
-                    z.at,
-                    tiles,
-                );
+                let foes = self.round(z.owner, false, z.at, i32::from(z.tiles));
                 for (m, &j) in foes.iter().enumerate() {
                     self.hurt(j, share(u32::from(damage), foes.len(), m));
                 }
             }
             Pulse::Storm { damage } => {
-                let foes = round(
-                    &self.regiments,
-                    &self.units,
-                    &self.stances,
-                    z.owner,
-                    false,
-                    z.at,
-                    tiles,
-                );
+                let foes = self.round(z.owner, false, z.at, i32::from(z.tiles));
                 for j in foes {
                     morale::shake(&mut self.regiments, j, 3, morale::WHY_HERO);
                     self.hurt(j, u32::from(damage));
@@ -1268,9 +1227,11 @@ impl World {
                     return;
                 };
                 let regs = &self.regiments;
+                let tiles = Fx::from_int(i32::from(z.tiles));
                 let reach = u64::from(tiles.raw().unsigned_abs()).pow(2);
                 let dead: u32 = (0..regs.deaths.len())
-                    .filter(|&j| j != g && (regs.position[j] - z.at).length_sq_raw() <= reach)
+                    .filter(|&j| regs.deaths[j] > 0 && j != g)
+                    .filter(|&j| (regs.position[j] - z.at).length_sq_raw() <= reach)
                     .map(|j| u32::from(regs.deaths[j]))
                     .sum();
                 let hp = self.units[usize::from(regs.unit[g])].hp_per_model;
@@ -1287,9 +1248,7 @@ impl World {
     /// Hero slot `i`'s soldier's hit points at full health.
     fn hero_full_hp(&self, i: usize) -> u16 {
         let stats = &self.units[usize::from(self.regiments.unit[i])];
-        stats
-            .hp_per_model
-            .saturating_add(self.regiments.hp_bonus[i])
+        crate::heroes::full_hp(&self.regiments, stats, i)
     }
 }
 

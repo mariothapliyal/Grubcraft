@@ -50,33 +50,23 @@ impl Running {
             self.say(format!("{} works by itself", a.name));
             return;
         }
-        match a.aim {
-            Aim::Hero => self.send_cast(h, slot, CastTarget::Hero),
-            aim => {
-                // Ask with no target first, so a locked or cooling ability
-                // says so at once; a wrong target only means it needs aiming.
-                match self
-                    .world
-                    .cast_check(self.sandbox.side, h, slot, CastTarget::Hero)
-                {
-                    Err(why) if why != gc_sim::structures::Refusal::Unknown => {
-                        self.say(buildings::why(why).into());
-                    }
-                    _ => {
-                        self.hud.armed = Some(Armed::Cast(slot));
-                        let what = if aim == Aim::Point {
-                            "a place"
-                        } else {
-                            "an enemy regiment"
-                        };
-                        self.say(format!(
-                            "{}: click {what} - Esc or right-click to cancel",
-                            a.name
-                        ));
-                    }
-                }
-            }
+        if a.aim == Aim::Hero {
+            return self.send_cast(h, slot, CastTarget::Hero);
         }
+        // A locked or cooling ability says so at once, before any aiming.
+        if let Err(why) = self.world.can_cast(self.sandbox.side, h, slot) {
+            return self.say(buildings::why(why).into());
+        }
+        self.hud.armed = Some(Armed::Cast(slot));
+        let what = if a.aim == Aim::Point {
+            "a place"
+        } else {
+            "an enemy regiment"
+        };
+        self.say(format!(
+            "{}: click {what} - Esc or right-click to cancel",
+            a.name
+        ));
     }
 
     /// The click after aiming ability `slot`: cast it at what was clicked.
@@ -95,7 +85,8 @@ impl Running {
                 .ground_under_cursor()
                 .map(|p| CastTarget::Point(fx_vec(p))),
             Aim::Regiment => self.enemy_under_cursor().map(CastTarget::Regiment),
-            Aim::Hero => Some(CastTarget::Hero),
+            // Cast at once when pressed, never aimed.
+            Aim::Hero => None,
         };
         if let Some(target) = target {
             self.hud.armed = None;

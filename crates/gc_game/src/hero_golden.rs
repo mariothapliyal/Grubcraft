@@ -27,7 +27,7 @@ use gc_sim::{
 use gc_ui::lobby::Tempo;
 
 use crate::conquest;
-use crate::conquest_golden::nearest;
+use crate::conquest_golden::{hero_of, nearest, own};
 use crate::headless::{Headless, Real};
 
 pub const NAME: &str = "conquest-heroes-1v1";
@@ -73,13 +73,6 @@ struct Script {
     middle: (i32, i32),
 }
 
-fn hero_of(world: &World, p: PlayerId) -> Option<RegimentHandle> {
-    world
-        .heroes()
-        .find(|h| h.owner == p)
-        .and_then(|h| h.regiment)
-}
-
 impl Script {
     fn tick(&mut self, world: &World, out: &mut Vec<PlayerCommand>) {
         let t = world.tick_count();
@@ -111,10 +104,9 @@ impl Script {
             }
         }
         if t == HIRE_AT {
-            let st = world.structures().expect("Conquest");
             for (p, building) in [(0, ids.shrine), (1, ids.vault)] {
-                let structure = (st.iter())
-                    .find(|v| v.owner == p && v.building == building)
+                let structure = own(world, p, Some(building))
+                    .first()
                     .expect("hero building")
                     .handle;
                 let unit = ids.heroes[usize::from(p)];

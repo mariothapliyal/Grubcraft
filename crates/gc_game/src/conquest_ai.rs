@@ -622,19 +622,12 @@ mod tests {
                     let Some(r) = h.regiment.and_then(|r| world.regiments.get(r)) else {
                         continue;
                     };
-                    let reach = gc_fixed::Fx::from_int(6);
+                    let reach = (gc_fixed::Fx::from_int(6).raw() as u64).pow(2);
                     let near = (world.regiments.iter())
                         .filter(|f| world.hostile(h.owner, f.owner))
-                        .any(|f| (f.position - r.position).length() <= reach);
-                    let ready = h.ability(0).is_some_and(|a| !a.passive)
-                        && world.cast_check(
-                            h.owner,
-                            r.handle,
-                            0,
-                            gc_sim::abilities::CastTarget::Hero,
-                        ) != Err(gc_sim::structures::Refusal::Cooling);
+                        .any(|f| (f.position - r.position).length_sq_raw() <= reach);
                     if near
-                        && ready
+                        && world.can_cast(h.owner, r.handle, 0).is_ok()
                         && let Some(w) = works.get_mut(usize::from(h.owner))
                     {
                         w.chances += 1;

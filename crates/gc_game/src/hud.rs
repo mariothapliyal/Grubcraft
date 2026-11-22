@@ -2443,11 +2443,11 @@ fn hero_panel<'a>(
             HeroAbility {
                 short: a.map_or("", |a| a.short),
                 rank: gc_sim::abilities::rank(slot, hero.level),
-                max_rank: if slot == 0 { 3 } else { 1 },
+                max_rank: gc_sim::abilities::rank(slot, u8::MAX),
                 passive: a.is_some_and(|a| a.passive),
-                cooldown_secs: hero
-                    .cooling(slot, world.tick_count())
-                    .div_ceil(gc_sim::TICKS_PER_SECOND),
+                cooldown_secs: crate::faction_powers::cooling_secs(
+                    hero.cooling(slot, world.tick_count()),
+                ),
             }
         }),
         items: [None; 3],

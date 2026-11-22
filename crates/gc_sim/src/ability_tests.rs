@@ -410,15 +410,12 @@ fn spawn_brood_puts_regiments_down_beside_the_queen_that_vanish_and_feed_nobody(
 fn foreclosure_takes_a_third_of_a_regiment_below_half_strength_only() {
     let (mut w, r) = hero(Kit::Usurer, 6);
     let foe = spawn(&mut w, 1, LINE, 64, 70);
-    // Taken, but refused when it goes off: told, and no cooldown spent.
-    assert!(cast(&mut w, r, 1, CastTarget::Regiment(foe)));
-    assert!(w.events().iter().any(|e| matches!(
-        e,
-        crate::events::Event::CastRefused {
-            why: Refusal::Sturdy,
-            ..
-        }
-    )));
+    // Refused at the order: too sturdy, and no cooldown spent.
+    assert_eq!(
+        w.cast_check(0, r, 1, CastTarget::Regiment(foe)),
+        Err(Refusal::Sturdy)
+    );
+    assert!(!cast(&mut w, r, 1, CastTarget::Regiment(foe)));
     assert_eq!(models(&w, foe), 24);
     assert_eq!(w.hero_of(r).unwrap().cooling(1, w.tick_count()), 0);
     let fi = slot(&w, foe);

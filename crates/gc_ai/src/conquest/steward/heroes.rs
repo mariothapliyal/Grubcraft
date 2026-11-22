@@ -101,8 +101,9 @@ impl Steward {
     /// Each of its heroes casts the first of its abilities (the ultimate,
     /// then the basic one) that is ready and has a foe to go at: the
     /// nearest standing foe it sees, within [`FIGHT_TILES`] for one cast on
-    /// the hero, within reach for one aimed. Foreclosure waits for a foe
-    /// below half strength.
+    /// the hero, within reach for one aimed (and, at a regiment, one the
+    /// cast would be taken for: Foreclosure waits for a foe below half
+    /// strength).
     pub(super) fn cast_abilities(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
         let reaction = s.reaction;
         self.cast
@@ -117,26 +118,36 @@ impl Steward {
             if self.cast.iter().any(|&(h, _)| h == me.handle) {
                 continue;
             }
-            let nearest = |reach: f32, weak: bool| {
+            // The nearest foe within `reach` that `fits` (one a cast
+            // aimed at it would be taken for).
+            let nearest = |reach: f32, fits: &dyn Fn(&Seen) -> bool| {
                 (foes.iter())
-                    .filter(|f| !weak || u32::from(f.models) * 2 < u32::from(f.full))
-                    .map(|f| (f, f.pos.distance(me.pos)))
-                    .filter(|&(_, d)| d <= reach)
+                    .map(|f| (f, f.pos.distance_squared(me.pos)))
+                    .filter(|&(f, d)| d <= reach * reach && fits(f))
                     .min_by(|a, b| a.1.total_cmp(&b.1))
                     .map(|(f, _)| *f)
             };
             for slot in [1, 0] {
-                let Some(a) = hero.ability(slot).filter(|a| !a.passive) else {
+                // Locked, cooling or passive: nothing to aim.
+                if s.world.can_cast(s.party, me.handle, slot).is_err() {
+                    continue;
+                }
+                let Some(a) = hero.ability(slot) else {
                     continue;
                 };
                 let reach = f32::from(a.range);
                 let target = match a.aim {
-                    Aim::Hero => nearest(FIGHT_TILES, false).map(|_| CastTarget::Hero),
+                    Aim::Hero => nearest(FIGHT_TILES, &|_| true).map(|_| CastTarget::Hero),
                     Aim::Point => {
-                        nearest(reach, false).map(|f| CastTarget::Point(to_fx_vec(f.pos)))
+                        nearest(reach, &|_| true).map(|f| CastTarget::Point(to_fx_vec(f.pos)))
                     }
-                    Aim::Regiment => nearest(reach, a.name == "Foreclosure")
-                        .map(|f| CastTarget::Regiment(f.handle)),
+                    // Only a foe the cast would be taken for (Foreclosure
+                    // wants one below half strength).
+                    Aim::Regiment => nearest(reach, &|f| {
+                        let t = CastTarget::Regiment(f.handle);
+                        s.world.cast_check(s.party, me.handle, slot, t).is_ok()
+                    })
+                    .map(|f| CastTarget::Regiment(f.handle)),
                 };
                 let Some(target) = target else {
                     continue;
