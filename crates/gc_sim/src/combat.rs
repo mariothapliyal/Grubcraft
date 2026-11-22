@@ -2422,24 +2422,27 @@ impl Combat {
                 let Some(target) = regs.target[j] else {
                     return;
                 };
-                let end = brigades.of(j).map_or(target, |(_, end)| end);
-                let far = (end - them.centre).length();
                 let toward = nav.steer(j, target).map_or(target, |(point, _)| point);
                 let ahead = (toward - them.centre).normalized();
-                if far.raw() <= 0 || ahead == FxVec2::ZERO {
+                if ahead == FxVec2::ZERO {
                     return;
                 }
-                let right = FxVec2::new(Fx::ZERO - ahead.y, ahead.x);
-                let (its_length, its_width) = (them.extent_along(ahead), them.extent_along(right));
+                let its_length = them.extent_along(ahead);
                 let to_me = me.centre - them.centre;
                 let along = to_me.dot(ahead);
                 let my_length = me.extent_along(ahead);
                 if along - my_length >= its_length + WAY_AHEAD
                     || along + my_length <= Fx::ZERO - its_length
-                    || along + my_length >= far - its_length
                 {
                     return;
                 }
+                // Measured only for one coming its way, as most are not.
+                let end = brigades.of(j).map_or(target, |(_, end)| end);
+                if along + my_length >= (end - them.centre).length() - its_length {
+                    return;
+                }
+                let right = FxVec2::new(Fx::ZERO - ahead.y, ahead.x);
+                let its_width = them.extent_along(right);
                 let across = to_me.dot(right);
                 let depth = its_width + me.extent_along(right) - across.abs();
                 lanes.edge |= depth + pace + CROWDING > Fx::ZERO;
