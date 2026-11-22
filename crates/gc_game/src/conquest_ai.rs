@@ -598,28 +598,37 @@ pub(crate) mod tests {
             let u = usize::from(unit);
             worth[u] * u32::from(models) / per_model[u]
         };
-        type Alive = (PlayerId, gc_sim::UnitId, u16, gc_fixed::FxVec2);
+        // A fighter regiment as sampled: owner, unit, soldiers, where, in melee.
+        type Alive = (PlayerId, gc_sim::UnitId, u16, gc_fixed::FxVec2, bool);
         let mut alive: std::collections::HashMap<gc_sim::RegimentHandle, Alive> =
             Default::default();
         // Kills credited by unit id, and those no fighter was near, a side.
         let mut kills_by_unit = vec![vec![0u32; worth.len()]; factions.len()];
         let mut kills_other = vec![0u32; factions.len()];
         // Who struck a regiment's soldiers down: the other side's fighter
-        // regiments (each one a share) in melee within
-        // [`CREDIT_MELEE_TILES`] of it, or shooting units within their range
-        // and a tile of it, whether or not they loosed just then.
-        let strikers = |world: &World, side: PlayerId, at: gc_fixed::FxVec2| -> Vec<usize> {
+        // regiments (each one a share), as they stood at the last sample or
+        // stand now (so a killer that fell in the same second still counts),
+        // in melee within [`CREDIT_MELEE_TILES`] of it, or shooting units
+        // within their range and a tile of it, whether or not they loosed
+        // just then.
+        type Sample = std::collections::HashMap<gc_sim::RegimentHandle, Alive>;
+        let strikers = |samples: [&Sample; 2], side: PlayerId, at: gc_fixed::FxVec2| {
             let near = gc_fixed::Fx::from_int(CREDIT_MELEE_TILES);
-            (world.regiments.iter())
-                .filter(|r| r.owner == side && worth[usize::from(r.unit)] > 0)
-                .filter(|r| {
-                    let d = (r.position - at).length();
-                    let range = units[usize::from(r.unit)].range;
-                    (r.engaged && d <= near)
-                        || (range > gc_fixed::Fx::ZERO && d <= range + gc_fixed::Fx::ONE)
+            let mut by: Vec<(gc_sim::RegimentHandle, usize)> = samples
+                .iter()
+                .flat_map(|s| s.iter())
+                .filter(|&(_, &(owner, unit, _, pos, engaged))| {
+                    let d = (pos - at).length();
+                    let range = units[usize::from(unit)].range;
+                    owner == side
+                        && ((engaged && d <= near)
+                            || (range > gc_fixed::Fx::ZERO && d <= range + gc_fixed::Fx::ONE))
                 })
-                .map(|r| usize::from(r.unit))
-                .collect()
+                .map(|(&h, &(_, unit, ..))| (h, usize::from(unit)))
+                .collect();
+            by.sort_unstable_by_key(|&(h, _)| (h.index, h.generation));
+            by.dedup_by_key(|&mut (h, _)| h);
+            by.into_iter().map(|(_, u)| u).collect::<Vec<usize>>()
         };
         while world.verdict().is_none() && world.tick_count() < end {
             cmds.clear();
@@ -694,17 +703,17 @@ pub(crate) mod tests {
                         }
                     }
                 }
-                let now: std::collections::HashMap<_, _> = world
+                let now: Sample = world
                     .regiments
                     .iter()
                     // Players' fighters only, not neutrals.
                     .filter(|r| usize::from(r.owner) < ledgers.len())
                     .filter(|r| worth[usize::from(r.unit)] > 0)
-                    .map(|r| (r.handle, (r.owner, r.unit, r.models, r.position)))
+                    .map(|r| (r.handle, (r.owner, r.unit, r.models, r.position, r.engaged)))
                     .collect();
-                for (h, &(owner, unit, m, at)) in &alive {
+                for (h, &(owner, unit, m, at, _)) in &alive {
                     let left = match now.get(h) {
-                        Some(&(_, u, n, _)) if u == unit => n,
+                        Some(&(_, u, n, ..)) if u == unit => n,
                         Some(_) => continue,
                         None => 0,
                     };
@@ -717,15 +726,15 @@ pub(crate) mod tests {
                             let other = 1 - usize::from(owner);
                             let l = &mut ledgers[other];
                             l.killed += w;
-                            let by = strikers(&world, other as PlayerId, at);
+                            let by = strikers([&alive, &now], other as PlayerId, at);
                             if by.is_empty() {
                                 kills_other[other] += w;
                             } else {
                                 l.first_kill.get_or_insert(t);
                             }
+                            // Shared out whole, the remainder to the first.
+                            let share = w / by.len().max(1) as u32;
                             for (k, u) in by.iter().enumerate() {
-                                // Shared out whole, the remainder to the first.
-                                let share = w / by.len() as u32;
                                 let extra = if k == 0 { w % by.len() as u32 } else { 0 };
                                 kills_by_unit[other][*u] += share + extra;
                             }
@@ -1133,7 +1142,7 @@ pub(crate) mod tests {
             }
         });
         let mut results = results.into_inner().unwrap();
-        // In job order, whichever thread finished first.
+        // The same order whichever thread finished first: by seed, then seats.
         results.sort_by_key(|(f, seed, _)| (*seed, f[0], f[1]));
         results
     }

@@ -76,9 +76,10 @@ jobs:
     # The balance tournament (docs/29, "Automatic balance tournament";
     # crates/gc_game/src/balance_gate.rs): every pair of factions in
     # Conquest on two maps and in Field Battles on the lobby's rosters, both
-    # seed sets. It fails when a pair is clearly outside 40 to 60% or a
-    # faction's first army comes a minute before everyone else's, and its
-    # report goes on the run page and in balance-report. The Warlord contest
+    # seed sets. Its report goes on the run page and in balance-report; it
+    # says FAIL when a pair is clearly outside 40 to 60% or a faction's first
+    # army comes a minute before everyone else's, but only fails the job
+    # once BALANCE_STRICT below is '1' (when main is inside the band). The Warlord contest
     # asserts too; the sandbox units.ron table is printed only.
     name: Balance runs
     needs: changed

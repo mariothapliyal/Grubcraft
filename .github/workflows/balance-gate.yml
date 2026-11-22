@@ -42,7 +42,6 @@ jobs:
           ACTION: ${{ github.event.action }}
           LABEL: ${{ github.event.label.name }}
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
-          BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           # A label added or taken off reruns this only for the two
           # balance labels, not for sim-next and the like.
@@ -50,7 +49,9 @@ jobs:
              && [ "$LABEL" != balance ] && [ "$LABEL" != balance-accepted ]; then
             echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          changed=$(git diff --name-only "$(git merge-base "$BASE" HEAD)" HEAD)
+          # The checkout is the PR merged into main: its first parent is
+          # main, so this is what the PR itself changes.
+          changed=$(git diff --name-only HEAD^1 HEAD)
           if grep -qE -f <(grep -vE '^(#|\s*$)' scripts/balance-paths) <<<"$changed" \
              || [[ " $LABELS " == *" balance "* ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"

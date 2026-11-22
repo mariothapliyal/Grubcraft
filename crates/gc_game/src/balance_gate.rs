@@ -124,10 +124,13 @@ fn pair_fails(sets: &[Tally]) -> bool {
     agree && sure
 }
 
-/// Judge one pair over its seed sets: a failure or a note for `where_`,
-/// and the start of its table row (the pair, each set, both, undecided).
+/// Judge one pair over its seed sets: a failure or a note for `where_`
+/// (and a note when over a quarter of its games were still going after
+/// `limit`), and the start of its table row (the pair, each set, both,
+/// undecided).
 fn judge(
     where_: &str,
+    limit: &str,
     label: &str,
     sets: &[Tally],
     failures: &mut Vec<String>,
@@ -144,6 +147,13 @@ fn judge(
     } else if side_of(all.share()) != 0 {
         warnings.push(format!(
             "{where_}: {label} {score}, outside the band but within the noise"
+        ));
+    }
+    let games = all.decided() + all.open;
+    if all.open * 4 > games {
+        warnings.push(format!(
+            "{where_}: {label}: {} of {games} games undecided after {limit}",
+            all.open
         ));
     }
     let row = format!(
@@ -167,7 +177,10 @@ use gc_sim::TICKS_PER_SECOND as TPS;
 #[derive(Default)]
 struct FactionLine {
     games: u32,
+    /// When its first army was ready, a game it never came in counting
+    /// at that game's end; and the games it came in.
     ready: Vec<u32>,
+    reached: u32,
     first_kill: Vec<u32>,
     /// Grub and Marrow a minute by 5 and 10 minutes (sums, and games).
     income: [(u32, u32, u32); 2],
@@ -246,6 +259,7 @@ fn balance_tournament() {
         .flat_map(|a| (a + 1..n).map(move |b| (a, b)))
         .filter(|&(a, b)| only.is_empty() || has(a) || has(b))
         .collect();
+    assert!(!pairs.is_empty(), "BALANCE_FACTION: no faction {only:?}");
 
     let mut failures = Vec::new();
     let mut warnings = Vec::new();
@@ -294,7 +308,7 @@ fn balance_tournament() {
                         Some(_) => t.lost += 1,
                         None => t.open += 1,
                     }
-                    if let Some(v) = p.verdict {
+                    if let Some(v) = p.verdict.filter(|_| p.winner().is_some()) {
                         length.push(v.tick);
                     }
                     let i = usize::from(f[0] != a);
@@ -304,14 +318,15 @@ fn balance_tournament() {
                 tallies.push(t);
             }
             let label = format!("{} v {}", fname(a), fname(b));
-            let (all, row) = judge(map.name, &label, &tallies, &mut failures, &mut warnings);
-            let games = all.decided() + all.open;
-            if all.open * 4 > games {
-                warnings.push(format!(
-                    "{}: {label}: {} of {games} games undecided after {minutes} minutes",
-                    map.name, all.open
-                ));
-            }
+            let limit = format!("{minutes} minutes");
+            let (_, row) = judge(
+                map.name,
+                &limit,
+                &label,
+                &tallies,
+                &mut failures,
+                &mut warnings,
+            );
             out += &format!(
                 "{row} | {} | {ka} v {kb} |\n",
                 mean(&length).map_or("-".into(), clock)
@@ -322,7 +337,8 @@ fn balance_tournament() {
                 let l = &mut lines[f[i]];
                 let l_ = &side.ledger;
                 l.games += 1;
-                l.ready.extend(l_.army_ready);
+                l.ready.push(l_.army_ready.unwrap_or(p.ticks));
+                l.reached += u32::from(l_.army_ready.is_some());
                 l.first_kill.extend(l_.first_kill);
                 for (k, m) in [5, 10].into_iter().enumerate() {
                     let at = MARKS.iter().position(|&x| x == m).expect("a mark");
@@ -350,7 +366,7 @@ fn balance_tournament() {
     if !maps.is_empty() {
         out += &format!(
             "\n## Each faction over its Conquest games\n\nFirst army: its fighters first worth {ARMY_READY} \
-             (Grub + 2 Marrow of their cost). First attack: its fighters first kill an enemy fighter. \
+             (Grub + 2 Marrow of their cost), a game it never came in counting at its end. First attack: its fighters first kill an enemy fighter. \
              Kill shares are estimated: a loss is shared among the killer's fighters in melee near it or \
              in shooting range; \"other\" is towers, powers and fire.\n\n\
              | Faction | Games | Won | First army | Reached in | First attack | Grub/Marrow a min by 5 min | by 10 min | Most kills | Winning armies |\n\
@@ -375,18 +391,18 @@ fn balance_tournament() {
                 l.games,
                 l.won,
                 ready[f].map_or("never".into(), clock),
-                l.ready.len(),
+                l.reached,
                 l.games,
                 mean(&l.first_kill).map_or("-".into(), clock),
                 rate(0),
                 rate(1),
                 top(&l.winning_army, &names, 3, 0)
             );
-            if l.games > 0 && (l.ready.len() as u32) * 5 < l.games * 4 {
+            if l.games > 0 && l.reached * 5 < l.games * 4 {
                 warnings.push(format!(
                     "{}: first army ready in only {} of {} games",
                     fname(f),
-                    l.ready.len(),
+                    l.reached,
                     l.games
                 ));
             }
@@ -461,6 +477,7 @@ fn balance_tournament() {
             let label = format!("{} v {}", a.name(), b.name());
             let (_, row) = judge(
                 "Field Battle",
+                "ten minutes",
                 &label,
                 &tallies,
                 &mut failures,

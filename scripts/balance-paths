@@ -9,5 +9,7 @@
 ^crates/gc_sim/src/(combat|economy|morale|veterancy)\.rs$
 ^crates/gc_sim/src/economy/
 ^crates/gc_game/src/(roster|conquest)\.rs$
-^crates/gc_game/src/(balance_gate|field_balance)\.rs$
+^crates/gc_sim/src/(larvae|evolve)\.rs$
+^crates/gc_game/src/(balance_gate|conquest_ai|field_balance)\.rs$
+^tools/gc_bake/src/rosters\.rs$
 ^scripts/balance-paths$

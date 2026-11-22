@@ -24,8 +24,9 @@
 
 ## Batched checks
 
-- The slow runs are not per PR: the balance runs (Warlord contest, Field
-  Battle and roster tables, Conquest balance), the full map sweeps (`SWEEP=1`;
+- The slow runs are not per PR: the balance runs (Warlord contest, the
+  sandbox Field Battle table and the balance tournament, which also runs on
+  PRs that change `scripts/balance-paths` files), the full map sweeps (`SWEEP=1`;
   a PR checks a quarter of the grown and lobby maps) and real-match
   screenshots run
   in `.github/workflows/batch.yml`, every six hours when main has moved, and
