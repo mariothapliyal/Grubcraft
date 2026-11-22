@@ -132,6 +132,22 @@ impl Bodies {
         }
     }
 
+    /// Every pair of high bodies (upper, lower) where a river runs from
+    /// the upper on down into the lower, sorted.
+    fn falls(&self) -> Vec<(u16, u16)> {
+        let mut pairs: Vec<(u16, u16)> = (self.chains.iter())
+            .flat_map(|c| {
+                c.iter()
+                    .enumerate()
+                    .flat_map(move |(k, &a)| c[k + 1..].iter().map(move |&b| (a, b)))
+            })
+            .filter(|&(_, b)| b != 0)
+            .collect();
+        pairs.sort_unstable();
+        pairs.dedup();
+        pairs
+    }
+
     /// How many bodies stand over the line, for reports.
     #[cfg(test)]
     pub(super) fn lakes_and_reaches(&self) -> usize {
@@ -160,10 +176,14 @@ pub(super) fn settle(h: &mut Grid, body: &[u16], bodies: &mut Bodies, keep: &[bo
 }
 
 /// Lower each body until no dry land beside its water lies under it, and
-/// keep the rivers running downhill, until nothing changes. (A river's
-/// own lower reach beside it is not a bank: water falls into it.)
+/// keep the rivers running downhill, until nothing changes. Dry land is
+/// any tile above its own water, whichever body it belongs to: a lake
+/// beside another river's dry bank spills over it as over open ground.
+/// (A river's own lower reach beside it is not a bank, wet or dry: water
+/// falls into it.)
 fn contain(h: &mut Grid, body: &[u16], bodies: &mut Bodies) {
     let n = h.n as i32;
+    let falls_into = bodies.falls();
     let mut was = bodies.level.clone();
     bodies.order();
     for round in 0..=ROUNDS {
@@ -184,7 +204,8 @@ fn contain(h: &mut Grid, body: &[u16], bodies: &mut Bodies) {
                         continue;
                     }
                     let k = (py * n + px) as usize;
-                    if body[k] == 0 && h.v[k] >= WATER_LINE {
+                    let c = body[k];
+                    if h.v[k] >= bodies.level(c) && falls_into.binary_search(&(b, c)).is_err() {
                         let r = &mut rim[usize::from(b)];
                         *r = (*r).min(h.v[k]);
                     }
@@ -337,6 +358,33 @@ mod tests {
         bodies.add(5 * ONE);
         settle(&mut h, &body, &mut bodies, &keep);
         assert_eq!(bodies.level(1), WATER_LINE);
+    }
+
+    #[test]
+    fn another_bodys_dry_bank_is_a_bank_but_a_lower_reach_is_not() {
+        let keep = vec![false; 24 * 24];
+        // Beside the lake, a tile of another body (a lake of its own, not
+        // on any river with this one) left dry at 4.5 tiles: the lake
+        // spills over it.
+        let (mut h, mut body) = bowl(6 * ONE);
+        let bank = 12 * 24 + 18;
+        h.v[bank] = 4 * ONE + ONE / 2;
+        let mut bodies = Bodies::new();
+        bodies.add(5 * ONE);
+        body[bank] = bodies.add(3 * ONE);
+        settle(&mut h, &body, &mut bodies, &keep);
+        assert_eq!(bodies.level(1), 4 * ONE + ONE / 2 - MARGIN);
+        // The same tile as the lake's own lower reach: the water falls
+        // into it, and the lake keeps its level.
+        let (mut h, mut body) = bowl(6 * ONE);
+        h.v[bank] = 4 * ONE + ONE / 2;
+        let mut bodies = Bodies::new();
+        let lake = bodies.add(5 * ONE);
+        let reach = bodies.add(3 * ONE);
+        body[bank] = reach;
+        bodies.chain([lake, reach, 0]);
+        settle(&mut h, &body, &mut bodies, &keep);
+        assert_eq!(bodies.level(lake), 5 * ONE);
     }
 
     #[test]
