@@ -237,9 +237,67 @@ fn a_friend_standing_in_the_way_is_gone_round() {
 }
 
 #[test]
+fn a_friend_at_ease_makes_way_and_steps_back() {
+    let mut w = world(&nav(false));
+    let standing = spawn(&mut w, 0, 32, 30, NORTH);
+    let b = spawn(&mut w, 0, 32, 45, NORTH);
+    // Straight through the friend's spot and on.
+    order(&mut w, move_to(b, 32, 10));
+    let mut stepped = Fx::ZERO;
+    for _ in 0..30 * 20 {
+        w.tick(&[]);
+        let (s, m) = (
+            w.regiments.get(standing).unwrap(),
+            w.regiments.get(b).unwrap(),
+        );
+        assert_eq!((s.disorder, m.disorder), (0, 0), "pushed through");
+        stepped = stepped.max((s.position - FxVec2::from_ints(32, 30)).length());
+    }
+    // Half of the way: the marcher steps aside the other half.
+    assert!(
+        stepped > Fx::from_int(2),
+        "never stepped aside: {stepped:?}"
+    );
+    let s = w.regiments.get(standing).unwrap();
+    assert_eq!((s.position, s.facing), (FxVec2::from_ints(32, 30), NORTH));
+}
+
+#[test]
+fn one_making_way_never_steps_into_a_friend_holding_its_ground() {
+    let mut w = world(&nav(false));
+    let held = spawn(&mut w, 0, 25, 30, NORTH);
+    order(
+        &mut w,
+        Command::Hold {
+            regiment: held,
+            on: true,
+        },
+    );
+    spawn(&mut w, 0, 32, 30, NORTH);
+    // Through the right half of the one at ease, whose way out is left,
+    // toward the one holding.
+    let b = spawn(&mut w, 0, 34, 45, NORTH);
+    order(&mut w, move_to(b, 34, 10));
+    for _ in 0..30 * 20 {
+        w.tick(&[]);
+        let h = w.regiments.get(held).unwrap();
+        assert_eq!(h.disorder, 0, "stepped into");
+        assert_eq!(h.position, FxVec2::from_ints(25, 30));
+    }
+}
+
+#[test]
 fn friends_pushing_through_each_other_fall_out_of_order_and_re_form() {
     let mut w = world(&nav(false));
     let standing = spawn(&mut w, 0, 32, 30, NORTH);
+    // Told to hold its ground, so it doesn't make way.
+    order(
+        &mut w,
+        Command::Hold {
+            regiment: standing,
+            on: true,
+        },
+    );
     let b = spawn(&mut w, 0, 32, 45, NORTH);
     // Ordered onto the friend's very spot it pushes in (keeping its
     // spacing never takes it off its goal), then marches on out of it.

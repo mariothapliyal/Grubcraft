@@ -147,6 +147,48 @@ fn short_adjustments_shuffle_without_wheeling_round() {
 }
 
 #[test]
+fn a_short_move_with_no_facing_sidesteps_or_backs_into_place() {
+    // Three tiles to its right, or three behind: it keeps facing north all
+    // the way, sidestepping or backing, and never faces about.
+    for (target, most_ticks) in [((53, 50), 34), ((50, 53), 44)] {
+        let (mut w, h) = one_regiment();
+        order(&mut w, h, FxVec2::from_ints(target.0, target.1), None, 0);
+        let ticks = run_until_still_facing(&mut w, h, NORTH, 400);
+        let r = view(&w, h);
+        assert_eq!(
+            (r.position, r.abouts),
+            (FxVec2::from_ints(target.0, target.1), 0)
+        );
+        // 3 tiles at 3 tiles/s: three quarters pace sideways (27 ticks; half
+        // pace would take 40), half pace backing (40 ticks).
+        assert!(ticks <= most_ticks, "{target:?} took {ticks} ticks");
+    }
+}
+
+#[test]
+fn a_longer_move_with_no_facing_still_turns_and_walks() {
+    let (mut w, h) = one_regiment();
+    order(&mut w, h, FxVec2::from_ints(60, 50), None, 0);
+    run_until_still(&mut w, h, 2_000);
+    let r = view(&w, h);
+    assert_eq!(r.position, FxVec2::from_ints(60, 50));
+    assert!(r.facing.delta_to(EAST).abs() <= 2, "{:?}", r.facing);
+}
+
+/// Like `run_until_still`, checking every tick that it still faces `facing`.
+fn run_until_still_facing(w: &mut World, h: RegimentHandle, facing: Angle, max_ticks: u32) -> u32 {
+    for t in 0..max_ticks {
+        let r = view(w, h);
+        assert_eq!(r.facing, facing, "turned on tick {t}");
+        if !r.moving {
+            return t;
+        }
+        w.tick(&[]);
+    }
+    panic!("still moving after {max_ticks} ticks: {:?}", view(w, h));
+}
+
+#[test]
 fn frontage_changes_and_is_clamped() {
     let (mut w, h) = one_regiment();
     order(&mut w, h, FxVec2::from_ints(50, 50), None, 12);

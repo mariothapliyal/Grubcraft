@@ -76,9 +76,36 @@ fn wheeling_pace(pace: Fx, off: i32) -> Option<Fx> {
     Some(Fx::from_raw(pace.raw() - cut as i32).max(Fx::from_raw(1)))
 }
 /// An order with an explicit facing that ends within this distance is done as
-/// a shuffle: the block turns toward its final facing and steps there at half
-/// pace instead of wheeling round to face the way it walks.
+/// a shuffle: the block turns toward its final facing and steps there
+/// instead of wheeling round to face the way it walks (see
+/// [`drilled_pace`]). An order with no facing given to a block standing
+/// this near keeps the facing it has (see [`Regiments::order`]).
 const SHUFFLE_DISTANCE: Fx = Fx::from_int(4);
+
+/// How fast a block steps without turning toward the way it goes, out of
+/// `pace`, for the step `delta` (`dist` long) while it faces `facing`: at
+/// full pace ahead (within 45 degrees of its front), three quarters
+/// sidestepping and half backing (within 45 degrees of its rear).
+fn drilled_pace(pace: Fx, facing: Angle, delta: FxVec2, dist: Fx) -> Fx {
+    if dist.raw() <= 0 {
+        return Fx::from_raw(pace.raw() / 2);
+    }
+    // Cosine of 45 degrees, times the step's length.
+    let diagonal = dist * Fx::from_ratio(181, 256);
+    let ahead = facing.to_vec().dot(delta);
+    let percent = if ahead >= diagonal {
+        100
+    } else if ahead <= Fx::ZERO - diagonal {
+        50
+    } else {
+        SIDESTEP_PERCENT
+    };
+    Fx::from_raw((i64::from(pace.raw()) * percent / 100) as i32)
+}
+
+/// How fast a block sidesteps, out of its pace: into a small move's place
+/// (see [`drilled_pace`]) and out of friends' way (see `Combat::make_way`).
+pub(crate) const SIDESTEP_PERCENT: i64 = 75;
 /// A waypoint short of the end of a route counts as reached within this
 /// many tiles.
 const WAYPOINT_NEAR: Fx = Fx::ONE;
@@ -389,6 +416,17 @@ regiment_fields! {
     keep: u8 = 0,
     /// The step aside it last found it needed, kept up between looks.
     aside: i16 = 0,
+    /// Where it stood before it stepped aside to make way for friends
+    /// marching through (see `Combat::make_way`): it steps back once they
+    /// are by. None while it stands where it was put.
+    home: Option<FxVec2> = None,
+    /// Looks (see `Combat::make_way`) it has spent stepping back since the
+    /// last friend marched by.
+    way_wait: u8 = 0,
+    /// On a small move (see `SHUFFLE_DISTANCE`): it steps at drilled pace
+    /// (see [`drilled_pace`]), not the half pace of the last steps into
+    /// place at the end of a march.
+    drill: bool = false,
     /// Ticks left until it is back in order (0: in order).
     disorder: u8 = 0,
     /// Ticks it has stepped forward since it last halted or fought, up to
@@ -868,9 +906,26 @@ impl Regiments {
         if self.morale_state[i].broken() {
             return false;
         }
+        // A block standing a few tiles from where it is sent, with no
+        // facing given, steps there as drilled men do: facing the way it
+        // faces, sidestepping or backing, not turning round to walk and
+        // turning back (see `SHUFFLE_DISTANCE`).
+        // (A lone body, a worker or a beast, just turns and walks.)
+        // (Standing, or already that near where it was sent: the same
+        // short order given again is still one.)
+        let near = |p: FxVec2| {
+            (p - self.position[i]).length_sq_raw() <= (SHUFFLE_DISTANCE.raw() as u64).pow(2)
+        };
+        let short = self.is_block(i)
+            && self.target[i].is_none_or(near)
+            && self.attack_target[i].is_none()
+            && near(order.target);
         self.target[i] = Some(order.target);
-        self.target_facing[i] = order.facing;
+        self.target_facing[i] = order.facing.or(short.then_some(self.facing[i]));
+        self.drill[i] = short;
         self.set_seeks_place(i, false);
+        self.home[i] = None;
+        self.way_wait[i] = 0;
         self.attack_target[i] = None;
         self.braced[i] = false;
         self.hold[i] = false;
@@ -1200,6 +1255,19 @@ impl Regiments {
         self.keep[j] = (self.keep[j] & !KEEP_APART) | ticks.min(KEEP_APART);
     }
 
+    /// Whether slot `i` is a block of soldiers, which drills (small moves
+    /// without turning, facing about), not a lone body (a hero, a worker,
+    /// a beast).
+    pub(crate) fn is_block(&self, i: usize) -> bool {
+        self.models[i] > 1
+    }
+
+    /// Where slot `j` stands: where it stood before it stepped aside to
+    /// make way (see `Combat::make_way`), else where it is.
+    pub(crate) fn stands(&self, j: usize) -> FxVec2 {
+        self.home[j].unwrap_or(self.position[j])
+    }
+
     pub(crate) fn marching(&self, j: usize) -> bool {
         self.target[j].is_some() && self.engaged[j].is_none()
     }
@@ -1222,6 +1290,7 @@ impl Regiments {
         self.target[i] = None;
         self.set_seeks_place(i, false);
         self.target_facing[i] = None;
+        self.drill[i] = false;
         self.attack_target[i] = None;
     }
 
@@ -1290,6 +1359,7 @@ impl Regiments {
         self.set_seeks_place(i, false);
         self.attack_target[i] = Some(target);
         self.target_facing[i] = None;
+        self.drill[i] = false;
         self.braced[i] = false;
         self.hold[i] = false;
         self.backing[i] = 0;
@@ -1412,6 +1482,7 @@ impl Regiments {
         self.braced[i] = true;
         self.target[i] = None;
         self.target_facing[i] = None;
+        self.drill[i] = false;
         self.attack_target[i] = None;
         self.held[i] = 0;
         true
@@ -1437,6 +1508,7 @@ impl Regiments {
         self.hold[i] = true;
         self.target[i] = None;
         self.target_facing[i] = None;
+        self.drill[i] = false;
         self.attack_target[i] = None;
         self.backing[i] = 0;
         self.held[i] = 0;
@@ -1525,6 +1597,7 @@ impl Regiments {
                     // to step back again.
                     self.target[i] = None;
                     self.target_facing[i] = None;
+                    self.drill[i] = false;
                 }
             }
         }
@@ -1763,6 +1836,7 @@ impl Regiments {
             hold: self.hold[i],
             skirmish: self.skirmish[i],
             stepping_back: self.backing[i] > 0,
+            made_way: self.home[i],
             running: self.run_left[i] > 0,
             winded: self.winded_left[i] > 0,
             torches: self.torches[i],
@@ -1880,6 +1954,7 @@ impl Regiments {
                 if self.falling_back[i] == 0 {
                     self.target[i] = None;
                     self.target_facing[i] = None;
+                    self.drill[i] = false;
                 }
             }
             // Halting, fighting or backing away ends a run-up.
@@ -1971,7 +2046,7 @@ impl Regiments {
                     let want = self.target_facing[i].unwrap();
                     // Told to face back the way it came: it faces about.
                     if i32::from(self.facing[i].delta_to(want)).abs() > ABOUT_FACE
-                        && self.models[i] > 1
+                        && self.is_block(i)
                         && self.falling_back[i] == 0
                         && !self.morale_state[i].broken()
                     {
@@ -1979,13 +2054,20 @@ impl Regiments {
                         continue;
                     }
                     self.facing[i] = self.facing[i].turn_toward(want, turn);
-                    Fx::from_raw(pace.raw() / 2).max(Fx::from_raw(1))
+                    // Into place at the end of a march, or a lone body (a
+                    // worker, a beast): at half pace.
+                    let drilled = if self.drill[i] {
+                        drilled_pace(pace, self.facing[i], delta, dist)
+                    } else {
+                        Fx::from_raw(pace.raw() / 2)
+                    };
+                    drilled.max(Fx::from_raw(1))
                 } else {
                     let travel = Angle::of_vec(delta);
                     // Its way lies behind it: it faces about (in good order;
                     // a routing block just turns and runs).
                     if i32::from(self.facing[i].delta_to(travel)).abs() > ABOUT_FACE
-                        && self.models[i] > 1
+                        && self.is_block(i)
                         && !self.morale_state[i].broken()
                     {
                         self.face_about(i);
@@ -2227,6 +2309,7 @@ impl Regiments {
                 self.facing[i] = self.facing[i].turn_toward(want, turn);
                 if self.facing[i] == want {
                     self.target_facing[i] = None;
+                    self.drill[i] = false;
                 }
             }
         }
@@ -2303,7 +2386,8 @@ pub struct RegimentView {
     pub formation: Formation,
     /// Soldiers still standing.
     pub models: u16,
-    /// Walking or turning to an ordered facing.
+    /// Walking or turning to an ordered facing (not stepping aside to make
+    /// way and back: see `made_way`).
     pub moving: bool,
     /// Not marching: standing, turning or fighting. Formation discipline
     /// goes by this, not `moving` (see [`Regiments::still`]).
@@ -2342,6 +2426,9 @@ pub struct RegimentView {
     /// stepping back from it just now.
     pub skirmish: bool,
     pub stepping_back: bool,
+    /// Stepped aside to make way for friends marching through, where it
+    /// stood before (see `Combat::make_way`): it steps back once they are by.
+    pub made_way: Option<FxVec2>,
     /// Running (see [`Regiments::run`]), or winded after a run.
     pub running: bool,
     pub winded: bool,

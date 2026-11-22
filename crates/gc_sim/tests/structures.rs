@@ -354,16 +354,28 @@ fn fortified_halls_take_half_and_rams_triple() {
                 structure: hall
             }
         ));
-        for _ in 0..30 * TICKS_PER_SECOND {
+        // Over 20 s from its first blow, so how long it took to walk up
+        // (a small move for a block, see `SHUFFLE_DISTANCE`) doesn't count.
+        let hp = |w: &World| w.structures().unwrap().get(hall).unwrap().hp;
+        let mut first = None;
+        for t in 0..60 * TICKS_PER_SECOND {
             w.tick(&[]);
+            if first.is_none() && hp(&w) < 3000 {
+                first = Some(t);
+            }
+            if first.is_some_and(|f| t >= f + 20 * TICKS_PER_SECOND) {
+                break;
+            }
         }
-        3000 - w.structures().unwrap().get(hall).unwrap().hp
+        assert!(first.is_some(), "never struck");
+        3000 - hp(&w)
     };
     // Unit 0 (8 files, 3 a blow) against unit 3 (10 files, 3 a blow, siege).
     let spears = hp_after(SPEARS);
     let ram = hp_after(3);
     assert!(spears > 0);
-    // Per second: 24 × 0.5 = 12 against 30 × 3 = 90.
+    // Per second: 24 × 0.5 = 12 against 30 × 3 = 90 (237 and 1782 over
+    // the 20 s).
     let ratio = ram * 10 / spears;
     assert!((70..=80).contains(&ratio), "ram/spears ×10 = {ratio}");
 }

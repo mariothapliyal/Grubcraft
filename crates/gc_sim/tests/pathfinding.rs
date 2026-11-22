@@ -499,10 +499,23 @@ fn blocks_file_through_a_gap_one_behind_another() {
     let blocks: Vec<_> = (0..3)
         .map(|k| spawn(&mut w, 0, SPEARS, 41 + 7 * k, 42, NORTH))
         .collect();
-    // The nearest the gap goes first, so it goes furthest.
-    for (k, &r) in blocks.iter().enumerate() {
-        move_to(&mut w, 0, r, 55, 20 - 6 * k as i32);
-    }
+    // The nearest the gap goes first, so it goes furthest. One order for
+    // the three, as a group order gives them (one by one, a tick apart, the
+    // two still standing would make way for the first to go).
+    let orders: Vec<_> = (blocks.iter().enumerate())
+        .map(|(k, &regiment)| PlayerCommand {
+            player: 0,
+            command: Command::MoveTo {
+                regiment,
+                target: FxVec2::from_ints(55, 20 - 6 * k as i32),
+                facing: None,
+                files: 0,
+                pace: Fx::ZERO,
+                brigade: 0,
+            },
+        })
+        .collect();
+    w.tick(&orders);
     let mut disordered = 0;
     for _ in 0..20 * 120 {
         w.tick(&[]);
