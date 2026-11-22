@@ -515,8 +515,10 @@ impl Clips {
     /// Where the chest of a man of `model` lying dead (or knocked down,
     /// which ends the same way) is from his position, in tiles at the
     /// model's size: `y` ahead along the facing he fell with (negative when
-    /// he fell on his back: about 0.7 tiles behind his feet for an Ember man,
-    /// more for a bigger one), `x` to his left. `look` is his, as for
+    /// he fell on his back: about 0.7 tiles behind his feet in an Ember
+    /// man's own death, more for a bigger one, 0.3 in the library's, which
+    /// keep the hips on the spot; positive in its fall onto the face), `x` to
+    /// his left. `look` is his, as for
     /// [`Clips::death`]. A finisher strikes there. `None` for a model with no
     /// death move or not posed from a skeleton.
     pub fn lying_chest(&self, model: usize, look: u8) -> Option<glam::Vec2> {

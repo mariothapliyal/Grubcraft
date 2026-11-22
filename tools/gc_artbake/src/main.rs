@@ -176,7 +176,8 @@ struct MoveConfig {
     /// The glTF animation's name.
     anim: String,
     act: String,
-    #[serde(default = "any")]
+    /// Left out (empty), any.
+    #[serde(default)]
     weapon: String,
     /// In place of `weapon`, several the move is made for alike (a plain
     /// death a katana man and a yari man play too, beside their own, since
@@ -242,9 +243,12 @@ impl MoveConfig {
         if self.weapons.is_empty() {
             return Ok(vec![tags]);
         }
-        if self.weapon != any() || self.pair.is_some() {
+        let mut seen = self.weapons.clone();
+        seen.sort();
+        seen.dedup();
+        if !self.weapon.is_empty() || self.pair.is_some() || seen.len() != self.weapons.len() {
             return Err(format!(
-                "move {:?}: weapons is in place of weapon, and not for a kill",
+                "move {:?}: weapons is in place of weapon, names each once, and is not for a kill",
                 self.anim
             ));
         }
@@ -314,7 +318,14 @@ impl MoveConfig {
             .unwrap_or(matches!(act, Act::Idle | Act::Walk | Act::Run | Act::Guard));
         Ok(rig::Tags {
             act,
-            weapon: named(&Weapon::ALL, &self.weapon, "weapon")?,
+            weapon: named(
+                &Weapon::ALL,
+                match self.weapon.as_str() {
+                    "" => "Any",
+                    w => w,
+                },
+                "weapon",
+            )?,
             side: named(&Side::ALL, &self.side, "side")?,
             mask: named(&Mask::ALL, &self.mask, "mask")?,
             flags: if loops { LOOPS } else { 0 } | if self.additive { ADDITIVE } else { 0 },
@@ -2253,6 +2264,8 @@ mod tests {
         // In place of `weapon`, and never for a kill, whose halves pair.
         for bad in [
             r#"(anim: "D", act: "Death", weapon: "Spear", weapons: ["Any"])"#,
+            r#"(anim: "D", act: "Death", weapon: "Any", weapons: ["Spear"])"#,
+            r#"(anim: "D", act: "Death", weapons: ["Spear", "Spear"])"#,
             r#"(anim: "K", act: "Killed", contact: Some(0.4), pair: Some("P"), weapons: ["Any"])"#,
         ] {
             assert!(weapons(bad).is_err(), "{bad}");
