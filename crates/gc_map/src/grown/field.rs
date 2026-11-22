@@ -273,6 +273,64 @@ pub(crate) fn distance(mask: &[bool], n: usize, cap: i32) -> Grid {
     }
 }
 
+/// As [`distance`], with the `value` of the nearest tile of the mask
+/// carried along: each tile's distance (whole tiles, at most `cap`) and
+/// the value of the mask tile nearest it (`far` where none is within the
+/// cap). Ties go to the value found first, so it is the same everywhere.
+pub(crate) fn nearest(
+    mask: &[bool],
+    value: &[i32],
+    n: usize,
+    cap: i32,
+    far_value: i32,
+) -> (Grid, Vec<i32>) {
+    debug_assert!(cap <= 4096, "the cap is in whole tiles");
+    const STEPS: [(i64, i64, i32); 8] = [
+        (-1, 0, 5),
+        (0, -1, 5),
+        (-1, -1, 7),
+        (1, -1, 7),
+        (-1, -2, 11),
+        (1, -2, 11),
+        (-2, -1, 11),
+        (2, -1, 11),
+    ];
+    let far = cap.saturating_mul(5);
+    let mut d: Vec<i32> = mask.iter().map(|&m| if m { 0 } else { far }).collect();
+    let mut v: Vec<i32> = (mask.iter().zip(value))
+        .map(|(&m, &x)| if m { x } else { far_value })
+        .collect();
+    let ni = n as i64;
+    let mut relax = |d: &mut Vec<i32>, x: i64, y: i64, sign: i64| {
+        let i = (y * ni + x) as usize;
+        for &(dx, dy, c) in &STEPS {
+            let (px, py) = (x + sign * dx, y + sign * dy);
+            if (0..ni).contains(&px) && (0..ni).contains(&py) {
+                let k = (py * ni + px) as usize;
+                if d[k] + c < d[i] {
+                    d[i] = d[k] + c;
+                    v[i] = v[k];
+                }
+            }
+        }
+    };
+    for y in 0..ni {
+        for x in 0..ni {
+            relax(&mut d, x, y, 1);
+        }
+    }
+    for y in (0..ni).rev() {
+        for x in (0..ni).rev() {
+            relax(&mut d, x, y, -1);
+        }
+    }
+    let grid = Grid {
+        n,
+        v: d.iter().map(|&x| (x.min(far) * ONE) / 5).collect(),
+    };
+    (grid, v)
+}
+
 /// The four tiles beside tile `i` on an `n`-wide grid, in the order
 /// left, right, up, down (searches rely on the order for their ties).
 pub(crate) fn n4(i: usize, n: usize) -> impl Iterator<Item = usize> {

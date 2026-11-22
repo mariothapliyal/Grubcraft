@@ -28,9 +28,10 @@ const WRECK_TIMBERS: usize = 2;
 const WRECK_TIMBER: [u8; 3] = [112, 106, 100];
 
 /// The river's surface at `at` (tiles), on a map drawn with water at
-/// `level`: the river's own line over it, raised by the rivers' rise.
+/// `level`: the river's own line over it (its tile's own level on highland
+/// water), raised by the rivers' rise.
 pub fn surface(t: &gc_sim::terrain::Terrain, level: f32, at: gc_fixed::FxVec2) -> f32 {
-    let line = t.water_line() - i32::from(t.water_level()) + i32::from(t.river_rise(at));
+    let line = t.water_line_at(at) - i32::from(t.water_level()) + i32::from(t.river_rise(at));
     level + line as f32 / HEIGHT_UNITS as f32
 }
 

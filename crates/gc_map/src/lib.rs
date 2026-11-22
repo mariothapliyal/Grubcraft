@@ -259,6 +259,92 @@ mod tests {
         }
     }
 
+    /// Highland water (docs/27 stage 5) is the same water to the routes and
+    /// to the simulation: a tile whose middle the simulation has under its
+    /// own level is wading or deep water on the route grid, and one well
+    /// above it is not.
+    #[test]
+    fn routes_and_the_simulation_agree_on_highland_water() {
+        let mut highland = 0;
+        for choice in [GROWN + 1, GROWN + 2, GROWN + 3] {
+            let map = FieldMap {
+                choice,
+                tiles: 256,
+                seed: 7,
+            }
+            .make();
+            if map.levels.is_empty() {
+                continue;
+            }
+            let nav = map.nav_costs();
+            let world = gc_sim::World::new(&gc_sim::MatchSetup {
+                seed: 1,
+                capacities: gc_sim::Capacities::default(),
+                units: &gc_sim::scenario::DRILL_UNITS,
+                map_tiles: map.tiles,
+                nav: &nav,
+                teams: &[],
+                ground: map.ground(),
+                champions: false,
+                sky: gc_sim::Sky::STILL,
+                generals: false,
+            });
+            let terrain = world.terrain();
+            let per = gc_sim::nav::CELLS_PER_TILE as usize;
+            let side = map.tiles as usize * per;
+            let (mut agree, mut asked) = (0, 0);
+            for (i, &level) in map.levels.iter().enumerate() {
+                let height = map.heights[i];
+                if level == 0 || height.abs_diff(level) < 24 {
+                    continue;
+                }
+                let (x, y) = (i % map.tiles as usize, i / map.tiles as usize);
+                let centre = gc_fixed::FxVec2::new(
+                    gc_fixed::Fx::from_int(x as i32) + gc_fixed::Fx::HALF,
+                    gc_fixed::Fx::from_int(y as i32) + gc_fixed::Fx::HALF,
+                );
+                let wet = terrain.wet(centre);
+                assert_eq!(wet, height < level, "tile {x},{y}");
+                // The tile's middle is the corner its four cells share.
+                let cells =
+                    (0..per * per).map(|k| nav[(y * per + k / per) * side + x * per + k % per]);
+                let watery = cells
+                    .map(|c| c == gc_sim::nav::BLOCKED || c == gc_sim::nav::FORD)
+                    .collect::<Vec<_>>();
+                asked += 1;
+                // Wet: some cell is water. Dry: not all are (a cliff
+                // blocks too).
+                agree += usize::from(if wet {
+                    watery.iter().any(|&w| w)
+                } else {
+                    !watery.iter().all(|&w| w)
+                });
+                highland += usize::from(wet);
+                // A dry shore tile with dry land all round has no wading
+                // cell: the shore band stops short of falling land.
+                let n = map.tiles as usize;
+                let dry_round = (y > 0 && y + 1 < n && x > 0 && x + 1 < n)
+                    && (0..9).all(|k| {
+                        let j = (y + k / 3 - 1) * n + x + k % 3 - 1;
+                        map.heights[j] >= map.level_of(j)
+                    });
+                if !wet && dry_round {
+                    let fords = (0..per * per)
+                        .filter(|k| {
+                            nav[(y * per + k / per) * side + x * per + k % per] == gc_sim::nav::FORD
+                        })
+                        .count();
+                    assert_eq!(fords, 0, "{choice}: wading on dry shore tile {x},{y}");
+                }
+            }
+            assert!(
+                agree * 100 >= asked * 97,
+                "{choice}: {agree} of {asked} agree"
+            );
+        }
+        assert!(highland > 0, "no highland water on the grown maps");
+    }
+
     /// Like the shipped maps' fingerprints: the random Field Battle maps
     /// build the same bytes on every machine. The recipes and the stamping
     /// set these numbers, so a change to either changes every random map.
@@ -292,11 +378,11 @@ mod tests {
         assert_eq!(at_320(4), 0x4810_c8ad_25ff_bc7c);
         // Grown land: erosion and the river lines (and their current) are
         // the parts most likely to drift, and each of the dials.
-        assert_eq!(hash(GROWN + 1), 0x3da9_8726_78fc_399a);
-        assert_eq!(hash(GROWN + 2), 0x578d_13c7_0514_9c14);
-        assert_eq!(hash(GROWN + 3), 0xc066_8667_d169_3f40);
+        assert_eq!(hash(GROWN + 1), 0xe074_8d2a_70f5_2b14);
+        assert_eq!(hash(GROWN + 2), 0x5907_fd65_e138_8588);
+        assert_eq!(hash(GROWN + 3), 0x70cf_08d8_a817_2132);
         // Measured fairness: the start search, its settling on the true
         // walks and the paired sites.
-        assert_eq!(hash(MEASURED + 2), 0x5857_1669_2429_96ac);
+        assert_eq!(hash(MEASURED + 2), 0xf164_1f72_b03f_38c9);
     }
 }

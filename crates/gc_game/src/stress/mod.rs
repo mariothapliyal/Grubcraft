@@ -37,6 +37,7 @@ mod forest_pass;
 mod gate;
 mod gated_towns;
 mod heroes;
+mod high_water;
 mod mountain;
 mod new_orders;
 mod orders;
@@ -97,6 +98,7 @@ const SCENARIOS: &[Scenario] = &[
     charges::SCENARIO,
     heroes::SCENARIO,
     dropped::SCENARIO,
+    high_water::SCENARIO,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.

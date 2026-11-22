@@ -59,6 +59,10 @@ pub const HASHES_KEPT: usize = 256;
 
 /// A player silent this long has lost the connection.
 pub const PLAYER_TIMEOUT: Duration = Duration::from_secs(3);
+/// Turns in a row a rejoining machine plays without falling behind before
+/// it counts as caught up (two seconds).
+pub const CAUGHT_UP_TURNS: u32 = 2 * gc_sim::TICKS_PER_SECOND;
+
 /// A host silent this long has gone.
 pub const HOST_TIMEOUT: Duration = Duration::from_secs(5);
 /// With "Pause and wait", how long a match waits for a player who lost
@@ -313,6 +317,13 @@ struct ClientGame {
     /// When the next turn is due on this machine's clock.
     due: Option<Instant>,
     outbox: Vec<PlayerCommand>,
+    /// Joined a match already under way (a rejoin after a restart), and
+    /// still replaying it: set until this machine has kept up for
+    /// [`CAUGHT_UP_TURNS`] turns in a row (the turns arrive in bursts, so
+    /// a replay outrunning a burst for a moment isn't caught up yet).
+    rejoining: bool,
+    /// Turns in a row played without being behind, while rejoining.
+    kept_up: u32,
 }
 
 struct Client {
@@ -568,6 +579,22 @@ impl Lan {
         match &self.role {
             Role::Client(c) => c.game.as_ref().is_some_and(ClientGame::behind),
             _ => false,
+        }
+    }
+
+    /// While this machine replays a match it rejoined after a restart: the
+    /// turns played so far and all the turns received (it grows as the
+    /// match goes on and the rest of the history arrives), for a progress
+    /// bar. `None` otherwise, and once it has kept up for
+    /// [`CAUGHT_UP_TURNS`] turns (a later stall doesn't bring it back).
+    pub fn rejoin_progress(&self) -> Option<(u32, u32)> {
+        match &self.role {
+            Role::Client(c) => c
+                .game
+                .as_ref()
+                .filter(|g| g.rejoining)
+                .map(|g| (g.next_turn, g.next_turn + g.ready.len() as u32)),
+            _ => None,
         }
     }
 
@@ -1150,6 +1177,10 @@ impl Lan {
                     next_turn: 0,
                     due: None,
                     outbox: Vec::new(),
+                    // A rejoiner gets the start without a lobby place
+                    // first (no Welcome): the match is already under way.
+                    rejoining: c.slot.is_none(),
+                    kept_up: 0,
                 });
                 self.events.push(NetEvent::Started(MatchStart {
                     settings,
@@ -2361,7 +2392,12 @@ fn client_turn(g: &mut ClientGame, now: Instant, length: Duration) -> Option<Vec
     let base = if now > due + length * 2 { now } else { due };
     g.due = Some(base + length);
     g.next_turn += 1;
-    g.ready.pop_front()
+    let turn = g.ready.pop_front();
+    if g.rejoining {
+        g.kept_up = if g.behind() { 0 } else { g.kept_up + 1 };
+        g.rejoining = g.kept_up < CAUGHT_UP_TURNS;
+    }
+    turn
 }
 
 impl Lan {

@@ -426,7 +426,7 @@ pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
     let mut picture = MinimapTerrain::from_fn(terrain_cells(tiles), |u, v| {
         let (x, z) = (u * n, v * n);
         let h = hm.height_at(x, z);
-        if h < hm.water_level() {
+        if h < hm.water_at(x, z) {
             return [44, 84, 128, 255];
         }
         let tile = z as usize * tiles as usize + x as usize;
@@ -807,11 +807,18 @@ impl Running {
         // The online match kit: the pause and the team's surrender vote as
         // the host tells them, the live pings and where they are on screen.
         let in_net_match = self.online.as_ref().is_some_and(|o| o.ended.is_none());
-        let (hold, vote, pauses_left) = if in_net_match {
+        let (hold, vote, pauses_left, catch_up) = if in_net_match {
             let lan = self.menu.network();
-            (lan.hold(), lan.surrender_vote(), lan.pauses_left())
+            let catch_up = (lan.rejoin_progress())
+                .map(|(done, total)| gc_ui::match_kit::CatchUpBanner { done, total });
+            (
+                lan.hold(),
+                lan.surrender_vote(),
+                lan.pauses_left(),
+                catch_up,
+            )
         } else {
-            (None, None, None)
+            (None, None, None, None)
         };
         if let Some(o) = &mut self.online {
             o.tidy_pings(now_ms);
@@ -1378,6 +1385,7 @@ impl Running {
                 pings: &ping_marks,
                 vote: vote_banner,
                 pause: pause_banner,
+                catch_up,
                 wheel,
             },
         };
@@ -2256,7 +2264,7 @@ fn ground_word(world: &gc_sim::World, p: gc_fixed::FxVec2) -> &'static str {
     if rivers.on_floodplain(x, y) && rivers.shuts(x, y) {
         "In deep flood water: hurt every second, get to high ground"
     } else if terrain.wet(p) {
-        if terrain.height(p) >= i32::from(terrain.water_level()) {
+        if terrain.height(p) >= i32::from(terrain.tile_level(x, y)) {
             // Dry land the water has risen over.
             "In flood water: slow, no charges"
         } else if terrain.snagged(p) {

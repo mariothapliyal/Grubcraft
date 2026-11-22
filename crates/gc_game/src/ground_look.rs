@@ -111,7 +111,7 @@ fn snow_caps(map: &Map) -> Vec<u8> {
             let land = map
                 .land_at(i)
                 .or_else(|| map.habitat.get(i).map(|&b| Habitat::from_u8(b).land()));
-            land == Some(Land::Highland) && map.heights[i] > map.water
+            land == Some(Land::Highland) && map.heights[i] > map.level_of(i)
         })
         .collect();
     let mut high: Vec<u16> = (0..tiles)

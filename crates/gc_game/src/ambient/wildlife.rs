@@ -460,7 +460,7 @@ fn open_at(map: &Map, p: Vec2, floor: f32) -> bool {
         && p.y > edge
         && p.x < side
         && p.y < side
-        && map.height_at(p.x, p.y) > map.water_level() + floor
+        && map.height_at(p.x, p.y) > map.water_at(p.x, p.y) + floor
 }
 
 /// Whether an animal may step from `a` to `b` (a little way): `b` open to
@@ -989,7 +989,7 @@ mod tests {
         run_for(&mut w, &map, 90.0, focus, &[]);
         assert!(!w.seen().is_empty());
         for d in w.seen() {
-            assert!(map.height_at(d.pos.x, d.pos.y) > map.water_level());
+            assert!(map.height_at(d.pos.x, d.pos.y) > map.water_at(d.pos.x, d.pos.y));
         }
         let kinds: HashSet<_> = w.seen().iter().map(|s| format!("{:?}", s.doing)).collect();
         assert!(!kinds.contains("Bolt"));
@@ -1367,7 +1367,7 @@ mod tests {
         for x in 2..tiles - 2 {
             for y in 2..tiles - 2 {
                 let p = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
-                let above = map.height_at(p.x, p.y) - map.water_level();
+                let above = map.height_at(p.x, p.y) - map.water_at(p.x, p.y);
                 if above > heron.floor && above <= deer.floor {
                     shallow = Some(p);
                 } else if above <= heron.floor {
@@ -1395,7 +1395,7 @@ mod tests {
                 &[],
             );
             for s in w.seen() {
-                let above = map.height_at(s.pos.x, s.pos.y) - map.water_level();
+                let above = map.height_at(s.pos.x, s.pos.y) - map.water_at(s.pos.x, s.pos.y);
                 if s.kind == Species::Heron {
                     assert!(above > heron.floor - 0.05, "{:?} {above}", s.pos);
                     waded |= above <= deer.floor;

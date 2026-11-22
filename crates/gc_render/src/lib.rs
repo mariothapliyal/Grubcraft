@@ -112,6 +112,11 @@ pub struct Terrain<'a> {
     /// Height of a sample value of `u16::MAX`, in tiles.
     pub max_height: f32,
     pub water_level: f32,
+    /// Each tile's own water level in tiles, row by row, `size - 1` over
+    /// `samples_per_tile` tiles a side: higher than `water_level` on a
+    /// grown map's highland lakes and rivers and their shores (docs/27
+    /// stage 5). Empty when every tile's water is at `water_level`.
+    pub water_levels: &'a [f32],
     pub heights: &'a [u16],
     /// The cliff cells (`gc_map::Map::cliff_cells`): 1 for each half-tile cell
     /// too steep to climb, row by row, a square of `2 * tiles` cells a side;
@@ -351,9 +356,14 @@ struct TerrainGpu {
     scar_map: wgpu::Texture,
     /// Whether the scar map holds any mark.
     scarred: bool,
-    /// One texel per tile: how far the rivers raise their water there (see
-    /// [`Renderer::set_river_water`]).
+    /// Two half floats a tile: how far the water there stands over the
+    /// water line, in tiles, with how far the rivers raise it (see
+    /// [`Renderer::set_river_water`]), and its own level (`water_base`)
+    /// alone.
     river_map: wgpu::Texture,
+    /// Each tile's own level over the map's water line, in tiles; empty
+    /// when every tile's water is at the line.
+    water_base: Vec<f32>,
     /// Whether the river map holds any rise.
     rivered: bool,
 }
@@ -1420,8 +1430,14 @@ impl Renderer {
         let land_view = land_map.create_view(&wgpu::TextureViewDescriptor::default());
         let scar_map = self.tile_map("ground scars", wgpu::TextureFormat::Rgba8Unorm, tiles);
         let scar_view = scar_map.create_view(&wgpu::TextureViewDescriptor::default());
-        // Rivers at their line (all zero) until `set_river_water`.
-        let river_map = self.tile_map("river water", wgpu::TextureFormat::R8Unorm, tiles);
+        // Each tile's water at its own level, the rivers not raised until
+        // `set_river_water`.
+        let river_map = self.tile_map("river water", wgpu::TextureFormat::Rg16Float, tiles);
+        let water_base = water_base(t.water_levels, t.water_level, tiles);
+        if !water_base.is_empty() {
+            let texels = river_texels(water_base.len(), |i| water_base[i], |_| 0.0);
+            Self::write_tile_map(&self.queue, &river_map, tiles, 4, &texels);
+        }
         let river_view = river_map.create_view(&wgpu::TextureViewDescriptor::default());
         // The ground's look by tile; a single neutral texel when there is
         // none, which the shader reads as nothing to look up.
@@ -1548,7 +1564,7 @@ impl Renderer {
         self.chunk_levels = vec![0; chunk_count as usize];
         self.terrain_gpu_bytes = t.heights.len() as u64 * 2
             + u64::from(tint_side * tint_side) * 4
-            + u64::from(tiles * tiles) * (1 + 4 + 4)
+            + u64::from(tiles * tiles) * (1 + 4 + 4 + 4)
             + u64::from(look_side * look_side) * 4
             + u64::from(mask_side * mask_side)
             + u64::from(occlusion_side * occlusion_side);
@@ -1567,6 +1583,7 @@ impl Renderer {
             scar_map,
             scarred: false,
             river_map,
+            water_base,
             rivered: false,
         });
     }
@@ -1706,27 +1723,25 @@ impl Renderer {
         terrain.scarred = values.is_some();
     }
 
-    /// Raise the rivers' water over the water line: one byte per map tile,
-    /// row by row from the north-west corner, the rise in half height
-    /// units (a tile is 256), so 255 is about two tiles. It is eased
-    /// between tiles. `None` is every river at the line again, as after
-    /// `set_terrain`; it costs nothing when they already are. Does nothing
-    /// before `set_terrain`, or when `values` is not `tiles × tiles` long.
+    /// Raise the rivers' water over its level: one byte per map tile, row
+    /// by row from the north-west corner, the rise in half height units (a
+    /// tile is 256), so 255 is about two tiles. It is eased between tiles.
+    /// `None` is every river at its level again, as after `set_terrain`; it
+    /// costs nothing when they already are. Does nothing before
+    /// `set_terrain`, or when `values` is not `tiles × tiles` long.
     pub fn set_river_water(&mut self, values: Option<&[u8]>) {
         let Some(terrain) = &mut self.terrain else {
             return;
         };
         let tiles = terrain.tiles;
         let n = (tiles * tiles) as usize;
-        match values {
-            Some(v) if v.len() == n => {
-                Self::write_tile_map(&self.queue, &terrain.river_map, tiles, 1, v);
-            }
-            None if terrain.rivered => {
-                Self::write_tile_map(&self.queue, &terrain.river_map, tiles, 1, &vec![0; n]);
-            }
+        let base = |i: usize| terrain.water_base.get(i).copied().unwrap_or(0.0);
+        let texels = match values {
+            Some(v) if v.len() == n => river_texels(n, base, |i| f32::from(v[i]) / 128.0),
+            None if terrain.rivered => river_texels(n, base, |_| 0.0),
             _ => return,
-        }
+        };
+        Self::write_tile_map(&self.queue, &terrain.river_map, tiles, 4, &texels);
         terrain.rivered = values.is_some();
     }
 
@@ -2174,6 +2189,56 @@ impl Renderer {
     }
 }
 
+/// Each tile's own water level over the map's `line`, in tiles, from
+/// [`Terrain::water_levels`]; empty when every tile's is the line (or the
+/// levels are not one a tile).
+fn water_base(levels: &[f32], line: f32, tiles: u32) -> Vec<f32> {
+    if levels.len() != (tiles * tiles) as usize {
+        return Vec::new();
+    }
+    let base: Vec<f32> = levels.iter().map(|&l| (l - line).max(0.0)).collect();
+    if base.iter().all(|&b| b == 0.0) {
+        return Vec::new();
+    }
+    base
+}
+
+/// The river map's `n` texels for an `Rg16Float` texture, little-endian
+/// half floats: red each tile's own level over the line (`base`) with the
+/// rivers' `rise` there, green the level alone (for the falls' white water,
+/// so a swollen river's sloping rise doesn't froth).
+fn river_texels(n: usize, base: impl Fn(usize) -> f32, rise: impl Fn(usize) -> f32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(n * 4);
+    for i in 0..n {
+        let b = base(i);
+        out.extend_from_slice(&half(b + rise(i)).to_le_bytes());
+        out.extend_from_slice(&half(b).to_le_bytes());
+    }
+    out
+}
+
+/// IEEE half float bits of `v`. Rounds to nearest; too small is zero, too
+/// large the largest.
+fn half(v: f32) -> u16 {
+    let bits = v.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exp = ((bits >> 23) & 0xff) as i32 - 127 + 15;
+    let mantissa = bits & 0x7f_ffff;
+    if v.is_nan() {
+        return 0x7e00;
+    }
+    if exp >= 31 {
+        return sign | 0x7bff;
+    }
+    if exp <= 0 {
+        return sign;
+    }
+    // Round to nearest: a carry out of the mantissa bumps the exponent,
+    // which is still the right half float (or the largest, at the top).
+    let rounded = (((exp as u32) << 10) | (mantissa >> 13)) + ((mantissa >> 12) & 1);
+    sign | rounded.min(0x7bff) as u16
+}
+
 fn scaled(width: u32, height: u32, scale: f32) -> (u32, u32) {
     let s = |v: u32| ((v as f32 * scale).round() as u32).max(1);
     (s(width), s(height))
@@ -2618,6 +2683,36 @@ fn srgb_to_linear(c: f32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn half_floats_match_the_standard() {
+        assert_eq!(half(0.0), 0);
+        assert_eq!(half(1.0), 0x3c00);
+        assert_eq!(half(-2.0), 0xc000);
+        assert_eq!(half(0.5), 0x3800);
+        assert_eq!(half(65504.0), 0x7bff);
+        assert_eq!(half(1e9), 0x7bff);
+        assert_eq!(half(1e-9), 0);
+        // Within a half float's step of what went in, over the water's range.
+        for k in 0..2000 {
+            let v = k as f32 * 0.013;
+            let h = half(v);
+            let exp = i32::from((h >> 10) & 0x1f) - 15;
+            let back = (1.0 + f32::from(h & 0x3ff) / 1024.0) * 2f32.powi(exp);
+            let back = if h == 0 { 0.0 } else { back };
+            assert!((back - v).abs() <= v * 0.001 + 1e-4, "{v} came back {back}");
+        }
+    }
+
+    #[test]
+    fn water_base_is_empty_without_high_water() {
+        assert!(water_base(&[], 1.5, 2).is_empty());
+        assert!(water_base(&[1.5; 4], 1.5, 2).is_empty());
+        assert_eq!(
+            water_base(&[1.5, 3.0, 1.0, 1.5], 1.5, 2),
+            vec![0.0, 1.5, 0.0, 0.0]
+        );
+    }
 
     #[test]
     fn grid_indices_cover_every_quad() {

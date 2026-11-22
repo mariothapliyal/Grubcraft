@@ -227,4 +227,6 @@ Launch maps treat water as terrain: shallow fords are walkable and slow, deep wa
 
 **Built so far (M1 step 6):** the placeholder map's walkable ground comes from its heights: ground rising more than 1.2 tiles per tile and water deeper than 0.35 tiles are blocked; slopes over half that and shallow fords are walkable but routes avoid them. Since the terrain rules landed, fords also slow the march to 60% and leave waders open to heavier blows, and high ground hits harder (see [05 · Combat](05-combat.md#terrain)); steep slopes slow the climb since reading the ground (idea 13, 2026-10-24, [32](32-changing-land.md)).
 
+**Built so far (water that runs downhill, 2026-11-22):** a grown map's water need not stand at the one water line. Highland lakes and rivers on high ground have a level of their own per tile, and a river falls from one reach to the next where the land drops; fords, deep water, wading, floods and the drawing all read each tile's own level ([27 · Living Land, stage 5](27-living-land.md#stage-5-water-that-runs-downhill)).
+
 **Built so far (six-player lobbies, 2026-10-16):** the generated map has six flat start plateaus: the four corners (north-west, north-east, south-west and south-east, at the quarter points) plus north-centre and south-centre, in the middle of the map's north and south quarter lines. Generated maps changed as a result.

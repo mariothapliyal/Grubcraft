@@ -415,6 +415,9 @@ pub struct Terrain<'a> {
     /// dry).
     pub heights: &'a [u16],
     pub water: u16,
+    /// Each tile's own water level in the same units, 0 where it is
+    /// `water` (empty: the line everywhere; docs/27 stage 5).
+    pub levels: &'a [u16],
     /// Each tile's ground by the nav rules: 0 walkable, 1 steep, 2 cliff
     /// (empty: all walkable).
     pub ground: Vec<u8>,
@@ -451,6 +454,7 @@ impl<'a> Terrain<'a> {
             habitat: &map.habitat,
             heights: &map.heights,
             water: map.water,
+            levels: &map.levels,
             sites: map.objects.iter().map(|o| (o.kind, o.at)).collect(),
         }
     }
@@ -1343,6 +1347,12 @@ fn build_chunk(
     let flat = t.heights.len() != (n * n) as usize;
     let tile_height = |x: u32, y: u32| f32::from(t.heights[(y * n + x) as usize]);
     let units = gc_sim::terrain::HEIGHT_UNITS as f32;
+    let water_of = |i: usize| {
+        f32::from(match t.levels.get(i) {
+            Some(&l) if l != 0 => l,
+            _ => t.water,
+        })
+    };
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
     for y in oy..(oy + CHUNK).min(n) {
         for x in ox..(ox + CHUNK).min(n) {
@@ -1354,7 +1364,7 @@ fn build_chunk(
                 let h = tile_height(x, y);
                 lo = lo.min(h / units);
                 hi = hi.max(h / units);
-                if h < f32::from(t.water) {
+                if h < water_of(i) {
                     continue;
                 }
                 for (dx, dy) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
@@ -1368,7 +1378,7 @@ fn build_chunk(
                     if ground == OPEN && nground == Some(&CLIFF) && (nh - h) / units > FOOT_RISE {
                         ground = FOOT;
                     }
-                    shore |= nh < f32::from(t.water);
+                    shore |= nh < water_of((ny as u32 * n + nx as u32) as usize);
                 }
             }
             let land = t.land.get(i).map_or(Land::Meadow, |&b| Land::from_u8(b));
@@ -1518,6 +1528,7 @@ mod tests {
                     habitat: &self.habitat,
                     heights: &self.heights,
                     water: 500,
+                    levels: &[],
                     ground: ground_of(&self.heights),
                     sites: self.sites.clone(),
                 },
