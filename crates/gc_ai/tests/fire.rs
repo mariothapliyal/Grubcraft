@@ -89,6 +89,7 @@ fn world(cover: &[u8], spells: &'static [gc_sim::Spell]) -> World {
             growth: &[],
             footing: &[],
             flow: &[],
+            water_levels: &[],
         },
         champions: false,
         sky: Sky {

@@ -104,6 +104,12 @@ pub struct Map {
     /// `gc_sim::Flow` byte per tile, row by row (empty: still water
     /// everywhere, as on a map that wasn't grown).
     pub flow: Vec<u8>,
+    /// The water's own level on each tile, in `HEIGHT_UNITS`, row by row:
+    /// 0 where it is the map's line [`Map::water`], higher on a grown map's
+    /// highland lakes and rivers and their shores (docs/27 stage 5). Empty
+    /// when every tile's water is at the line, as on every map that wasn't
+    /// grown.
+    pub levels: Vec<u16>,
     /// Starts, seeps, veins, hamlets and the rest. A generated map has its
     /// four starts and nothing else.
     pub objects: Vec<Placed>,
@@ -156,6 +162,7 @@ impl Map {
             growth: Vec::new(),
             footing: Vec::new(),
             flow: Vec::new(),
+            levels: Vec::new(),
             objects: Vec::new(),
             set_pieces: Vec::new(),
         }
@@ -230,6 +237,16 @@ impl Map {
             growth: &self.growth,
             footing: &self.footing,
             flow: &self.flow,
+            water_levels: &self.levels,
+        }
+    }
+
+    /// The water's level on tile `i` (row by row) in `HEIGHT_UNITS`: its
+    /// own, or the map's line.
+    pub fn level_of(&self, i: usize) -> u16 {
+        match self.levels.get(i) {
+            Some(&l) if l != 0 => l,
+            _ => self.water,
         }
     }
 
@@ -257,8 +274,12 @@ impl Map {
         let hundredths = |n: i64| (n * i64::from(u16::MAX) / (MAX_HEIGHT * 100)) as u32;
         let cliff = hundredths(CLIFF_RISE_PER_TILE) / cells_per_tile;
         let steep = cliff / 2;
-        let water = u32::from(self.sample_water);
-        let deep = water.saturating_sub(hundredths(FORD_DEPTH));
+        let ford = hundredths(FORD_DEPTH);
+        // Each tile's water as a sample: the map's line, or its own level.
+        let water_of = |tile: usize| match self.levels.get(tile) {
+            Some(&l) if l != 0 => u32::from(sample_of_sim(i64::from(l))),
+            _ => u32::from(self.sample_water),
+        };
         let mut cells = Vec::with_capacity((side * side) as usize);
         for cy in 0..side {
             for cx in 0..side {
@@ -277,6 +298,8 @@ impl Map {
                 let rise = hi - lo;
                 let tile = (cy / cells_per_tile) * self.tiles + cx / cells_per_tile;
                 let thicket = thicket_blocks && self.is_thicket(tile as usize);
+                let water = water_of(tile as usize);
+                let deep = water.saturating_sub(ford);
                 cells.push(if mean < deep || rise > cliff || thicket {
                     gc_sim::nav::BLOCKED
                 } else if mean < water {
@@ -447,7 +470,8 @@ pub fn map_hash(nav: &[u8], ground: &gc_sim::Ground) -> u64 {
         .chain(ground.cover.iter().copied())
         .chain(ground.growth.iter().copied())
         .chain(ground.footing.iter().copied())
-        .chain(ground.flow.iter().copied());
+        .chain(ground.flow.iter().copied())
+        .chain(ground.water_levels.iter().flat_map(|v| v.to_le_bytes()));
     fnv1a(bytes) ^ nav.len() as u64
 }
 

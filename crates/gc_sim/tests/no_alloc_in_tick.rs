@@ -66,6 +66,7 @@ fn ticking_never_allocates() {
             growth: &[],
             footing: &[],
             flow: &[],
+            water_levels: &[],
         },
         champions: true,
         sky: gc_sim::Sky::STILL,

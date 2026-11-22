@@ -426,7 +426,7 @@ pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
     let mut picture = MinimapTerrain::from_fn(terrain_cells(tiles), |u, v| {
         let (x, z) = (u * n, v * n);
         let h = hm.height_at(x, z);
-        if h < hm.water_level() {
+        if h < hm.water_at(x, z) {
             return [44, 84, 128, 255];
         }
         let tile = z as usize * tiles as usize + x as usize;
@@ -2264,7 +2264,7 @@ fn ground_word(world: &gc_sim::World, p: gc_fixed::FxVec2) -> &'static str {
     if rivers.on_floodplain(x, y) && rivers.shuts(x, y) {
         "In deep flood water: hurt every second, get to high ground"
     } else if terrain.wet(p) {
-        if terrain.height(p) >= i32::from(terrain.water_level()) {
+        if terrain.height(p) >= i32::from(terrain.tile_level(x, y)) {
             // Dry land the water has risen over.
             "In flood water: slow, no charges"
         } else if terrain.snagged(p) {

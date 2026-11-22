@@ -1,6 +1,6 @@
 # 27 · Living Land: organic world generation
 
-*Plan, 2026-10-22. Stage 1, grown land, is built (2026-10-23, see [Stage 1 as built](#stage-1-as-built)), and stage 2, ways through (2026-10-24, see [Stage 2 as built](#stage-2-as-built)); stage 3, Measured maps, and stage 4, sites by reason and habitats, are built too (2026-10-25), and [41](41-finish-living-land.md) finished the rest on 2026-10-30 and 2026-10-31 (Conquest on grown land, Measured as the Field Battle default, riversides and trails). Stage 5, water that runs downhill, is a later call for Mario. The fairness model was decided by Mario on 2026-10-22 (see [Fairness](#fairness)).*
+*Plan, 2026-10-22. Stage 1, grown land, is built (2026-10-23, see [Stage 1 as built](#stage-1-as-built)), and stage 2, ways through (2026-10-24, see [Stage 2 as built](#stage-2-as-built)); stage 3, Measured maps, and stage 4, sites by reason and habitats, are built too (2026-10-25), and [41](41-finish-living-land.md) finished the rest on 2026-10-30 and 2026-10-31 (Conquest on grown land, Measured as the Field Battle default, riversides and trails). Stage 5, water that runs downhill, is built too (2026-11-22, see [Stage 5](#stage-5-water-that-runs-downhill)). The fairness model was decided by Mario on 2026-10-22 (see [Fairness](#fairness)).*
 
 Mario asked for maps that are "truly random, truly chaotic, like nature", where no two things are alike. Today's maps tend to be lines, ovals and circles. This document says why, what replaces it, how maps stay fair, how the biomes get depth, and the order of the work. The concept page with prototype maps is the "Grubcraft Living Land" artifact (https://claude.ai/artifact/S9PTV2MgvKnoHBFZ16s6Wt). The Python prototype that made them is in the project files under `design/world-gen/proto/`.
 
@@ -102,7 +102,7 @@ Each stage is playable on its own.
 2. **Ways through and walkable mountains.** The pass and ford carver, ramps from soft strata, and shallows on wide rivers. This absorbs "Natural mountains, stage 2" from the [roadmap](13-roadmap.md). Golden replays are re-recorded if shipped maps change.
 3. **Measured fairness.** The start search, resource fields at equal walks, equal clearings, team-aware balance, Conquest shares placed by walking distance, fairness limits and reroll in `gc_mapcheck`, the lobby's Fairness option, and the generator version stored with the map choice in replays and the protocol.
 4. **Biome look and sites by reason.** Ground materials per habitat, riverside dressing, trails and the few new scenery models. Sites placed by the rules above, with Conquest lairs guarding the rich fields.
-5. **Optional: water that runs downhill.** The game has one water line for the whole map, so rivers sit in valleys cut down to it (see [07 · Water](07-world-and-maps.md#water-later)). Highland lakes and falling rivers need a water level per tile. That touches the simulation's ground and the water drawing, so it is its own decision.
+5. **Water that runs downhill.** The game had one water line for the whole map, so rivers sat in valleys cut down to it. Highland lakes and falling rivers need a water level per tile, which touches the simulation's ground and the water drawing. Built 2026-11-22: see [Stage 5](#stage-5-water-that-runs-downhill).
 
 ## Stage 1 as built
 
@@ -195,6 +195,55 @@ Each stage is playable on its own.
   - Under Measured, the best place that has a partner in the south wins.
 - **Scenery by habitat** and the five new models (stump, fallen log, alder, sedge tussock, scree): see [25 · Scenery models](25-scenery-models.md).
 - **Not built:** ~~riverside dressing (gravel bars, reeds, beaches), worn trails~~ (built 2026-10-31, [41 step 3](41-finish-living-land.md#step-3-as-built)), ~~ground materials per habitat~~ (built 2026-10-24, [36](36-habitat-ground.md)), and ~~Conquest lairs guarding rich fields~~ (built with [41 step 1](41-finish-living-land.md#step-1-as-built)).
+
+## Stage 5: water that runs downhill
+
+*Plan, 2026-11-22. Mario's go: "Do number 2, then 3 then 4 then 1" (item 4, Living Land stage 5 with the marsh, forest and desert animals). Built the same day, as this section describes.*
+
+**What was wrong.** The map had one water line. The generator cut every river channel, lake floor and valley down to it, so a river that rose in the hills ran at the bottom of a valley carved to the lowest level of the map, and a basin up on a highland was dug out into a pit at sea level before it could hold a lake. There were no highland lakes, no rivers on a plateau and nothing that fell.
+
+**What changes.** Each tile can have a water level of its own. Water stands on a tile wherever the ground is below that tile's level. Tiles with no level of their own keep the map's line, so the low rivers, lakes, coasts and every Classic map are as they were.
+
+### How the generator sets the levels (`crates/gc_map/src/grown/water.rs`, `levels.rs`)
+
+High water comes in **bodies**, each flat at one level: a highland lake, or a **reach** of a river (16 tiles of its line). Body 0 is the map's line. A river is a chain of reaches, each at or below the one upstream, so where the land falls the river steps down from one reach to the next: a fall.
+
+1. **Rivers follow the land down.** Along each river line the level is taken from the drained land (the priority flood's filled heights, which only fall going downstream): the lowest filled ground under and beside the channel at each point, less a channel a tile deep (`INCISE`), never below the map's line and never rising downstream (a running minimum from the source). A tributary joins at the level of the river it joins. Each reach takes the level at its lower end. A reach less than half a tile (`HIGH`) over the line is at the line: low rivers come out exactly as before, and rivers in the hills stay up in the hills.
+2. **Falls and rapids.** Where one reach is lower than the next one up, the water steps down: a fall, drawn as white water. Where the bed drops more than an eighth of a tile a run, the current there is fast (`Flow` speed 3). Nothing is added for them: they come from the land.
+3. **Highland lakes.** A basin the flood filled is a lake at its own level: a tile under the height where the basin spills (its brim), and no higher than its highest ground. A lake less than half a tile over the line, or smaller than 300 tiles, stays as it was.
+4. **Valleys and banks** ease down to a gentle bank a little above the water's own level, not the map's line, so a high river runs in a shallow valley of its own. The low water's valleys never cut the rims of high water (a guard two tiles round it). Channel beds and lake floors are cut below their own level, fords are raised to just under it (never where the level changes within six tiles, so never at a fall), and the ways (ramps and passes, stage 2) treat each tile's own level as the water.
+5. **Kept in its banks.** After the ways have cut their ramps, every body is checked: no dry tile at the map's line next to its water may lie lower than its level. A body that would spill is lowered to a sixteenth of a tile under its lowest rim, its bed sinks with it, and the reaches below it are lowered to stay at or under it; this repeats until nothing spills (at most 64 rounds; a body still spilling then falls to the line).
+6. **The shore.** Dry tiles within six tiles of high water whose ground stands at or over its level, with nothing lower round them but that water, take that level too (the nearest water's). They stay dry; it keeps the water's surface flat out to the bank for drawing. The last tile before the land falls away (or before lower water) keeps the line, so the drawn surface never climbs over lower ground and no dry slope reads as wading. A moved start's clearing never takes a shore's level.
+7. **Both halves.** The water is laid out on one half and turned onto the other, as before, so mirrored levels are each other's turned copies. Measured land, Conquest's grown land and the fairness walks read the levels with the heights.
+
+### The simulation
+
+- `Ground::water_levels`: one level per tile (in height units, 0 for the map's line), or empty for none (`Map::levels`). `Terrain` keeps it beside the heights, and every water question reads the tile's own level: in water (`wet`), how deep, fords and shallows (`tile_within`), the floodplain (a highland river's is the shore that shares its level), the ground rain soaks, and anything built over water. A rain flood raises all water by its rise and summer low water drops it, and the rivers' stretches raise their water over each tile's own level, so floods, currents, debris, jams and bridges work on high rivers as on low ones. In winter only the fords and shallows freeze over, as on low water; deep high water stays open.
+- The nav grid's deep water and fords come from each tile's own level, so routes, crossings and the computer players' reading of the land follow it with no new rule. A fall is deep water, so it is blocked like the rest of the deep river.
+- The layer goes in replays after the flow (`FORMAT` 57); old replays carry none and play on as before. `SIM_VERSION` 95, which players compare in the lobby, covers the new maps; no network message changed shape, so `PROTOCOL` stays. A map without high water carries an empty layer and costs nothing.
+
+### Drawing
+
+The renderer's river texture is now the water's height over the map's line on every tile, in tiles (a 16-bit float, not a byte): the tile's own level (`Terrain::water_levels`) plus any river rise (`set_river_water`). The water, the riverbed, wading soldiers and everything standing on water read that one surface, eased between tile centres, as they read the river's rise before. Where the water's own level falls steeply with water on both sides (a fall) it is drawn white, with churned streaks that run with the time; the texture keeps the level alone beside the level with the rise (two half floats a tile), so a swollen river's sloping rise never froths. The game's own "ground or water" heights (`Map::water_at`, `Map::surface_at`) replace the map's single line wherever things are stood on water or kept out of it: scenery, villages, carts, walkers, animals, insects, the wall and clearing tools, river debris, mist, the minimap and the ground readout.
+
+### Real use
+
+- **Small armies (a regiment or two, any formation)** on a highland walk round a highland lake as round any lake: its water is deep, its shore open ground. They cross a high river at its fords (shallows just under its own level) or at a bridge, and wade it at 60% pace, open to heavier blows, as on a low river. They cannot cross at a fall: it is deep water.
+- **Big armies and lines** reform into a column at a ford or a bridge over a high river exactly as on a low one (the same narrow-passage rule). Brigades and the drill orders see only the nav grid, so nothing changes for them.
+- **In combat** a fight at a high ford is a ford fight (slow wading, heavier blows on waders), and high ground still counts from the ground's height, not the water's.
+- **Traffic.** Workers and carts in Conquest use the same fords and bridges; a highland river between a base and its fields cuts that walk until a bridge goes up, as a low river does.
+- **With floods and weather.** A rain flood raises high water by the same rise, so a high ford can shut in a storm; summer low water opens shallows on high rivers too; winter freezes their fords. Rain soaks the low banks of high water to mud as it does by low water.
+- **The computer players** route by the nav grid, so they go round high lakes and use high fords and bridges with no new code; their view of the ground (`gc_ai::Terrain::water`) reads each tile's own level (`with_water_levels`).
+- **Stress scenario `high-water`**: six regiments on a plateau cross a highland river four and a half tiles over the line, deep but for one ford. Pass marks: the simulation has the river wet and its banks dry; the routes block the deep reach and make the ford wading ground; the computer players' view has it as water; every regiment arrives, every one wades the ford, and none stands in the deep reach.
+
+### Tests
+
+- Generator (`gc_map`): high water stays in its banks on five grown maps (no dry tile beside water lies under its level), mirrored levels are each other's turned copies, and at least two of them have high water; rivers run downhill (each reach at or under the one above); shore tiles take the level but stay dry; the grown fingerprints are re-pinned.
+- Map and simulation agree (`gc_map`): on the grown Field Battle maps, a tile the simulation has under its own level is wading or deep water on the routes, and one over it is not.
+- Simulation (`gc_sim/tests/high_water.rs`): a highland lake is wet at its own level and dry without it; wading it is slow; rain soaks its bank; it plays the same every run. Every Classic map and every map without high water plays bit for bit as before.
+- Replays: the level layer round-trips, and levels that don't fit the map don't read.
+- Renderer: the half floats match the standard; a map without high water uploads nothing more.
+- Map check sweeps (`gc_mapcheck`, a quarter of the grown and lobby maps per PR, all of them in the batch) keep every start joined and Measured fair.
 
 ## Costs and risks
 

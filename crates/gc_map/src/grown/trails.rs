@@ -213,7 +213,7 @@ impl Search {
 /// Wear one tile: open ground off the water shows the trail and loses its
 /// tall grass; woods, wet ground and water hide it.
 fn tread(map: &mut Map, i: usize) {
-    let water = map.heights[i] <= map.water || map.flow.get(i).is_some_and(|&f| f != 0);
+    let water = map.heights[i] <= map.level_of(i) || map.flow.get(i).is_some_and(|&f| f != 0);
     if water || map.cover[i] == Cover::Wood as u8 || soft(map, i) {
         return;
     }
@@ -282,7 +282,7 @@ mod tests {
         for i in 0..map.habitat.len() {
             if map.habitat[i] == Habitat::Trail as u8 {
                 assert_eq!(map.cover[i], Cover::Open as u8);
-                assert!(map.heights[i] > map.water);
+                assert!(map.heights[i] > map.level_of(i));
             }
         }
     }

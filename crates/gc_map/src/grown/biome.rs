@@ -13,7 +13,7 @@
 //! water line (the prototype's water line was 2.0 tiles, ours is
 //! [`WATER_LINE`]), so a height `x` there is `WATER_LINE + (x - 2.0)` here.
 
-use super::field::{Grid, ONE, Seeds, distance, div, fbm, hypot, mul, warp};
+use super::field::{Grid, ONE, Seeds, distance, div, fbm, hypot, mul, nearest, warp};
 use super::water::Water;
 use super::{CLIFF, Dials, Habitat, WATER_LINE};
 use crate::def::Land;
@@ -466,7 +466,16 @@ fn ring() -> Vec<(i32, i32)> {
 /// sloping lake shores, sand where the sun falls and reeds in patches
 /// where it doesn't. Gravel and sand are open ground; reeds are tall grass to hide
 /// in. A start's clearing (`keep`) is left as it is.
-fn riverside(h: &Grid, water: &Water, wet_tile: &[bool], keep: &[bool], f: &Fields, out: Out) {
+#[allow(clippy::too_many_arguments)]
+fn riverside(
+    h: &Grid,
+    water: &Water,
+    wet_tile: &[bool],
+    near_level: &[i32],
+    keep: &[bool],
+    f: &Fields,
+    out: Out,
+) {
     let n = h.n as i32;
     let ring = ring();
     let at = |x: i32, y: i32| (y * n + x) as usize;
@@ -475,7 +484,7 @@ fn riverside(h: &Grid, water: &Water, wet_tile: &[bool], keep: &[bool], f: &Fiel
         !wet_tile[i]
             && !keep[i]
             && f.dist_w.v[i] <= tiles(BANK)
-            && h.v[i] <= WATER_LINE + pct(90)
+            && h.v[i] <= near_level[i] + pct(90)
             && f.slope[i] <= pct(60)
     };
     // Where the water wraps round more than half of a bank tile right by
@@ -597,6 +606,9 @@ pub(super) fn dress(
     let wet_tile: Vec<bool> = (0..nn)
         .map(|i| h.v[i] < WATER_LINE || water.river[i] || water.lake[i])
         .collect();
+    // The level of the water nearest each tile: the banks and valleys of
+    // high water are dressed as a low river's are.
+    let (_, near_level) = nearest(&wet_tile, &water.level, n, 8, WATER_LINE);
     let f = fields(h, &wet_tile, &water.acc, seeds, sym);
     let biome = biomes(h, &f.dist_w, seeds, dials, sym);
     let mut hab = habitats(h, &biome, &f, seeds, sym);
@@ -671,7 +683,7 @@ pub(super) fn dress(
             cover[i] = Cover::Wood as u8;
         }
         let valley = river_dist.v[i] <= tiles(4)
-            && h.v[i] < WATER_LINE + tiles(2)
+            && h.v[i] < near_level[i] + tiles(2)
             && !keep[i]
             && matches!(hb.land(), Land::Meadow | Land::Waste);
         if valley {
@@ -684,7 +696,7 @@ pub(super) fn dress(
         thicket: &mut thicket,
         land: &mut land,
     };
-    riverside(h, water, &wet_tile, keep, &f, out);
+    riverside(h, water, &wet_tile, &near_level, keep, &f, out);
     Dress {
         cover,
         thicket,
@@ -743,6 +755,9 @@ mod tests {
                 acc,
                 river,
                 lake,
+                body: vec![0; n * n],
+                bodies: super::super::levels::Bodies::new(),
+                level: vec![WATER_LINE; n * n],
                 flow: Vec::new(),
                 fords: Vec::new(),
             },
