@@ -45,6 +45,7 @@ fn world(gatehouse: bool) -> World {
             growth: &growth,
             footing: &[],
             flow: &[],
+            water_levels: &[],
         },
         champions: false,
         sky: gc_sim::Sky::STILL,

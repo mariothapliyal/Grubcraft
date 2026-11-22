@@ -307,7 +307,7 @@ pub(super) fn open(map: &Map, p: Vec2) -> bool {
         && p.y > edge
         && p.x < side
         && p.y < side
-        && map.height_at(p.x, p.y) > map.water_level() + SHORE
+        && map.height_at(p.x, p.y) > map.water_at(p.x, p.y) + SHORE
 }
 
 /// Whether an animal may step from `a` to `b` (a little way): both open and

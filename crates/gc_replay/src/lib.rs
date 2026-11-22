@@ -45,6 +45,8 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 57: the water's own level per tile (read as the map's line
+///   everywhere; docs/27 stage 5);
 /// - 56: heroes (a unit's hero growth, read as none);
 /// - 55: Brood evolutions (the evolve command, tag 54; a unit's evolution,
 ///   the building unlocking it and whether it is undead, read as none) and
@@ -117,7 +119,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 ///
 /// Anything older is refused with [`Error::Format`].
 // scripts/rules-bump.py reads and sets this line as written.
-pub const FORMAT: u16 = 56;
+pub const FORMAT: u16 = 57;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -401,6 +403,9 @@ pub struct Replay {
     /// Which way the rivers run, as [`Ground::flow`] (empty: still water;
     /// format 46 on).
     pub flow: Vec<u8>,
+    /// The water's own level per tile, as [`Ground::water_levels`] (empty:
+    /// the map's line everywhere; format 57 on).
+    pub levels: Vec<u16>,
     /// The weather and the time of day, as [`MatchSetup::sky`].
     pub sky: SkyRecord,
     /// Whether champions may duel before battle, as [`MatchSetup::champions`].
@@ -643,6 +648,7 @@ impl Replay {
                 growth: &self.growth,
                 footing: &self.footing,
                 flow: &self.flow,
+                water_levels: &self.levels,
             },
             champions: self.champions,
             sky: self.sky.sky(),
@@ -821,11 +827,16 @@ impl Replay {
     }
 
     /// The growth layer, just after the map (format 27 on), then the
-    /// footing (format 33 on) and the flow (format 46 on).
+    /// footing (format 33 on), the flow (format 46 on) and the water's own
+    /// levels (format 57 on).
     fn write_layers(&self, w: &mut Writer) {
         w.bytes(&self.growth);
         w.bytes(&self.footing);
         w.bytes(&self.flow);
+        w.var(self.levels.len() as u64);
+        for &l in &self.levels {
+            w.var(u64::from(l));
+        }
     }
 
     /// The generals flag, just after the growth and footing layers (format
@@ -1083,6 +1094,15 @@ impl Replay {
         let growth = layer(r, 27)?;
         let footing = layer(r, 33)?;
         let flow = layer(r, 46)?;
+        let levels = if format >= 57 {
+            let n: usize = r.var_as()?;
+            if (n != 0 && n != (map_tiles as usize).pow(2)) || n > r.remaining() {
+                return None;
+            }
+            (0..n).map(|_| r.var_as()).collect::<Option<Vec<u16>>>()?
+        } else {
+            Vec::new()
+        };
         let generals = format < 34 || r.bool()?;
         let sky = if format >= 35 {
             SkyRecord::read(r, format)?
@@ -1154,6 +1174,7 @@ impl Replay {
             growth,
             footing,
             flow,
+            levels,
             sky,
             champions,
             generals,
@@ -1317,6 +1338,12 @@ impl Recorder {
                 // is none, as in the sim.
                 footing: gc_sim::Footing::layer(setup.ground.footing, setup.map_tiles).to_vec(),
                 flow: gc_sim::Flow::layer(setup.ground.flow, setup.map_tiles).to_vec(),
+                // Levels that don't fit the map are none, as in the sim.
+                levels: if setup.ground.water_levels.len() == (setup.map_tiles as usize).pow(2) {
+                    setup.ground.water_levels.to_vec()
+                } else {
+                    Vec::new()
+                },
                 sky: SkyRecord::of(&setup.sky),
                 champions: setup.champions,
                 generals: setup.generals,
@@ -1445,6 +1472,7 @@ mod tests {
                 growth: &[],
                 footing: &[],
                 flow: &[],
+                water_levels: &[],
             },
             champions: false,
             sky: gc_sim::Sky::STILL,
@@ -2133,6 +2161,25 @@ mod tests {
     }
 
     #[test]
+    fn the_water_levels_round_trip() {
+        let mut replay = record();
+        replay.levels = (0..64u32 * 64)
+            .map(|i| {
+                if i % 9 == 0 {
+                    700 + (i % 300) as u16
+                } else {
+                    0
+                }
+            })
+            .collect();
+        assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);
+        assert_eq!(replay.setup().ground.water_levels, &replay.levels[..]);
+        // Levels that don't fit the map don't read.
+        replay.levels = vec![700; 10];
+        assert!(Replay::decode(&replay.encode()).is_err());
+    }
+
+    #[test]
     fn the_sky_round_trips() {
         let mut replay = record();
         replay.sky = SkyRecord {
@@ -2158,8 +2205,8 @@ mod tests {
         old.extend_from_slice(&14u16.to_le_bytes());
         old.extend_from_slice(&(info.len() as u32).to_le_bytes());
         old.extend_from_slice(&info);
-        // The body as it was then: no growth, footing or flow layer,
-        // generals flag or sky after the map.
+        // The body as it was then: no growth, footing, flow or levels
+        // layer, generals flag or sky after the map.
         let body = lz4_flex::decompress_size_prepended(&new[10 + len..]).unwrap();
         let mut map = Writer::default();
         replay.write_units(&mut map);
@@ -2170,8 +2217,12 @@ mod tests {
         replay.write_sky(&mut layers);
         let (at, layers) = (map.buf.len(), layers.buf.len());
         let mut old_body = body[..at].to_vec();
-        assert_eq!(body[at..at + 3], [0, 0, 0], "no growth, footing or flow");
-        assert_eq!(body[at + 3], 1, "generals on");
+        assert_eq!(
+            body[at..at + 4],
+            [0, 0, 0, 0],
+            "no growth, footing, flow or levels"
+        );
+        assert_eq!(body[at + 4], 1, "generals on");
         old_body.extend_from_slice(&body[at + layers..]);
         old.extend_from_slice(&lz4_flex::compress_prepend_size(&old_body));
         assert_eq!(Replay::decode(&old).unwrap(), replay);

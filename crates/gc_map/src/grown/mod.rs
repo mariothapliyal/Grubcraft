@@ -34,6 +34,7 @@
 mod biome;
 mod erode;
 pub(crate) mod field;
+mod levels;
 mod shape;
 mod starts;
 pub(crate) mod trails;
@@ -263,6 +264,15 @@ pub(crate) struct Raster {
     pub(crate) habitat: Vec<u8>,
     /// One `gc_sim::Flow` byte per tile: the rivers' current.
     pub(crate) flow: Vec<u8>,
+    /// The water's level on each tile, fixed-point tiles: [`WATER_LINE`]
+    /// where it is the map's line (docs/27 stage 5), settled on the land as
+    /// it stands ([`Raster::settle_water`]).
+    pub(crate) level: Vec<i32>,
+    /// The body of high water each tile belongs to, and the bodies.
+    body: Vec<u16>,
+    bodies: levels::Bodies,
+    /// The ground kept for the starts, which no water takes.
+    keep: Vec<bool>,
     /// Where the starts stand, in lobby order.
     pub(crate) starts: [Pos; START_PLATEAUS],
     /// Whether the land is its own turned copy (so every change to it must
@@ -271,6 +281,32 @@ pub(crate) struct Raster {
 }
 
 impl Raster {
+    /// Keep the water in its banks and running downhill on the land as it
+    /// stands, and give every tile its level (see [`levels`]): after
+    /// anything that changes the land.
+    pub(crate) fn settle_water(&mut self) {
+        self.level = levels::settle(&mut self.height, &self.body, &mut self.bodies, &self.keep);
+    }
+
+    /// The water's own levels as the map keeps them ([`crate::Map::levels`]):
+    /// one per tile in simulation height units, 0 where it is the map's
+    /// line, or none at all when every tile's is.
+    pub(crate) fn sim_levels(&self) -> Vec<u16> {
+        if self.level.iter().all(|&l| l <= WATER_LINE) {
+            return Vec::new();
+        }
+        let units = i64::from(gc_sim::terrain::HEIGHT_UNITS);
+        (self.level.iter())
+            .map(|&l| {
+                if l <= WATER_LINE {
+                    0
+                } else {
+                    (i64::from(l) * units / i64::from(ONE)).clamp(1, i64::from(u16::MAX)) as u16
+                }
+            })
+            .collect()
+    }
+
     /// The heights in simulation units at each height sample of a map
     /// `side` samples across ([`crate::SAMPLES_PER_TILE`] to a tile),
     /// bilinear between the tile centres.
@@ -444,14 +480,23 @@ fn grow_uncached(n: usize, what: Grown) -> (Raster, Option<u32>) {
         .map(|(&d, &r)| d <= mul(open_r * ONE, ONE * 3 / 4 + r / 2))
         .collect();
 
-    let (d, flow) = if mirrored {
+    let (d, flow, body, mut bodies) = if mirrored {
         // The south half from the north: blend along a wandering seam, so
         // the water finds the same land on both sides.
         let seam = Seam::new(n, &mut seeds);
         seam.blend(&mut h);
         let mut wet = water::water(&mut h, &mut seeds, &dials, &keep);
         seam.select(&mut h.v);
+        // The seam is smoothed, but not the banks of high water, which
+        // would let it out.
+        let banks = wet.high_banks();
+        let unsmoothed = h.clone();
         seam.smooth(&mut h);
+        for (i, &bank) in banks.iter().enumerate() {
+            if bank {
+                h.v[i] = unsmoothed.v[i];
+            }
+        }
         for v in &mut h.v {
             *v = soft_top(*v).max(0);
         }
@@ -460,6 +505,8 @@ fn grow_uncached(n: usize, what: Grown) -> (Raster, Option<u32>) {
         seam.select(&mut wet.acc);
         seam.select(&mut wet.river);
         seam.select(&mut wet.lake);
+        seam.select(&mut wet.body);
+        seam.select(&mut wet.level);
         let sym = |mut g: Grid| {
             seam.blend(&mut g);
             g
@@ -471,15 +518,18 @@ fn grow_uncached(n: usize, what: Grown) -> (Raster, Option<u32>) {
         biome::drop_long_thicket(&mut d.thicket, n);
         seam.select(&mut d.land);
         seam.select(&mut d.habitat);
-        (d, wet.flow)
+        (d, wet.flow, wet.body, wet.bodies)
     } else {
         let wet = water::water(&mut h, &mut seeds, &dials, &keep);
         for v in &mut h.v {
             *v = soft_top(*v).max(0);
         }
         let d = biome::dress(&h, &wet, &mut seeds, &dials, &keep, &|g| g);
-        (d, wet.flow)
+        (d, wet.flow, wet.body, wet.bodies)
     };
+    // The heights were eased under the top: the water with them, so it
+    // stands over the same ground.
+    bodies.map(soft_top);
     let mut raster = Raster {
         height: h,
         cover: d.cover,
@@ -487,10 +537,16 @@ fn grow_uncached(n: usize, what: Grown) -> (Raster, Option<u32>) {
         land: d.land,
         habitat: d.habitat,
         flow,
+        level: Vec::new(),
+        body,
+        bodies,
+        keep,
         starts,
         mirrored,
     };
+    raster.settle_water();
     ways::open_ways(&mut raster, &mut seeds);
+    raster.settle_water();
     let spread = (!mirrored)
         .then(|| refine_starts(&mut raster, shape, &mut seeds))
         .flatten();
@@ -558,7 +614,10 @@ fn move_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds, reach: i32) -
             && (half..n - half).contains(&p.1)
             && step[at(p.0, p.1)] != 0
             && (-half..=half).all(|dy| {
-                (-half..=half).all(|dx| r.height.v[at(p.0 + dx, p.1 + dy)] > WATER_LINE + ONE / 4)
+                (-half..=half).all(|dx| {
+                    let i = at(p.0 + dx, p.1 + dy);
+                    r.height.v[i] > r.level.get(i).copied().unwrap_or(WATER_LINE) + ONE / 4
+                })
             })
     };
     let (moved, before) = starts::settle(&step, n as usize, r.starts, reach, &fits);
@@ -578,7 +637,12 @@ fn move_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds, reach: i32) -
             for x in (at.0 - open).max(0)..(at.0 + open + 1).min(n) {
                 let i = (y * n + x) as usize;
                 let d2 = dist2((x, y), at);
-                if d2 > open * open || r.height.v[i] <= WATER_LINE {
+                if d2 > open * open {
+                    continue;
+                }
+                // (Kept for the start: no highland shore's level on it.)
+                r.keep[i] = true;
+                if r.height.v[i] <= WATER_LINE {
                     continue;
                 }
                 r.cover[i] = gc_sim::Cover::Open as u8;
@@ -592,6 +656,7 @@ fn move_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds, reach: i32) -
     }
     r.starts = moved;
     ways::open_ways(r, seeds);
+    r.settle_water();
     (before, true)
 }
 
@@ -611,6 +676,7 @@ fn standable(r: &Raster) -> Vec<u8> {
         crate::map::sample_of_sim(i64::from(WATER) * i64::from(gc_sim::terrain::HEIGHT_UNITS) / 16);
     let mut map = crate::Map::from_samples(n as u32, samples, water);
     map.thicket.clone_from(&r.thicket);
+    map.levels = r.sim_levels();
     let ground = map.tile_ground(&map.nav_costs());
     map.standable(&ground)
         .iter()
@@ -1001,7 +1067,7 @@ fn lay(tiles: i32, what: Grown) -> Option<MapDef> {
             .count() as i32
     };
     let reason = |label: &str, p: Pos| match label {
-        "Grubfolk village" => count(p, 10, &|i| map.heights[i] < map.water),
+        "Grubfolk village" => count(p, 10, &|i| map.heights[i] < map.level_of(i)),
         "The old fort" => {
             let ring: i32 = [
                 (10, 0),
@@ -1523,6 +1589,86 @@ mod tests {
             assert_eq!(r.land[i], r.land[last - i], "land {i}");
             assert_eq!(r.habitat[i], r.habitat[last - i], "habitat {i}");
         }
+    }
+}
+
+#[cfg(test)]
+mod high_water {
+    use super::*;
+
+    /// High water (docs/27 stage 5) stays in its banks: no dry tile beside
+    /// water lies under that water's level. Mirrored land's levels are
+    /// their own turned copy, and some maps have high water at all.
+    #[test]
+    fn high_water_stays_in_its_banks() {
+        let n = 384;
+        let mut high_maps = 0;
+        for (seed, wildness, fairness) in [
+            (1, Wildness::Wild, Fairness::Mirrored),
+            (2, Wildness::Mixed, Fairness::Measured),
+            (3, Wildness::Wild, Fairness::Measured),
+            (4, Wildness::Plains, Fairness::Mirrored),
+            (7, Wildness::Mixed, Fairness::Mirrored),
+        ] {
+            let r = grow(
+                n as u32,
+                Grown {
+                    seed,
+                    wildness,
+                    fairness,
+                    heart: false,
+                },
+            );
+            let (h, level) = (&r.height.v, &r.level);
+            let wet = |i: usize| h[i] < level[i];
+            let mut high = 0;
+            for y in 1..n - 1 {
+                for x in 1..n - 1 {
+                    let i = y * n + x;
+                    if !wet(i) || level[i] <= WATER_LINE {
+                        continue;
+                    }
+                    high += 1;
+                    for (dx, dy) in [
+                        (-1, -1),
+                        (0, -1),
+                        (1, -1),
+                        (-1, 0),
+                        (1, 0),
+                        (-1, 1),
+                        (0, 1),
+                        (1, 1),
+                    ] {
+                        let k = ((y as i32 + dy) as usize) * n + (x as i32 + dx) as usize;
+                        assert!(
+                            wet(k) || h[k] >= level[i],
+                            "seed {seed}: dry tile {k} under the water beside it at {i}"
+                        );
+                    }
+                }
+            }
+            if fairness == Fairness::Mirrored {
+                let last = n * n - 1;
+                for i in 0..n * n {
+                    assert_eq!(
+                        level[i],
+                        level[last - i],
+                        "seed {seed}: level {i}, bodies {} {}, h {} {}",
+                        r.body[i],
+                        r.body[last - i],
+                        h[i],
+                        h[last - i]
+                    );
+                }
+            }
+            let lakes = r.bodies.lakes_and_reaches();
+            println!(
+                "{wildness:?} {fairness:?} seed {seed}: high water {high} tiles ({}/1000), bodies {lakes:?}",
+                high * 1000 / (n * n)
+            );
+            high_maps += usize::from(high > 0);
+        }
+        assert!(high_maps >= 2, "high water on {high_maps} maps");
     }
 }
 

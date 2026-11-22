@@ -267,6 +267,7 @@ impl Map {
         map.land = land;
         map.habitat = habitat;
         map.flow = grown.as_ref().map(|g| g.flow.clone()).unwrap_or_default();
+        map.levels = grown.as_ref().map(|g| g.sim_levels()).unwrap_or_default();
         map.settle_growth();
         map.name.clone_from(&def.name);
         map.size = Some(def.size);

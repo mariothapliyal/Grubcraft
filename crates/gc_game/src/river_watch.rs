@@ -368,6 +368,7 @@ mod tests {
                 growth: &[],
                 footing: &[],
                 flow: &flow,
+                water_levels: &[],
             },
             champions: false,
             sky: crate::stress::arena::squall(),
