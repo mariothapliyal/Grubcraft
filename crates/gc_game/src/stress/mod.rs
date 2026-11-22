@@ -38,6 +38,7 @@ mod gate;
 mod gated_towns;
 mod heroes;
 mod high_water;
+mod make_way;
 mod mountain;
 mod new_orders;
 mod orders;
@@ -94,6 +95,7 @@ const SCENARIOS: &[Scenario] = &[
     brigade::GATE,
     brigade::COLUMN_GATE,
     brigade::BIG_GATE,
+    make_way::SCENARIO,
     evolve_tithe::SCENARIO,
     charges::SCENARIO,
     heroes::SCENARIO,

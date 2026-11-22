@@ -1470,11 +1470,13 @@ mod tests {
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_brood_evolves_and_the_concord_signs_contracts() {
         // A match goes its own way with any change to how battles play
-        // out (one side may win before the other gets going), so up to
-        // six are played, until each side has shown its rules in one.
+        // out (one side may win before the other gets going: a General
+        // Brood beats a General Concord in about one match in three, and
+        // evolves only in matches it lasts in), so up to sixteen are
+        // played, until each side has shown its rules in one.
         let factions = [Faction::Brood, Faction::CarrionConcord];
         let (mut evolved, mut signed, mut reports) = (false, false, String::new());
-        for seed in [9, 10, 11, 12, 13, 14] {
+        for seed in 9..=24 {
             let played = play(0, 0, &factions, &[Difficulty::General], seed, 40);
             let (brood, concord) = (&played.sides[0].works, &played.sides[1].works);
             evolved |= brood.cocoons > 0 && brood.evolved > 0;
@@ -1501,26 +1503,32 @@ mod tests {
             [Faction::Brood, Faction::Choir],
         ];
         let (mut top, mut heroes) = (0, 0);
-        for (factions, seed) in pairs.iter().zip([7, 8]) {
-            let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 40);
-            for (side, f) in played.sides.iter().zip(factions) {
-                let w = side.works;
-                println!(
-                    "{f:?}: {} heroes, {} standing, top level {}",
-                    w.heroes, w.heroes_standing, w.top_level
-                );
-                top = top.max(w.top_level);
-                heroes += w.heroes;
-            }
+        for (factions, seeds) in pairs.iter().zip([[7, 9, 11], [8, 10, 12]]) {
             // The side that wins has had time for a hero (a side overrun
-            // early may never get its hero building up).
-            let winner = played.winner().unwrap_or(0);
-            let w = played.sides[usize::from(winner)].works;
-            assert!(
-                w.heroes >= 1,
-                "the winner hired no hero: {}",
-                played.report()
-            );
+            // early may never get its hero building up). Not always: one
+            // can win at the first tier, before it may build the hero hall,
+            // and which match does goes with any change to how battles play
+            // out, so up to three are played.
+            let mut reports = String::new();
+            for seed in seeds {
+                let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 40);
+                for (side, f) in played.sides.iter().zip(factions) {
+                    let w = side.works;
+                    println!(
+                        "seed {seed} {f:?}: {} heroes, {} standing, top level {}",
+                        w.heroes, w.heroes_standing, w.top_level
+                    );
+                    top = top.max(w.top_level);
+                    heroes += w.heroes;
+                }
+                let winner = played.winner().unwrap_or(0);
+                if played.sides[usize::from(winner)].works.heroes >= 1 {
+                    reports.clear();
+                    break;
+                }
+                reports += &format!("seed {seed}: {}\n", played.report());
+            }
+            assert!(reports.is_empty(), "the winner hired no hero:\n{reports}");
         }
         assert!(heroes >= 3, "{heroes} heroes in two games");
         assert!(top >= 1);

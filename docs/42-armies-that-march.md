@@ -16,6 +16,8 @@ build stage 1, with changes; they are folded in below and listed under
 built. "Stage 1 in full" below describes what was built, "What it
 measured" has the numbers, and "What a brigade does not do yet" the
 places where it lets go and regiments march as they did before.
+Stage 6 (woods, 22 November) and stage 2 (drilled movement) are built
+since; each has its own "in full" section at the end.
 
 ## What armies do today
 
@@ -134,6 +136,9 @@ and after.
     between regiments in step in one brigade. Here each of the eleven is
     measured switched off everywhere; those that no longer earn their
     cost go.
+
+Stage 2 is built, `SIM_VERSION` 96: see "Stage 2 in full" below. All
+eleven guessing rules were measured off and all eleven stay.
 
 **Stage 3. Narrow places and the roads to them** (simulation)
 
@@ -645,4 +650,155 @@ The changes are within about 2 s either way, near the noise, as expected
 when routes were already about right. The change
 is in the rules: a flank in the trees now costs what it should, in
 pace and on the route.
+
+## Stage 2 in full: drilled movement
+
+### What was built
+
+- **Small moves keep the facing** (change 9, `Regiments::order`). A block
+  sent less than four tiles (`SHUFFLE_DISTANCE`) with no facing given, no
+  attack and no target keeps facing the way it faces and sidesteps or
+  backs into its place (`drilled_pace`: full pace within 45 degrees of
+  ahead, three quarters sideways, half backing), instead of turning
+  round, walking and turning back. The last steps into place at the end of any other march keep
+  half pace (`Regiments::drill`). Single bodies (heroes, workers, big
+  beasts) walk as before: drilled pace made workers faster to their
+  fields, which moved the economy.
+- **Make way** (change 10, `Combat::make_way`). A regiment at ease (no
+  orders, not braced, fighting, working, running or held, not on a wall,
+  no enemy within 20 tiles, `WAY_FOE`) looks each crowd pass for a friend
+  marching right through it and on past (a friend coming to stand beside
+  it or where it stands is placed by `own_place` instead). Within six
+  tiles of that friend (`WAY_AHEAD`) it steps out of the friend's lane
+  (the way the friend walks now: its route's next leg, or the point its
+  brigade steers it at, as far as the end of its march), to the near
+  side, at three quarters of its pace (`way_pace`), facing as it faced,
+  and remembers where it stood (`Regiments::home`). It never steps into
+  a friend that won't give way (holding its ground, fighting, marching
+  by); then it is pushed through as one standing its ground is. When
+  no lane is within a step of it, it steps back: straight back, or
+  squared along its front or flank when a friend is in the way of that,
+  and only when the step makes no overlap deeper than now
+  (`clear_to_step`). The one earlier in the army goes back first; a
+  friend at ease in the way is shouldered aside (and steps back in
+  turn). A friend that has settled where it stood ends it: it stands
+  where it is. Still not back 12 s after the last friend marched by
+  (`WAY_PATIENCE`; two that were shoved past each other can wedge), it
+  marches back as on any order, round friends in the way, drawing up
+  beside the place if one has settled on it.
+  Around it: a regiment it shoves while stepping out goes the whole way
+  and remembers its own place too (`make_room`); `own_place` counts a
+  friend that made way as standing where it stood, so nobody is sent to
+  the gap; marchers step round a friend making way by half as much
+  (`keep_apart`); and a regiment making way counts as moving.
+- **Real footprints, checked** (change 11,
+  `crates/gc_game/src/footprints.rs`). A test measures every model's
+  lowest 40% (where bodies meet in a block) against its file and rank
+  spacing and fails when a body is more than 10% bigger than its room.
+  It found the Broodmother Bulk (rank 3.0 to 3.9), Colossus Maw (3.5 to
+  3.9) and Reclaimer (1.5 to 1.75) too big for their room, now widened
+  (Mario's choice, 22 November 2026, 9:20 am NZDT: big bodies only).
+  The Brood heroes, which landed the same day, were too big as well
+  and are widened the same way: the Queen-in-Waiting (rank 1.6 to
+  2.4), the Devourer (1.6 by 1.6 to 1.75 by 2.5) and the Whisperer
+  (1.0 by 1.0 to 1.4 by 2.0). No golden replay has a hero in it, so
+  none changed.
+  Listed as known and left as they are: levelled pikes (drawn reaching
+  ahead of the block on purpose) and the Brood line troops (Chitin
+  Guard, Mantid Reapers, Shellbacks, Spitters, Skitterlings, Burrowers),
+  drawn up to 40% bigger than their room; widening those changes their
+  frontage and is a balance change for Mario to decide with the balance
+  tables.
+
+### What it measured
+
+The 42 recorded marches (last arrival / first to last / time in
+disorder):
+
+| | stage 6 | stage 2 |
+|---|---|---|
+| Six regiments, apart | 49.7 s / 14.7 s / 10% | 49.5 s / 14.5 s / 10% |
+| Six, as a brigade | 49.5 s / 10.9 s / 7% | 49.3 s / 10.9 s / 6% |
+| Twelve, apart | 62.1 s / 26.9 s / 24% | 60.6 s / 25.4 s / 22% |
+| Twelve, as a brigade | 59.7 s / 19.6 s / 16% | 58.8 s / 18.7 s / 15% |
+
+Twelve regiments arrive a second or so sooner and a little less
+disordered: those that arrive first and stand at ease no longer hold up
+those still coming in past them. Six barely change; they seldom march
+through each other. Two things on the way were not kept:
+
+- Drilled pace for every regiment's last steps into place (full pace
+  ahead instead of half) made all four rows about 2 s quicker, but the
+  computer held a ford in 33 of 64 battles instead of 56 (its line came
+  forward into the ford faster); drilled pace is now for small moves
+  only (53 of 64).
+- A measuring slip showed spreads 2 to 3 s tighter: regiments stepping
+  aside after they had arrived were counted as not arrived yet. A column of three marching through a line
+of six at ease (`crates/gc_sim/tests/make_way.rs`) spent about 700
+regiment-ticks in disorder before and none now; the line stands where
+it stood within a twentieth of a tile.
+
+The stress scenario `make-way` marches eight regiments ordered as one
+group through twelve at ease in two lines. The last arrives in 28.3 s
+(34 s with nobody making way), and neither the marchers nor the army
+at ease spend any time in disorder (71 and 77 regiment-seconds with
+nobody making way). The army at ease steps up to 6.6 tiles aside, one
+shoving the next, and stands where it stood again by the time the last
+marcher arrives.
+
+### What make way does not do yet
+
+- **Stepping back is its own small solver.** It tries a straight step,
+  then squared ones, then shoulders friends, and only after 12 s
+  marches back as on any order. Marching back that way from the start
+  would be one rule fewer, but after only 4 s it already pushed
+  through neighbours still stepping back themselves (130
+  regiment-ticks of disorder in the crossing test, none at 12 s);
+  worth another look before stage 3 adds more crossings.
+- **Orders given a tick or two apart.** A regiment not yet given its
+  order may make way for a moment for a friend ordered just before it
+  (a computer player's orders for one army land over a few ticks). It
+  steps aside a little and then marches with its own order; the
+  pathfinding test of three blocks filing through a gap gives its orders
+  in one tick for that reason.
+
+### The guessing rules, each switched off
+
+Each of the eleven rules was switched off on its own, everywhere, over
+the 42 marches and the whole stress suite (twelve regiments apart, last
+arrival / disorder; baseline 58.6 s / 22%):
+
+| Rule off | Twelve apart | Stress suite |
+|---|---|---|
+| Step aside from friends (`keep_apart`) | 56.3 s / 17% | a column misses the bridge span it should be on as it goes; the fight in the Tithe scenario goes another way |
+| Queue at a narrow place | 56.1 s / 23% | 48 regiments no longer all through a Gate in 240 s |
+| Trail a friend marching ahead | 56.4 s / 23% | the bridge column again |
+| Wait its turn at a ford | 58.2 s / 22% | the Tithe fight again |
+| March through after waiting (ghosting) | 58.6 s / 22% | all pass |
+| Slow when pushing a friend | 51.1 s / 28% | three brigade gate and ford scenarios fail on disorder |
+| Squeeze through a narrow place | 59.0 s / 21% | the bridge column; the brigade ford |
+| Square up before wheeling in tight ground | 57.3 s / 21% | 48 through a Gate; 24 eight abreast through a Gate |
+| Make room for a friend standing in it | 58.6 s / 22% | the rally point; make way |
+| Draw up beside a friend going to the same spot | 58.5 s / 22% | the rally point |
+| Lend a route to friends ordered together | 57.6 s / 22% | all pass |
+
+None was taken out. Eight break a check that guards what they are for.
+Stepping aside from friends is quicker and less disordered off on
+twelve regiments, but on six it is slower, and it is what keeps a
+column off a line standing its ground (braced, held, fighting), which
+make way leaves alone. Ghosting and lending never come into play on
+these runs, which is why they show nothing: ghosting is the last way
+out for a regiment stuck for good, and lending lets a hundred
+regiments ordered at once set off on the next tick while the route
+search catches up; both cost little.
+
+### Checks
+
+`crates/gc_sim/tests/make_way.rs` (a column through a line at ease, four
+offsets), `crowding.rs` (a friend at ease makes way and steps back; one
+told to Hold is pushed through as before; one making way never steps
+into a friend holding its ground), `formations.rs` (a short
+move sidesteps or backs into place; a longer one still turns and
+walks), the stress scenario `make-way`, and
+`crates/gc_game/src/footprints.rs`.
 
