@@ -137,7 +137,7 @@ and after.
     measured switched off everywhere; those that no longer earn their
     cost go.
 
-Stage 2 is built, `SIM_VERSION` 94: see "Stage 2 in full" below. All
+Stage 2 is built, `SIM_VERSION` 95: see "Stage 2 in full" below. All
 eleven guessing rules were measured off and all eleven stay.
 
 **Stage 3. Narrow places and the roads to them** (simulation)
