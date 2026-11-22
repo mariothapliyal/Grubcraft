@@ -5278,7 +5278,7 @@ impl Running {
                 {
                     continue;
                 }
-                let water = river_debris::surface(t, heightmap.water_level(), p);
+                let water = river_debris::surface(heightmap, t, p);
                 self.effects
                     .blaze(glam::Vec3::new(at.x, water, at.y), 1.6, fire_dt);
             }
@@ -8198,7 +8198,7 @@ impl Running {
             let (reveal, fog) = (self.reveal_all, &self.fog);
             river_debris::extras(
                 world.flood().rivers().debris_seen(),
-                move |p| river_debris::surface(t, map.water_level(), p),
+                move |p| river_debris::surface(map, t, p),
                 self.scenery.height_of(river_debris::LOG_MODEL),
                 move |tile| reveal || fog.sees_tile(tile),
             )
