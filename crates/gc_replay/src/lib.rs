@@ -45,8 +45,9 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
-/// - 56: the water's own level per tile (read as the map's line
+/// - 57: the water's own level per tile (read as the map's line
 ///   everywhere; docs/27 stage 5);
+/// - 56: heroes (a unit's hero growth, read as none);
 /// - 55: Brood evolutions (the evolve command, tag 54; a unit's evolution,
 ///   the building unlocking it and whether it is undead, read as none) and
 ///   the Concord's raising and hiring powers;
@@ -118,7 +119,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 ///
 /// Anything older is refused with [`Error::Format`].
 // scripts/rules-bump.py reads and sets this line as written.
-pub const FORMAT: u16 = 55;
+pub const FORMAT: u16 = 56;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -403,7 +404,7 @@ pub struct Replay {
     /// format 46 on).
     pub flow: Vec<u8>,
     /// The water's own level per tile, as [`Ground::water_levels`] (empty:
-    /// the map's line everywhere; format 56 on).
+    /// the map's line everywhere; format 57 on).
     pub levels: Vec<u16>,
     /// The weather and the time of day, as [`MatchSetup::sky`].
     pub sky: SkyRecord,
@@ -827,7 +828,7 @@ impl Replay {
 
     /// The growth layer, just after the map (format 27 on), then the
     /// footing (format 33 on), the flow (format 46 on) and the water's own
-    /// levels (format 56 on).
+    /// levels (format 57 on).
     fn write_layers(&self, w: &mut Writer) {
         w.bytes(&self.growth);
         w.bytes(&self.footing);
@@ -1093,7 +1094,7 @@ impl Replay {
         let growth = layer(r, 27)?;
         let footing = layer(r, 33)?;
         let flow = layer(r, 46)?;
-        let levels = if format >= 56 {
+        let levels = if format >= 57 {
             let n: usize = r.var_as()?;
             if (n != 0 && n != (map_tiles as usize).pow(2)) || n > r.remaining() {
                 return None;

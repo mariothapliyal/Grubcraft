@@ -516,6 +516,14 @@ regiment_fields! {
     /// Seconds an undead regiment has stood out of reach of its keepers
     /// since it last crumbled (see [`crate::tithe`]).
     crumble: u8 = 0,
+    /// A hero's level (see [`crate::heroes`]); 0 for a regiment that
+    /// isn't a hero.
+    hero_level: u8 = 0,
+    /// What a hero's level adds: hit points per model past its unit's, and
+    /// melee and missile damage in percent of its unit's.
+    hp_bonus: u16 = 0,
+    melee_bonus: u16 = 0,
+    missile_bonus: u16 = 0,
 }
 
 impl Regiments {
@@ -1596,7 +1604,8 @@ impl Regiments {
 
     /// Regiment `i`'s hit points at full strength (at least 1).
     pub(crate) fn full_hp(&self, i: usize, stats: &UnitStats) -> u32 {
-        u32::from(self.full_models[i].max(1)) * u32::from(stats.hp_per_model.max(1))
+        u32::from(self.full_models[i].max(1))
+            * (u32::from(stats.hp_per_model.max(1)) + u32::from(self.hp_bonus[i]))
     }
 
     /// Soldier `k` of regiment `i`'s hit points.

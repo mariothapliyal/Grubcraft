@@ -22,8 +22,9 @@ use gc_ui::lobby::Tempo;
 pub(super) const SCENARIO: Scenario = Scenario {
     name: "charges",
     about: "horse into braced and unbraced pikes, front, flank and rear, uphill, through woods, and Generals bracing and charging again",
-    // Two Conquest matches, most of it.
-    budget_ms: 20_000,
+    // Up to four Conquest matches of up to 40 minutes, most of it: three
+    // full ones since heroes (docs/43) take about 21 s.
+    budget_ms: 30_000,
     run,
 };
 

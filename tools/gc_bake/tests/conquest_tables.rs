@@ -37,9 +37,21 @@ fn both_tables_read_back() {
             assert!(data.buildings.iter().any(|b| b.faction() == faction));
             assert!(data.conquest_units.iter().any(|u| u.faction() == faction));
         }
-        // Factions in `Faction` order, each one's entries together.
+        // Factions in `Faction` order, each one's entries together; the
+        // heroes after every other unit, in the same order.
         assert!(data.buildings.is_sorted_by_key(|b| b.faction));
-        assert!(data.conquest_units.is_sorted_by_key(|u| u.stats.faction));
+        let first_hero = data
+            .conquest_units
+            .iter()
+            .position(gc_data::ConquestUnitRecord::hero)
+            .unwrap();
+        let (units, heroes) = data.conquest_units.split_at(first_hero);
+        assert!(
+            units.iter().all(|u| !u.hero()) && heroes.iter().all(gc_data::ConquestUnitRecord::hero)
+        );
+        assert!(units.is_sorted_by_key(|u| u.stats.faction));
+        assert!(heroes.is_sorted_by_key(|u| u.stats.faction));
+        assert_eq!(heroes.len(), 12);
     });
 }
 

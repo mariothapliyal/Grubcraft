@@ -220,7 +220,7 @@ High water comes in **bodies**, each flat at one level: a highland lake, or a **
 
 - `Ground::water_levels`: one level per tile (in height units, 0 for the map's line), or empty for none (`Map::levels`). `Terrain` keeps it beside the heights, and every water question reads the tile's own level: in water (`wet`), how deep, fords and shallows (`tile_within`), the floodplain (a highland river's is the shore that shares its level), the ground rain soaks, and anything built over water. A rain flood raises all water by its rise and summer low water drops it, and the rivers' stretches raise their water over each tile's own level, so floods, currents, debris, jams and bridges work on high rivers as on low ones. In winter only the fords and shallows freeze over, as on low water; deep high water stays open.
 - The nav grid's deep water and fords come from each tile's own level, so routes, crossings and the computer players' reading of the land follow it with no new rule. A fall is deep water, so it is blocked like the rest of the deep river.
-- The layer goes in replays after the flow (`FORMAT` 56); old replays carry none and play on as before. `SIM_VERSION` 94, which players compare in the lobby, covers the new maps; no network message changed shape, so `PROTOCOL` stays. A map without high water carries an empty layer and costs nothing.
+- The layer goes in replays after the flow (`FORMAT` 57); old replays carry none and play on as before. `SIM_VERSION` 95, which players compare in the lobby, covers the new maps; no network message changed shape, so `PROTOCOL` stays. A map without high water carries an empty layer and costs nothing.
 
 ### Drawing
 
