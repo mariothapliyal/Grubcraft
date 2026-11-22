@@ -458,7 +458,10 @@ impl Running {
                     label.push_str("Raise");
                 }
                 Action::Train(u) => {
-                    if let Some(r) = self.data.conquest_units.get(usize::from(u)) {
+                    // A fallen hero's revive is priced by its level.
+                    if let Some((g, m)) = self.world.price_of(self.sandbox.side, u) {
+                        price(detail, g, m);
+                    } else if let Some(r) = self.data.conquest_units.get(usize::from(u)) {
                         price(detail, r.cost_grub, r.cost_marrow);
                     }
                     label.push_str(short(

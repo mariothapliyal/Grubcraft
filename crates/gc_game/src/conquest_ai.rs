@@ -44,8 +44,9 @@ pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
             let unit = conquest::unit_of(rec);
             // A regiment for the line: trained at a building, costing
             // something and taking supply, and not a worker, caravan,
-            // healer or Reclaimer.
+            // healer, Reclaimer or hero (the Steward hires those itself).
             let fighter = !unit.worker
+                && unit.hero.is_none()
                 && rec.class() != Class::Support
                 && unit.trained_at.is_some()
                 && unit.supply > 0
@@ -278,6 +279,11 @@ mod tests {
         /// Reliquaries standing.
         pub contracts: u32,
         pub reliquaries: u32,
+        /// Heroes hired (standing or fallen), those standing, and the
+        /// highest level among them (docs/43).
+        pub heroes: u32,
+        pub heroes_standing: u32,
+        pub top_level: u32,
     }
 
     impl Works {
@@ -295,6 +301,11 @@ mod tests {
             w.evolved = (world.regiments.iter())
                 .filter(|r| r.owner == p && evolved(r.unit))
                 .count() as u32;
+            for h in world.heroes().filter(|h| h.owner == p) {
+                w.heroes += 1;
+                w.heroes_standing += u32::from(!h.dead());
+                w.top_level = w.top_level.max(u32::from(h.level));
+            }
             let Some(st) = world.structures() else {
                 return w;
             };
@@ -346,6 +357,9 @@ mod tests {
                 evolved: self.evolved.max(o.evolved),
                 contracts: self.contracts.max(o.contracts),
                 reliquaries: self.reliquaries.max(o.reliquaries),
+                heroes: self.heroes.max(o.heroes),
+                heroes_standing: self.heroes_standing.max(o.heroes_standing),
+                top_level: self.top_level.max(o.top_level),
             }
         }
     }
@@ -1473,6 +1487,43 @@ mod tests {
         }
         assert!(evolved, "the Brood never evolved:\n{reports}");
         assert!(signed, "the Concord never signed contracts:\n{reports}");
+    }
+
+    /// Computer players hire heroes (docs/43): in one-on-ones of each
+    /// faction, the winner has hired a hero by forty minutes, three heroes
+    /// have been hired in all (levels: hero_tests and the `heroes` stress
+    /// scenario).
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_computer_players_hire_heroes() {
+        let pairs = [
+            [Faction::EmberClans, Faction::CarrionConcord],
+            [Faction::Brood, Faction::Choir],
+        ];
+        let (mut top, mut heroes) = (0, 0);
+        for (factions, seed) in pairs.iter().zip([7, 8]) {
+            let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 40);
+            for (side, f) in played.sides.iter().zip(factions) {
+                let w = side.works;
+                println!(
+                    "{f:?}: {} heroes, {} standing, top level {}",
+                    w.heroes, w.heroes_standing, w.top_level
+                );
+                top = top.max(w.top_level);
+                heroes += w.heroes;
+            }
+            // The side that wins has had time for a hero (a side overrun
+            // early may never get its hero building up).
+            let winner = played.winner().unwrap_or(0);
+            let w = played.sides[usize::from(winner)].works;
+            assert!(
+                w.heroes >= 1,
+                "the winner hired no hero: {}",
+                played.report()
+            );
+        }
+        assert!(heroes >= 3, "{heroes} heroes in two games");
+        assert!(top >= 1);
     }
 
     // A game takes seconds in a release build and minutes in a debug one,

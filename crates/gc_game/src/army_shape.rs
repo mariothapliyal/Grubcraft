@@ -16,7 +16,7 @@ pub const SAVED_SLOTS: usize = 3;
 /// Where a regiment of `class` stands in an arranged army.
 pub fn role_of(class: Class) -> Role {
     match class {
-        Class::Light | Class::Spear | Class::Heavy | Class::Monster => Role::Melee,
+        Class::Light | Class::Spear | Class::Heavy | Class::Monster | Class::Hero => Role::Melee,
         Class::Ranged => Role::Ranged,
         Class::Cavalry | Class::Air => Role::Flanker,
         Class::Support => Role::Support,
