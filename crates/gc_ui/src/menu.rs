@@ -855,10 +855,10 @@ impl<N: Network> Menu<N> {
         if ui.button(join_btn, "Join", ButtonStyle::Normal, !target.is_empty()) {
             join_to = Some((target, password.to_string()));
         }
-        if let Some(r) = rejoin_btn {
-            if ui.button(r, "Rejoin", ButtonStyle::Normal, true) {
-                join_to = Some((last.clone(), self.join_password.clone()));
-            }
+        if let Some(r) = rejoin_btn
+            && ui.button(r, "Rejoin", ButtonStyle::Normal, true)
+        {
+            join_to = Some((last.clone(), self.join_password.clone()));
         }
         if let Some((target, password)) = join_to {
             let me = self.profile();
