@@ -267,8 +267,9 @@ const KILL_SIZES: core::ops::RangeInclusive<f32> = 0.9..=1.1;
 /// finishers in `ember-men-finishers-1.glb` were made to strike
 /// (`design/faction-looks/fight-library/finishers/FINISHERS.md`), and the
 /// Oni-Bound's kanabo in `oni-kanabo-1.glb` (`kanabo-1/NOTES.md`; its
-/// skeleton is the men's, drawn half as big again); a finisher made at
-/// another reach needs its own entry here.
+/// skeleton is the men's, drawn half as big again). These hold for the
+/// Ember men's rig only: a finisher made at another reach, or on another
+/// rig, needs its reach in the pack, as a kill's is.
 fn finish_reach(weapon: Weapon) -> f32 {
     match weapon {
         Weapon::Spear => 3.38,
@@ -565,6 +566,11 @@ impl Clips {
         }
     }
 
+    /// The death a man of `model` with `look` dies, if it has any.
+    fn die(&self, model: usize, look: u32) -> Option<MoveClip> {
+        nth(&self.by_model.get(model)?.dies, by_look(look, DEATH_SALT))
+    }
+
     /// His death move (by `look`) at the frame `frame` picks, held on its
     /// first and last frames, or for a model without one its idle pose,
     /// laid flat when `down`.
@@ -575,7 +581,7 @@ impl Clips {
         frame: impl FnOnce(&MoveClip) -> f32,
         down: bool,
     ) -> Option<(Pose, bool)> {
-        match nth(&self.by_model.get(model)?.dies, by_look(look, DEATH_SALT)) {
+        match self.die(model, look) {
             Some(die) => Some((die.at_frame(frame(&die)), false)),
             None => Some((self.pose(model, Action::Idle, 0.0)?, down)),
         }
@@ -771,7 +777,7 @@ mod tests {
             let die = old(m, &[ClipKind::Die]);
             if !own.dies.iter().any(|&d| made_for(m, Some(d))) {
                 assert!(
-                    die.is_none() || own.dies.iter().any(|&d| rows(Some(d)) == die),
+                    die.is_none_or(|die| own.dies.iter().any(|d| (d.first_row, d.frames) == die)),
                     "{m}"
                 );
             }
@@ -1006,7 +1012,7 @@ mod tests {
             }
         }
         // The five katana kills all come up as the seed varies.
-        let rows: std::collections::BTreeSet<u32> = (0..32)
+        let rows: std::collections::BTreeSet<u32> = (0..5)
             .map(|seed| clips.kill_pair(by("Katana Samurai"), by("Yari Ashigaru"), seed))
             .map(|p| p.unwrap().kill.first_row)
             .collect();
@@ -1292,10 +1298,11 @@ mod tests {
         ] {
             let m = by(name);
             let body = clips.body[m].unwrap();
-            let mut lying: Vec<_> = (0..=255)
-                .map(|look| clips.lying_chest(m, look).unwrap() - glam::vec2(body.side, body.feet))
+            let lying: Vec<_> = clips.by_model[m]
+                .lying
+                .iter()
+                .map(|c| c.unwrap() - glam::vec2(body.side, body.feet))
                 .collect();
-            lying.dedup_by(|a, b| a.distance(*b) < 1e-4);
             assert!(lying.iter().all(|c| c.length() < 1.0), "{name}: {lying:?}");
             assert!(
                 lying
@@ -1325,7 +1332,7 @@ mod tests {
         let m = models.by_name("Bone Pikes").unwrap();
         let clip = |k| *models.clip(m, k).unwrap();
         // His death by his look (his own or the library's).
-        let die = nth(&clips.by_model[m].dies, by_look(0, DEATH_SALT)).unwrap();
+        let die = clips.die(m, 0).unwrap();
         let (duck, hit) = (clip(ClipKind::Block), clip(ClipKind::Hit));
         let rows = |f: Move| clips.fight(m, f, 0.0, 0).unwrap();
         // A knockdown falls, lies on the death clip's last frame, and gets
@@ -1377,7 +1384,7 @@ mod tests {
         let m = (0..models.models.len())
             .find(|&m| models.clip(m, ClipKind::Die).is_some())
             .unwrap();
-        let die = nth(&clips.by_model[m].dies, by_look(0, DEATH_SALT)).unwrap();
+        let die = clips.die(m, 0).unwrap();
         let (end, flat) = clips.death(m, 100.0, None, 0).unwrap();
         assert_eq!(end.rows, [(die.first_row + die.frames - 1) as u16; 2]);
         assert!(!flat);

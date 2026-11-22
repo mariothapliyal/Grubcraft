@@ -13,7 +13,8 @@
 // on the duel's beat, as a tagged attack's is. `weapon` names what a model posed
 // from a shared skeleton holds, so the move picker prefers the skeleton's
 // tagged `moves` made for it; `moves_from` keeps a model's tagged moves in a
-// separate glTF on its rig (a fight library). An attack's or finisher's
+// separate glTF on its rig (a fight library), and a move may name several
+// `weapons` it is made for alike in place of one. An attack's or finisher's
 // `contact` is the second its blow lands; both halves of a matched kill (acts Kill, Killed)
 // have one and name their `pair`, and the killer's half its `reach`, the
 // distance between the two men in the glTF's units, and its `victim_size`
@@ -53,7 +54,7 @@
             // Ember Clans roster art: made in Blender on the Farmer body and
             // rig like the Yari Ashigaru; the katana rides the right wrist.
             source: "shared:grubcraft/ember/katana-samurai/katana-samurai.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Ember finishers", "Ember reactions", "Ember katana 3", "Ember spear 3"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Ember finishers", "Ember reactions", "Library deaths", "Ember katana 3", "Ember spear 3"],
             height: 1.6,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash",
@@ -1263,12 +1264,7 @@
         ),
         // Hits, a stagger and deaths made for the Ember men's rig (docs/33,
         // stage 5; design/faction-looks/fight-library/reactions-1/): a katana
-        // man reels and dies with both hands on the hilt, and every man of
-        // the rig may die one of three plain ways, each lying where he stood
-        // (the library's F_Death01 re-centred, a fall to the knees and onto
-        // the face, a crumple onto the side). A katana man takes the plain
-        // deaths too, beside his own, since the picker keeps the moves made
-        // for his weapon over those for any.
+        // man reels and dies with both hands on the hilt.
         "Ember reactions": (
             from: "shared:grubcraft/fight-library/ember-men/ember-men-reactions-1.glb",
             moves: [
@@ -1282,15 +1278,6 @@
                 (anim: "F_Katana_Hit_B", act: "Stagger", weapon: "TwoHanded"),
                 (anim: "F_Katana_Death_A", act: "Death", weapon: "TwoHanded"),
                 (anim: "F_Katana_Death_B", act: "Death", weapon: "TwoHanded"),
-                (anim: "F_Death_Back", act: "Death", weapon: "TwoHanded"),
-                (anim: "F_Death_Knees", act: "Death", weapon: "TwoHanded"),
-                (anim: "F_Death_Crumple", act: "Death", weapon: "TwoHanded"),
-                (anim: "F_Death_Back", act: "Death", weapon: "Spear"),
-                (anim: "F_Death_Knees", act: "Death", weapon: "Spear"),
-                (anim: "F_Death_Crumple", act: "Death", weapon: "Spear"),
-                (anim: "F_Death_Back", act: "Death"),
-                (anim: "F_Death_Knees", act: "Death"),
-                (anim: "F_Death_Crumple", act: "Death"),
             ],
         ),
         // Six more two-handed katana blows, cut from the library's combos
@@ -1350,14 +1337,17 @@
                 (anim: "K_Spear_Beat_Killed", act: "Killed", contact: Some(0.467), pair: Some("Spear_Beat")),
             ],
         ),
-        // The plain deaths for the men on foot whose rigs share the Ember
-        // men's joints but are their own, beside each one's own death.
+        // Three plain deaths for any man on foot of the Ember men's joints,
+        // beside his own, each lying where he stood (the library's F_Death01
+        // re-centred, a fall to the knees and onto the face, a crumple onto
+        // the side); katana and yari men play them beside the deaths made
+        // for their weapons.
         "Library deaths": (
             from: "shared:grubcraft/fight-library/ember-men/ember-men-reactions-1.glb",
             moves: [
-                (anim: "F_Death_Back", act: "Death"),
-                (anim: "F_Death_Knees", act: "Death"),
-                (anim: "F_Death_Crumple", act: "Death"),
+                (anim: "F_Death_Back", act: "Death", weapons: ["Any", "TwoHanded", "Spear"]),
+                (anim: "F_Death_Knees", act: "Death", weapons: ["Any", "TwoHanded", "Spear"]),
+                (anim: "F_Death_Crumple", act: "Death", weapons: ["Any", "TwoHanded", "Spear"]),
             ],
         ),
         // Blows struck down at a man already lying on his back (docs/33,
