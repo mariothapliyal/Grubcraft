@@ -161,7 +161,7 @@ fn the_goldens_cover_every_kind_of_command() {
 /// rewritten by `cargo run --release -p gc_replay -- pin` (or by
 /// `scripts/rules-bump.py`, which also takes the next free version).
 const PINNED: (u32, &[(&str, u64)]) = (
-    95,
+    96,
     &[
         ("conquest-evolve-tithe-1v1", 0x4c3bacd4c1b586b2),
         ("conquest-ribcage-1v1", 0x883c395e8e88766f),
