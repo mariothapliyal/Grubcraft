@@ -190,7 +190,8 @@ impl Flock {
 }
 
 /// A place a crow sits: a body or a roof, `up` tiles over the ground there
-/// (0 once a body has gone: the crow stands where it lay).
+/// (0 once a body has gone: the crow stands where it lay; below 0 for a
+/// roof built over: the crow goes down to the green).
 #[derive(Clone, Copy, Debug)]
 struct Perch {
     at: Vec2,
@@ -293,12 +294,18 @@ impl Aftermath {
         push_oldest(&mut self.flocks, MAX_FLOCKS, flock, |f| f.age);
     }
 
-    /// The fallen soldiers `lying` (where each body is, see [`body_at`])
-    /// round the flock that a wipe-out at `at` brought: its crows after the
-    /// standard's each take one to stand on, nearest its centre first. A
-    /// second wipe-out there adds bodies for the crows that have none.
-    pub fn bodies(&mut self, at: Vec2, lying: impl Iterator<Item = Vec2>) {
-        let Some(f) = self.flocks.iter_mut().find(|f| f.joins(at)) else {
+    /// The fallen soldiers `lying` (where each body comes to rest, see
+    /// [`body_at`]) round the flock that regiment `h`'s wipe-out at `at`
+    /// brought: its crows after the standard's each take one to stand on,
+    /// nearest its centre first. A second wipe-out there before the crows
+    /// come adds bodies for those that have none; once they have come they
+    /// keep to where they are (none jumps from the ground onto a body).
+    /// Workers' wipe-outs bring no crows, so none here either.
+    pub fn bodies(&mut self, h: RegimentHandle, at: Vec2, lying: impl Iterator<Item = Vec2>) {
+        if self.slot(h).is_some_and(|s| s.worker) {
+            return;
+        }
+        let Some(f) = (self.flocks.iter_mut()).find(|f| f.joins(at) && f.age < CROW_ARRIVE) else {
             return;
         };
         let room = (MAX_CROWS - 1).saturating_sub(f.perches.len());
@@ -344,6 +351,15 @@ impl Aftermath {
                     p.up = 0.0;
                 }
             }
+        }
+    }
+
+    /// The roofs of the roosts that `built` says a building now stands on
+    /// (the burnt house is hidden under it): their crows sit on the green.
+    pub fn unroof(&mut self, built: impl Fn(Vec2) -> bool) {
+        let perches = self.roosts.iter_mut().flat_map(|f| f.perches.iter_mut());
+        for p in perches.filter(|p| p.up >= 0.0 && built(p.at)) {
+            p.up = -1.0;
         }
     }
 
@@ -657,8 +673,8 @@ fn bird(
     let slot = if s.roost { Some(k) } else { k.checked_sub(1) };
     let (spot, sat) = match slot.map(|j| s.perches.get(j)) {
         None => (s.at, if perch { PERCH_HEIGHT } else { 0.0 }),
-        Some(Some(p)) => (p.at, p.up),
-        Some(None) => (
+        Some(Some(p)) if p.up >= 0.0 => (p.at, p.up),
+        Some(_) => (
             s.at + Vec2::from_angle(TAU * h(3)) * (SPREAD * h(4).sqrt()),
             0.0,
         ),
@@ -915,7 +931,11 @@ mod tests {
         let near: Vec<Vec2> = (0..5).map(|k| Vec2::new(31.0 + k as f32, 30.5)).collect();
         // A body too far off draws none.
         let far = Vec2::new(30.0 + DEAD_RADIUS + 1.0, 30.0);
-        a.bodies(Vec2::new(30.0, 30.0), near.iter().copied().chain([far]));
+        a.bodies(
+            handle(1),
+            Vec2::new(30.0, 30.0),
+            near.iter().copied().chain([far]),
+        );
         a.advance(CROW_ARRIVE + 60.0, std::iter::empty());
         let birds = settled(&a);
         let on = |b: &Bird| near.contains(&b.pos) && b.lift == BODY_TOP;
@@ -925,7 +945,7 @@ mod tests {
         assert_eq!(birds.iter().filter(|b| b.lift == PERCH_HEIGHT).count(), 1);
         // The same bodies again add nothing; one that has sunk away leaves
         // its crow standing on the ground where it lay.
-        a.bodies(Vec2::new(30.0, 30.0), near.iter().copied());
+        a.bodies(handle(1), Vec2::new(30.0, 30.0), near.iter().copied());
         assert!(a.on_bodies());
         a.keep_bodies(&near[1..]);
         let birds = settled(&a);
@@ -937,6 +957,35 @@ mod tests {
             a.advance(0.2, [Vec2::new(31.0, 30.0)].into_iter());
         }
         assert!(settled(&a).iter().all(|b| b.aloft > 0.9));
+        // Bodies of a later wipe-out once the crows have come are not
+        // jumped on: crows on the ground stay where they are.
+        let before = settled(&a).iter().map(|b| b.pos).collect::<Vec<_>>();
+        let more: Vec<Vec2> = (0..5).map(|k| Vec2::new(29.0 - k as f32, 31.0)).collect();
+        a.wiped(handle(2), Vec2::new(31.0, 31.0), Vec2::X, [9; 3], 50, None);
+        a.bodies(handle(2), Vec2::new(31.0, 31.0), more.iter().copied());
+        let after = settled(&a).iter().map(|b| b.pos).collect::<Vec<_>>();
+        assert!(after.iter().all(|p| !more.contains(p)));
+        assert_eq!(before.len(), after.len().min(before.len()));
+    }
+
+    #[test]
+    fn workers_bodies_give_no_perches() {
+        let mut a = Aftermath::default();
+        a.tend(handle(4), false, false, 0.1);
+        a.tend(handle(5), false, true, 0.1);
+        a.wiped(handle(4), Vec2::new(30.0, 30.0), Vec2::X, [9; 3], 40, None);
+        a.bodies(
+            handle(5),
+            Vec2::new(30.0, 30.0),
+            [Vec2::new(31.0, 30.0)].into_iter(),
+        );
+        assert!(!a.on_bodies());
+        a.bodies(
+            handle(4),
+            Vec2::new(30.0, 30.0),
+            [Vec2::new(31.0, 30.0)].into_iter(),
+        );
+        assert!(a.on_bodies());
     }
 
     #[test]
@@ -974,6 +1023,17 @@ mod tests {
                 .count(),
             2
         );
+        // A roof built over sends its crow down to the green.
+        a.unroof(|p| p == roofs[0].0);
+        let birds = settled(&a);
+        assert!(birds.iter().all(|b| b.pos != roofs[0].0));
+        assert_eq!(birds.iter().filter(|b| b.lift > 1.5).count(), 1);
+        assert!(
+            birds
+                .iter()
+                .all(|b| b.pos.distance(centre) <= SPREAD + 0.01 || b.lift > 1.5)
+        );
+        a.roosts[0].perches[0].up = roofs[0].1;
         // A wipe-out in the ruin brings its own flock, not more roost.
         a.wiped(handle(3), centre, Vec2::X, [90; 3], 30, None);
         assert_eq!(a.roosts.len(), 1);

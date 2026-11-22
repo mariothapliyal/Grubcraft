@@ -328,12 +328,13 @@ const COMMANDER_FLAG: [f32; 3] = [2.6, 1.8, 0.25];
 const RUIN_CHECK: f32 = 1.0;
 /// A regiment whose volley left this many ticks ago or less is shooting.
 const SHOOTING_TICKS: u32 = 24;
-/// Where the bodies of the fallen lie on the field for a crow to stand on:
-/// those come to rest (not flying from a blow, not sinking to make room).
+/// Where the bodies of the fallen lie on the field for a crow to stand on,
+/// each where it comes to rest (a man still falling or thrown counts where
+/// he will lie), leaving out those sinking to make room for newer dead.
 fn lying_bodies(puppets: &Puppets) -> impl Iterator<Item = Vec2> + '_ {
     (puppets.corpses())
-        .filter(|c| c.age >= 0.0 && c.lift == 0.0 && c.sink == 0.0)
-        .map(|c| aftermath::body_at(c.pos, c.facing))
+        .filter(|c| c.sink == 0.0)
+        .map(|c| aftermath::body_at(c.rest, c.rest_facing))
 }
 
 /// Ground height for the cameras: the terrain, or the water's surface where
@@ -948,7 +949,7 @@ struct Running {
     /// Fallen standards, crows and grime (see [`aftermath`]).
     aftermath: aftermath::Aftermath,
     /// Seconds since the dead were last counted for ruins and the crows'
-    /// bodies ([`App::tend_ruins`]).
+    /// bodies ([`Running::tend_ruins`]).
     ruin_clock: f32,
     /// How far `--siege` has staged its siege: 0 to place it, 1 to order
     /// the attacks.
@@ -6376,6 +6377,7 @@ impl Running {
         self.arrows = field::Arrows::new(field::MAX_STUCK);
         self.siege.clear();
         self.aftermath.clear();
+        self.ruin_clock = 0.0;
         self.ambient.walkers.clear();
         self.ambient.wildlife.clear();
         self.ambient.birds.clear();
@@ -7134,7 +7136,7 @@ impl Running {
                         self.aftermath
                             .wiped(regiment, at, facing, tint, dead, victor);
                         // The crows that come stand on the bodies.
-                        self.aftermath.bodies(at, lying_bodies(&self.puppets));
+                        (self.aftermath).bodies(regiment, at, lying_bodies(&self.puppets));
                     }
                 }
                 Event::Contact { regiment, foe } => {
@@ -8798,12 +8800,22 @@ impl Running {
         if due {
             self.ruin_clock = 0.0;
         }
+        if due {
+            // A burnt house built over since is hidden: its crow goes to the
+            // green.
+            let scenery = &self.scenery;
+            (self.aftermath)
+                .unroof(|p| scenery.occupied_at((p.x.floor() as i32, p.y.floor() as i32)));
+        }
         if ruins || bodies {
             let lying: Vec<Vec2> = lying_bodies(&self.puppets).collect();
             if bodies {
                 self.aftermath.keep_bodies(&lying);
             }
-            if ruins {
+            // A viewer catching up on an online match ruins nothing while
+            // the fights already played go by (the dead still lie there
+            // after, so the first count once it has caught up does it).
+            if ruins && !(self.online.is_some() && self.menu.net().catching_up()) {
                 // Only the dead in a hamlet still standing count, and only
                 // those the viewer has seen.
                 let (reveal, fog) = (self.reveal_all, &self.fog);

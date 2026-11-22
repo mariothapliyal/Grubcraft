@@ -528,9 +528,9 @@ impl Hamlets {
     fn ruin(&mut self, i: usize) {
         self.ruined[i] = Some(0.0);
         let centre = self.sites[i].0;
-        let mut rng = Rng::new((centre.x as i32, centre.y as i32), self.sizes[i]);
-        // Not the stream the hamlet was laid out with.
-        rng.unit();
+        // Not the stream the hamlet was laid out with: a salted seed.
+        let layout = Rng::new((centre.x as i32, centre.y as i32), self.sizes[i]);
+        let mut rng = Rng::seeded(layout.0 ^ 0x5bd1_e995);
         for e in &mut self.sites[i].1 {
             let (tint, lean) = match e.model {
                 Model::GrubfolkWell => (SCORCHED, 0),
