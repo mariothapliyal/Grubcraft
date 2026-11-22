@@ -1133,6 +1133,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
     // The map to draw it on: the lobby's choice, unless it is the
     // generated map.
     replay.header.map = (golden.map != 0).then_some(golden.map as u8);
+    replay.header.map_maker = Some(gc_map::MAP_MAKER);
     replay
 }
 

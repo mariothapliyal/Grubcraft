@@ -179,7 +179,7 @@ Each stage is playable on its own.
 - ~~Then make Measured the default.~~ Done 2026-10-31 for Field Battles; Conquest stays mirrored (its shares are placed on the north and turned for the south).
 - Count cuttable woods near starts (idea 22).
 - Team-aware limits.
-- Store the generator version with the map choice in replays.
+- ~~Store the generator version with the map choice in replays.~~ Done: `gc_map::MAP_MAKER` in the replay header (format 58).
 - ~~Move Conquest big maps onto grown land.~~ Done 2026-10-30 ([41](41-finish-living-land.md#step-1-as-built)).
 
 ## Stage 4 as built
@@ -250,4 +250,4 @@ The renderer's river texture is now the water's height over the map's line on ev
 - **Load time.** The Python prototype takes 20 to 40 seconds a map. The game runs erosion, drainage and the start search on coarse grids. Estimated 1 to 3 seconds for a 768 map; measured in stage 1 at about 2 seconds.
 - **Same map everywhere.** Online play needs identical maps on every machine. Erosion and river tracing are the new parts to pin with hash tests, the way `Map::generate` is pinned today.
 - **The computer players.** The battle and Conquest minds read chokes and routes from the map, and organic maps have more varied chokes. Their route reading gets a check in stage 2.
-- **Replays and seeds.** Maps are rebuilt from their seed, so the generator's version is saved with the map choice. Old replays keep playing on Classic.
+- **Replays and seeds.** Maps are rebuilt from their seed, so the map maker's version is saved with the map choice: `gc_map::MAP_MAKER`, bumped whenever the same choice, size and seed make different land, and stamped in each replay's header (replay format 58). A replay whose version is not this build's, or whose stored ground isn't what this build makes from its choice (any replay from before the stamp whose land has changed since), is drawn from the ground it stored, `Map::from_ground`, so the soldiers walk on the ground you see; that ground has no land colours, and the viewer says so. Old replays keep playing on Classic.

@@ -6193,16 +6193,25 @@ impl Running {
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.sim_nav_costs());
         if let MatchKind::Replay(r) = &kind {
             let (shown, stored) = (self.heightmap.ground(), r.setup().ground);
-            if r.map_tiles != self.heightmap.tiles
+            // A replay recorded by another map maker, or whose map this
+            // build makes differently anyway, is drawn from the ground it
+            // stored, so the soldiers walk on the ground you see.
+            let drawn_from_stored = r.header.map_maker.is_some_and(|m| m != gc_map::MAP_MAKER)
+                || r.map_tiles != self.heightmap.tiles
                 || r.nav != nav
                 || stored.heights != shown.heights
                 || stored.water_level != shown.water_level
                 || stored.cover != shown.cover
                 || (!stored.growth.is_empty() && stored.growth != shown.growth)
-                || stored.water_levels != shown.water_levels
-            {
+                || stored.water_levels != shown.water_levels;
+            if drawn_from_stored {
+                let map = Arc::new(Map::from_ground(r.map_tiles, &stored));
+                if let Some(key) = self.map_key.take() {
+                    self.show_map(key, map);
+                    self.blocked_marks = blocked_marks(&r.nav, r.map_tiles);
+                }
                 map_note = Some(
-                    "This replay's map was made by another build: the ground may look different from where the soldiers walk.",
+                    "This replay was recorded on an older map maker: its ground is drawn as it was played, without the land's colours.",
                 );
             }
         }
@@ -6444,7 +6453,16 @@ impl Running {
     /// Make the lobby map `key` names and put it on screen.
     fn use_map(&mut self, key: MapKey) {
         self.map_key = Some(key);
-        self.heightmap = make_map(key);
+        self.show_map(key, make_map(key));
+    }
+
+    /// Draw `map` as the ground, the minimap and the scenery (`key` seeds
+    /// the trees). [`Game::use_map`] gives it the map `key` makes; a replay
+    /// recorded on an older map maker gives it the map drawn from its
+    /// stored ground, and then leaves `map_key` unset so the next match
+    /// makes its own map again.
+    fn show_map(&mut self, key: MapKey, map: Arc<Map>) {
+        self.heightmap = map;
         self.decks_key = 0;
         self.wall_lines_key = 0;
         logln!(
@@ -6561,6 +6579,7 @@ impl Running {
             header.players = replays::players(&self.parties);
             header.recorded_by = Some(me);
             header.map = Some(setup.settings.map as u8);
+            header.map_maker = Some(gc_map::MAP_MAKER);
             header.unit_names = unit_names;
         }
     }

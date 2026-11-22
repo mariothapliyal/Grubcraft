@@ -168,6 +168,87 @@ impl Map {
         }
     }
 
+    /// A map drawn from a stored simulation ground (a replay's) instead of
+    /// being made again from a seed: `tiles` a side, one value per tile in
+    /// each layer (an empty layer stays empty, as the simulation reads it).
+    /// The samples are the tile heights, blended between tile centres so
+    /// the centre of every tile has exactly its height; the water line,
+    /// cover, growth, footing and flow are kept as stored. It has no lands
+    /// or habitats, so it draws with the plain look, and no objects. Its
+    /// [`Map::ground`] is the ground it was given. A ground that doesn't
+    /// fit `tiles` (heights not one per tile) is drawn flat, as the
+    /// simulation takes it.
+    pub fn from_ground(tiles: u32, ground: &gc_sim::Ground) -> Map {
+        let n = (tiles * tiles) as usize;
+        let side = tiles * SAMPLES_PER_TILE + 1;
+        let high = i64::from(tiles.saturating_sub(1));
+        let flat = ground.heights.len() != n;
+        let height = |x: i64, y: i64| -> i64 {
+            if flat {
+                0
+            } else {
+                i64::from(ground.heights[(y * i64::from(tiles) + x) as usize])
+            }
+        };
+        let per = i64::from(SAMPLES_PER_TILE);
+        let half = per / 2;
+        let samples = (0..side)
+            .flat_map(|sy| (0..side).map(move |sx| (sx, sy)))
+            .map(|(sx, sy)| {
+                // Tile centres sit `half` samples in; between two of them
+                // the height is blended by quarters (rounded), and beyond
+                // the outer centres it holds the edge tile's height.
+                let at = |s: u32| {
+                    let p = (i64::from(s) - half).clamp(0, high * per);
+                    (p / per, p % per, (p / per + 1).min(high))
+                };
+                let (x0, rx, x1) = at(sx);
+                let (y0, ry, y1) = at(sy);
+                let row = |y: i64| height(x0, y) * (per - rx) + height(x1, y) * rx;
+                let blend = row(y0) * (per - ry) + row(y1) * ry;
+                sample_of_sim((blend + per * per / 2) / (per * per))
+            })
+            .collect();
+        let water = sample_of_sim(i64::from(ground.water_level));
+        let mut map = Map::from_samples(tiles, samples, water);
+        if flat {
+            // Flat as given: the ground says so with no heights at all.
+            map.heights.clear();
+        }
+        let layer = |bytes: &[u8]| {
+            if bytes.len() == n {
+                bytes.to_vec()
+            } else {
+                Vec::new()
+            }
+        };
+        map.cover = layer(ground.cover);
+        map.growth = layer(ground.growth);
+        map.footing = layer(ground.footing);
+        map.flow = layer(ground.flow);
+        if ground.water_levels.len() == n {
+            map.levels = ground.water_levels.to_vec();
+        }
+        let thicket = gc_sim::Growth::Thicket as u8;
+        if map.growth.contains(&thicket) {
+            map.thicket = map.growth.iter().map(|&g| g == thicket).collect();
+        }
+        if map.growth.is_empty() && !map.cover.is_empty() {
+            // The simulation lets growth follow the cover when it has none.
+            let wood = gc_sim::Cover::Wood as u8;
+            map.growth = (map.cover.iter())
+                .map(|&c| {
+                    if c == wood {
+                        gc_sim::Growth::Woods as u8
+                    } else {
+                        gc_sim::Growth::Open as u8
+                    }
+                })
+                .collect();
+        }
+        map
+    }
+
     /// Samples per side: `tiles * SAMPLES_PER_TILE + 1`.
     pub fn side(&self) -> u32 {
         self.tiles * SAMPLES_PER_TILE + 1
@@ -506,5 +587,57 @@ mod tests {
         }
         assert_eq!(sample_of_sim(-5), 0);
         assert_eq!(sample_of_sim(99_999), u16::MAX);
+    }
+
+    /// The ground a map hands the simulation, field by field.
+    fn same_ground(a: &gc_sim::Ground, b: &gc_sim::Ground) {
+        assert_eq!(a.heights, b.heights, "heights");
+        assert_eq!(a.water_level, b.water_level, "water line");
+        assert_eq!(a.cover, b.cover, "cover");
+        assert_eq!(a.growth, b.growth, "growth");
+        assert_eq!(a.footing, b.footing, "footing");
+        assert_eq!(a.flow, b.flow, "flow");
+        assert_eq!(a.water_levels, b.water_levels, "water levels");
+    }
+
+    #[test]
+    fn a_map_drawn_from_its_ground_plays_on_the_same_ground() {
+        use crate::grown::{Fairness, describe};
+        use crate::wilds::Wildness;
+        let grown = Map::from_def(&describe(128, 7, Wildness::Wild, Fairness::Mirrored, 0));
+        let made = [grown, Map::generate(3, 128)];
+        for map in &made {
+            let drawn = Map::from_ground(map.tiles, &map.ground());
+            same_ground(&drawn.ground(), &map.ground());
+            assert_eq!(drawn.tiles, map.tiles);
+            assert_eq!(drawn.samples.len(), map.samples.len());
+            // Blended heights stay inside what the tiles hold.
+            let lo = *map.heights.iter().min().unwrap();
+            let hi = *map.heights.iter().max().unwrap();
+            for &s in &drawn.samples {
+                assert!((lo..=hi).contains(&sim_of_sample(s)));
+            }
+        }
+    }
+
+    #[test]
+    fn a_ground_with_no_layers_is_drawn_flat_and_bare() {
+        let map = Map::from_ground(8, &gc_sim::Ground::FLAT);
+        assert!(map.samples.iter().all(|&s| s == 0));
+        same_ground(&map.ground(), &gc_sim::Ground::FLAT);
+    }
+
+    #[test]
+    fn growth_that_follows_the_cover_is_made_explicit() {
+        let wood = gc_sim::Cover::Wood as u8;
+        let cover: Vec<u8> = (0..16).map(|i| if i % 3 == 0 { wood } else { 0 }).collect();
+        let ground = gc_sim::Ground {
+            cover: &cover,
+            ..gc_sim::Ground::FLAT
+        };
+        let map = Map::from_ground(4, &ground);
+        assert_eq!(map.growth.len(), 16);
+        assert_eq!(map.growth[0], gc_sim::Growth::Woods as u8);
+        assert_eq!(map.growth[1], gc_sim::Growth::Open as u8);
     }
 }

@@ -62,7 +62,7 @@ It puts the numbers, the `PINNED` rows, the goldens and the bench baseline your 
 4. A label nobody has pushed to for 2 hours may be taken over (say so in that pull request's thread).
 
 
-Retuning `data/units.ron` or changing the map generator doesn't touch these files: each replay keeps the unit table and the map it was recorded with.
+Retuning `data/units.ron` or changing the map generator doesn't touch these files: each replay keeps the unit table and the ground it was recorded with. A change that makes the same map choice, size and seed into different land bumps `gc_map::MAP_MAKER` (format 58 stamps it in the header); the viewer draws a replay from another version, or one whose stored ground this build no longer makes, on its stored ground instead of re-making the map, and says so. The goldens need no re-bless for it.
 
 The checked-in goldens stay in the format they were recorded in (older formats still load, and bless writes the current one only when it is run); `cargo run --release -p gc_replay -- verify replays` plays them all either way.
 

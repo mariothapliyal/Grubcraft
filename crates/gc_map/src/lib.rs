@@ -48,6 +48,13 @@ pub use map::{
     CLIFF_RISE_PER_TILE, Ground, MAX_HEIGHT, Map, Placed, SAMPLES_PER_TILE, fnv1a, map_hash,
 };
 
+/// Which version of the map maker this build is. Bump it whenever the same
+/// lobby map choice, size and seed make different land (grown land, the
+/// Wilds, the recipes, the seeded map), so a replay recorded before can tell
+/// its map would now be made differently and is drawn from the ground it
+/// stored instead. A change that leaves every map as it was doesn't need it.
+pub const MAP_MAKER: u16 = 1;
+
 /// The maps a Field Battle can be played on, in the lobby's order: the
 /// seeded map, a random map from each recipe, a random recipe, the Classic
 /// Wilds as wild as the seed picks and at each [`wilds::Wildness`], then
