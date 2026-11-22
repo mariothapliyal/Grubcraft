@@ -44,7 +44,8 @@ const HERO_BREAK_OUT: &str =
 const HERO_REVIVE: &str =
     "At its building, at its level: 65% of the hire price and time at level 1, 15% more a level";
 /// docs/44: two abilities, ranked by level.
-const HERO_ABILITIES: &str = "Two, on keys A and S: the first ranks up at levels 1, 4 and 7, the ultimate opens at level 6";
+const HERO_ABILITIES: &str =
+    "Two, on keys A and S: the first ranks up at levels 1, 4 and 7, the ultimate opens at level 6";
 
 // ---- the roster files, as much of them as the Guide reads ----------------
 

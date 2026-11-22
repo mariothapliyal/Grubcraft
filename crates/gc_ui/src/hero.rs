@@ -8,8 +8,8 @@
 
 use crate::draw::{CELL_W, DrawList, Rect, fit, text_width};
 use crate::hud::{
-    GRID_KEYS, HERO_ABILITIES, HERO_SLOT_FIRST, dim_ink, draw_portrait, health_color, ink_meter, linen_light,
-    muted_ink,
+    GRID_KEYS, HERO_ABILITIES, HERO_SLOT_FIRST, dim_ink, draw_portrait, health_color, ink_meter,
+    linen_light, muted_ink,
 };
 use crate::ui::theme;
 
@@ -191,7 +191,10 @@ mod tests {
             hp: 212,
             max_hp: 340,
             xp: 0.4,
-            abilities: [ability("Rally", 2, false, 0), ability("Banner", 0, false, 0)],
+            abilities: [
+                ability("Rally", 2, false, 0),
+                ability("Banner", 0, false, 0),
+            ],
             items: [Some("Jade Charm"), None, None],
             revive_secs: None,
         }

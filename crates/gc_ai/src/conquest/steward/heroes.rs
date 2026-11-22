@@ -15,9 +15,9 @@ use gc_sim::{Command, TICKS_PER_SECOND};
 use glam::Vec2;
 
 use super::super::Sense;
-use crate::perception::{Seen, to_fx_vec};
 use super::super::kit::KitBuilding;
 use super::{Clicks, Look, Steward, trains_fighters};
+use crate::perception::{Seen, to_fx_vec};
 
 /// Fighting regiments it has before it puts up its hero building.
 const ARMY_FIRST: usize = 3;
@@ -132,15 +132,19 @@ impl Steward {
                 let reach = f32::from(a.range);
                 let target = match a.aim {
                     Aim::Hero => nearest(FIGHT_TILES, false).map(|_| CastTarget::Hero),
-                    Aim::Point => nearest(reach, false).map(|f| CastTarget::Point(to_fx_vec(f.pos))),
-                    Aim::Regiment => {
-                        nearest(reach, a.name == "Foreclosure").map(|f| CastTarget::Regiment(f.handle))
+                    Aim::Point => {
+                        nearest(reach, false).map(|f| CastTarget::Point(to_fx_vec(f.pos)))
                     }
+                    Aim::Regiment => nearest(reach, a.name == "Foreclosure")
+                        .map(|f| CastTarget::Regiment(f.handle)),
                 };
                 let Some(target) = target else {
                     continue;
                 };
-                if s.world.cast_check(s.party, me.handle, slot, target).is_err() {
+                if s.world
+                    .cast_check(s.party, me.handle, slot, target)
+                    .is_err()
+                {
                     continue;
                 }
                 let cast = Command::Cast {

@@ -17,6 +17,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 pub mod abilities;
+#[cfg(test)]
+mod ability_tests;
 pub mod arrange;
 pub mod blueprints;
 pub mod bridges;
@@ -43,8 +45,6 @@ pub mod generals;
 mod hash;
 #[cfg(test)]
 mod hero_tests;
-#[cfg(test)]
-mod ability_tests;
 pub mod heroes;
 pub mod honor;
 pub mod larvae;

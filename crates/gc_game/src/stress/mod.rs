@@ -21,6 +21,7 @@
 //! what the simulation decides (ticks, positions, losses), which are the
 //! same on every machine; time is held only to the generous budget.
 
+mod abilities;
 mod ai_ring;
 pub(crate) mod arena;
 mod big_army;
@@ -36,7 +37,6 @@ mod forest;
 mod forest_pass;
 mod gate;
 mod gated_towns;
-mod abilities;
 mod heroes;
 mod high_water;
 mod make_way;

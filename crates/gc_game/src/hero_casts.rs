@@ -16,8 +16,12 @@ impl Running {
             return None;
         };
         let hero = self.world.hero_of(h)?;
-        (hero.kit.is_some() && self.world.stances().can_command(self.sandbox.side, hero.owner))
-            .then_some(h)
+        (hero.kit.is_some()
+            && self
+                .world
+                .stances()
+                .can_command(self.sandbox.side, hero.owner))
+        .then_some(h)
     }
 
     /// What each of hero `h`'s two abilities does, from its roster.
@@ -51,13 +55,20 @@ impl Running {
             aim => {
                 // Ask with no target first, so a locked or cooling ability
                 // says so at once; a wrong target only means it needs aiming.
-                match self.world.cast_check(self.sandbox.side, h, slot, CastTarget::Hero) {
+                match self
+                    .world
+                    .cast_check(self.sandbox.side, h, slot, CastTarget::Hero)
+                {
                     Err(why) if why != gc_sim::structures::Refusal::Unknown => {
                         self.say(buildings::why(why).into());
                     }
                     _ => {
                         self.hud.armed = Some(Armed::Cast(slot));
-                        let what = if aim == Aim::Point { "a place" } else { "an enemy regiment" };
+                        let what = if aim == Aim::Point {
+                            "a place"
+                        } else {
+                            "an enemy regiment"
+                        };
                         self.say(format!(
                             "{}: click {what} - Esc or right-click to cancel",
                             a.name
@@ -80,7 +91,9 @@ impl Running {
             return;
         };
         let target = match a.aim {
-            Aim::Point => self.ground_under_cursor().map(|p| CastTarget::Point(fx_vec(p))),
+            Aim::Point => self
+                .ground_under_cursor()
+                .map(|p| CastTarget::Point(fx_vec(p))),
             Aim::Regiment => self.enemy_under_cursor().map(CastTarget::Regiment),
             Aim::Hero => Some(CastTarget::Hero),
         };

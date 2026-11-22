@@ -201,7 +201,9 @@ impl Structures {
 
     /// Whether player `p` is in a Symphony.
     pub fn in_symphony(&self, p: PlayerId) -> bool {
-        self.symphony_left.get(usize::from(p)).is_some_and(|&s| s > 0)
+        self.symphony_left
+            .get(usize::from(p))
+            .is_some_and(|&s| s > 0)
     }
 
     /// Take `points` of player `p`'s Resonance (they have them).

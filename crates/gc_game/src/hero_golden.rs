@@ -21,7 +21,9 @@ use gc_data::Faction;
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_replay::{Recorder, Replay};
 use gc_sim::abilities::CastTarget;
-use gc_sim::{Command, PlayerCommand, PlayerId, RegimentHandle, TICKS_PER_SECOND, UnitId, Victories, World};
+use gc_sim::{
+    Command, PlayerCommand, PlayerId, RegimentHandle, TICKS_PER_SECOND, UnitId, Victories, World,
+};
 use gc_ui::lobby::Tempo;
 
 use crate::conquest;
@@ -32,10 +34,11 @@ pub const NAME: &str = "conquest-heroes-1v1";
 const SEED: u64 = 0x4e50;
 const MINUTES: u32 = 3;
 const FACTIONS: [Faction; 2] = [Faction::EmberClans, Faction::CarrionConcord];
-/// When the host puts up the hero buildings, the sides hire their heroes
+/// When the host puts up the hero buildings, the sides hire their heroes,
 /// and the host raises their regiments.
 const BUILD_AT: u32 = 2 * TICKS_PER_SECOND;
 const HIRE_AT: u32 = 3 * TICKS_PER_SECOND;
+const RAISE_AT: u32 = 45 * TICKS_PER_SECOND;
 /// When the heroes and their regiments march on each other.
 const MARCH_AT: u32 = 50 * TICKS_PER_SECOND;
 /// Regiments each side raises.
@@ -71,7 +74,10 @@ struct Script {
 }
 
 fn hero_of(world: &World, p: PlayerId) -> Option<RegimentHandle> {
-    world.heroes().find(|h| h.owner == p).and_then(|h| h.regiment)
+    world
+        .heroes()
+        .find(|h| h.owner == p)
+        .and_then(|h| h.regiment)
 }
 
 impl Script {
@@ -90,8 +96,10 @@ impl Script {
         if t == BUILD_AT {
             for (p, building) in [(0, ids.shrine), (1, ids.vault)] {
                 let near = toward(self.starts[usize::from(p)], self.middle, 10);
-                let (x, y) = nearest(world, near, |x, y| world.can_build(building, (x, y), 0).is_ok())
-                    .expect("room to build");
+                let (x, y) = nearest(world, near, |x, y| {
+                    world.can_build(building, (x, y), 0).is_ok()
+                })
+                .expect("room to build");
                 out.push(order(
                     p,
                     Command::SpawnStructure {
@@ -112,13 +120,19 @@ impl Script {
                 let unit = ids.heroes[usize::from(p)];
                 out.push(order(p, Command::Train { structure, unit }));
             }
+        }
+        // Once the heroes are out, so the regiments don't take the supply
+        // the heroes wait on.
+        if t == RAISE_AT {
             let mut taken: Vec<(i32, i32)> = Vec::new();
             for p in [0u8, 1] {
                 let front = toward(self.middle, self.starts[usize::from(p)], 14);
                 for _ in 0..REGIMENTS {
                     let (x, y) = nearest(world, front, |x, y| {
                         world.can_build(ids.shrine, (x - 1, y - 1), 0).is_ok()
-                            && taken.iter().all(|&(tx, ty)| (tx - x).pow(2) + (ty - y).pow(2) >= 36)
+                            && taken
+                                .iter()
+                                .all(|&(tx, ty)| (tx - x).pow(2) + (ty - y).pow(2) >= 36)
                     })
                     .expect("open ground");
                     taken.push((x, y));
@@ -135,7 +149,12 @@ impl Script {
         }
         if t == MARCH_AT {
             let at = FxVec2::new(Fx::from_int(self.middle.0), Fx::from_int(self.middle.1));
-            for r in world.regiments.iter().filter(|r| r.owner < 2) {
+            let marching = |u: UnitId| ids.heroes.contains(&u) || ids.troops.contains(&u);
+            for r in world
+                .regiments
+                .iter()
+                .filter(|r| r.owner < 2 && marching(r.unit))
+            {
                 out.push(order(
                     r.owner,
                     Command::AttackMove {
@@ -155,7 +174,9 @@ impl Script {
                     .filter(|r| r.owner == 1 - p && !r.morale.broken())
                     .map(|r| (r.handle, (r.position - at).length_sq_raw()))
                     .min_by_key(|&(_, d)| d)
-                    .filter(|&(_, d)| d <= (FxVec2::new(Fx::from_int(tiles), Fx::ZERO)).length_sq_raw())
+                    .filter(|&(_, d)| {
+                        d <= (FxVec2::new(Fx::from_int(tiles), Fx::ZERO)).length_sq_raw()
+                    })
                     .map(|(h, _)| h)
             };
             if let Some(daimyo) = hero_of(world, 0)
@@ -168,7 +189,9 @@ impl Script {
             if let Some(usurer) = hero_of(world, 1)
                 && let Some(at) = world.regiments.position(usurer)
                 && let Some(foe) = foe_near(1, at, 30)
-                && world.cast_check(1, usurer, 0, CastTarget::Regiment(foe)).is_ok()
+                && world
+                    .cast_check(1, usurer, 0, CastTarget::Regiment(foe))
+                    .is_ok()
                 && world.hero_of(usurer).is_some_and(|h| h.pending.is_none())
             {
                 out.push(cast(1, usurer, CastTarget::Regiment(foe)));

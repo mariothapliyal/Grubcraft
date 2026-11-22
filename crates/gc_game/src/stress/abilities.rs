@@ -10,6 +10,10 @@
 //! - **Leech.** The Usurer walks up to the Yari and casts Leech on them
 //!   from out of reach: he walks into reach, the cast goes off, and the
 //!   Yari lose hit points.
+//! - **A computer player casts.** In a Conquest match on Ribcage Pass a
+//!   General plays the Clans; the host gives it the Daimyo, then raises
+//!   two Bone Pikes regiments of the Concord's 5 tiles from him: the
+//!   General has him cast an ability within 10 s.
 
 use gc_data::Faction;
 use gc_sim::abilities::CastTarget;
@@ -19,6 +23,9 @@ use gc_sim::{Command, PlayerId, RegimentHandle, TICKS_PER_SECOND, World};
 
 use super::arena::{Arena, EAST, Real, centre, hp, move_to, order, put_up, spawn};
 use super::{Report, Scenario};
+use crate::conquest;
+use crate::conquest_golden::nearest;
+use crate::headless::Headless;
 
 pub(super) const SCENARIO: Scenario = Scenario {
     name: "abilities",
@@ -31,10 +38,18 @@ const TILES: u32 = 128;
 const SECOND: u32 = TICKS_PER_SECOND;
 
 fn hero_of(world: &World, p: PlayerId) -> Option<RegimentHandle> {
-    world.heroes().find(|h| h.owner == p).and_then(|h| h.regiment)
+    world
+        .heroes()
+        .find(|h| h.owner == p)
+        .and_then(|h| h.regiment)
 }
 
-fn cast(p: PlayerId, hero: RegimentHandle, ability: u8, target: CastTarget) -> gc_sim::PlayerCommand {
+fn cast(
+    p: PlayerId,
+    hero: RegimentHandle,
+    ability: u8,
+    target: CastTarget,
+) -> gc_sim::PlayerCommand {
     order(
         p,
         Command::Cast {
@@ -98,7 +113,12 @@ fn run(real: &Real, report: &mut Report) {
     );
 
     // Rally, beside his Yari.
-    let yari = spawn(&mut world, 0, &[(real.unit("Yari Ashigaru"), centre(60, 60))], EAST)[0];
+    let yari = spawn(
+        &mut world,
+        0,
+        &[(real.unit("Yari Ashigaru"), centre(60, 60))],
+        EAST,
+    )[0];
     report.tick(&mut world, &[move_to(0, daimyo, centre(60, 56))]);
     for _ in 0..40 * SECOND {
         report.tick(&mut world, &[]);
@@ -132,6 +152,115 @@ fn run(real: &Real, report: &mut Report) {
         "Yari hit points before and after",
         format!("{before} -> {}", hp(&world, yari)),
     );
-    report.check("the Usurer walks into reach and leeches", cast_after.is_some());
-    report.check("the Yari lose hit points to Leech", hp(&world, yari) < before);
+    report.check(
+        "the Usurer walks into reach and leeches",
+        cast_after.is_some(),
+    );
+    report.check(
+        "the Yari lose hit points to Leech",
+        hp(&world, yari) < before,
+    );
+
+    a_computer_player_casts(real, report);
+}
+
+/// A General's hero, with foes near, casts.
+fn a_computer_player_casts(real: &Real, report: &mut Report) {
+    use gc_fixed::{Angle, Fx};
+    let factions = [Faction::EmberClans, Faction::CarrionConcord];
+    let game = Headless::new(real, conquest::make_map(0, 0, 0), &factions, 44);
+    let victories = gc_sim::Victories {
+        annihilation: false,
+        heart: false,
+    };
+    let mut plan = game.plan(gc_ui::lobby::Tempo::Swift, victories);
+    plan.start[0] = (2000, 800);
+    let mut world = game.world(&plan);
+    game.open(&mut world, |w, orders| report.tick(w, orders));
+    let mut minds = game.minds();
+    minds.add(game.mind(0, gc_ai::Difficulty::General, 7, None));
+    let start = game.map.starts()[0];
+    let shrine = real.building("Ancestor Shrine");
+    let (x, y) = nearest(&world, (start.0 + 10, start.1), |x, y| {
+        world.can_build(shrine, (x, y), 0).is_ok()
+    })
+    .expect("room for the Shrine");
+    let put = order(
+        0,
+        Command::SpawnStructure {
+            building: shrine,
+            tile: (x as i16, y as i16),
+            turn: 0,
+        },
+    );
+    report.tick(&mut world, &[put]);
+    let structure = (world.structures().unwrap().iter())
+        .find(|v| v.owner == 0 && v.building == shrine)
+        .map(|v| v.handle);
+    let Some(structure) = structure else {
+        report.check("the host puts up the Shrine", false);
+        return;
+    };
+    let hire = order(
+        0,
+        Command::Train {
+            structure,
+            unit: real.unit("The Daimyo"),
+        },
+    );
+    report.tick(&mut world, &[hire]);
+    let mut cmds = Vec::new();
+    let mut play = |world: &mut World, report: &mut Report, extra: &[gc_sim::PlayerCommand]| {
+        cmds.clear();
+        minds.tick(world, &mut cmds);
+        cmds.extend_from_slice(extra);
+        report.tick(world, &cmds);
+    };
+    for _ in 0..60 * SECOND {
+        if hero_of(&world, 0).is_some() {
+            break;
+        }
+        play(&mut world, report, &[]);
+    }
+    let Some(daimyo) = hero_of(&world, 0) else {
+        report.check("the General's Daimyo comes out", false);
+        return;
+    };
+    let at = world.regiments.position(daimyo).expect("standing");
+    let (hx, hy) = (at.x.floor_int(), at.y.floor_int());
+    let pikes = real.unit("Bone Pikes");
+    let foes: Vec<_> = [(5, 0), (0, 5)]
+        .iter()
+        .filter_map(|&(dx, dy)| {
+            let (x, y) = nearest(&world, (hx + dx, hy + dy), |x, y| {
+                world.can_build(shrine, (x - 1, y - 1), 0).is_ok()
+                    && (x - hx).pow(2) + (y - hy).pow(2) >= 16
+            })?;
+            Some(order(
+                1,
+                Command::SpawnRegiment {
+                    unit: pikes,
+                    position: gc_fixed::FxVec2::new(Fx::from_int(x), Fx::from_int(y)),
+                    facing: Angle(0),
+                },
+            ))
+        })
+        .collect();
+    play(&mut world, report, &foes);
+    let mut cast_after = None;
+    for t in 0..10 * SECOND {
+        if went_off(&world, daimyo) {
+            cast_after = Some(t);
+            break;
+        }
+        play(&mut world, report, &[]);
+    }
+    report.metric(
+        "the General's Daimyo cast after",
+        super::seconds(cast_after),
+    );
+    report.check(
+        "a General's hero casts with foes near",
+        cast_after.is_some(),
+    );
 }

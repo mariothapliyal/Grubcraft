@@ -253,7 +253,12 @@ impl Events {
     }
 
     /// Tell of hero `hero`'s cast of ability `slot` refused, and why.
-    pub(crate) fn cast_refused(&mut self, hero: RegimentHandle, slot: u8, why: crate::structures::Refusal) {
+    pub(crate) fn cast_refused(
+        &mut self,
+        hero: RegimentHandle,
+        slot: u8,
+        why: crate::structures::Refusal,
+    ) {
         self.list.push(Event::CastRefused { hero, slot, why });
     }
 

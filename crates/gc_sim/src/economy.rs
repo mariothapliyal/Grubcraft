@@ -896,7 +896,8 @@ impl Economy {
             // A Symphony doubles what a chord's seeps yield (see
             // [`crate::abilities`]).
             let owner = structures.owner_of(s);
-            let sung = kind == Resource::Grub && self.node_harmony[n] > 0 && structures.in_symphony(owner);
+            let sung =
+                kind == Resource::Grub && self.node_harmony[n] > 0 && structures.in_symphony(owner);
             let take = if sung { take * 2 } else { take };
             self.deposit(owner, kind, take, regs, kinds, used);
         }

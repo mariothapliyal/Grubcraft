@@ -403,7 +403,13 @@ const fn tenths(tenths: u32) -> u16 {
 }
 
 /// Whether regiment `j`'s block reaches within `tiles` of `at`.
-pub(crate) fn within(regs: &Regiments, units: &[UnitStats], j: usize, at: FxVec2, tiles: Fx) -> bool {
+pub(crate) fn within(
+    regs: &Regiments,
+    units: &[UnitStats],
+    j: usize,
+    at: FxVec2,
+    tiles: Fx,
+) -> bool {
     let reach = tiles + Block::of(regs, units, j).radius();
     (regs.position[j] - at).length() <= reach
 }
@@ -451,7 +457,13 @@ impl Regiments {
     /// Slot `i` takes `hp` of ability damage: back ranks first, no dice,
     /// no armour, and the block steps up as a rank empties. The soldiers
     /// lost.
-    pub(crate) fn spell_hit(&mut self, units: &[UnitStats], nav: &crate::nav::Nav, i: usize, hp: u32) -> u16 {
+    pub(crate) fn spell_hit(
+        &mut self,
+        units: &[UnitStats],
+        nav: &crate::nav::Nav,
+        i: usize,
+        hp: u32,
+    ) -> u16 {
         crate::combat::hurt(self, units, nav, i, hp)
     }
 
@@ -536,7 +548,11 @@ impl Regiments {
     /// Regiment `h`'s ticks left stunned, inspired and untouchable.
     pub fn spells_on(&self, h: RegimentHandle) -> (u16, u16, u16) {
         self.resolve(h).map_or((0, 0, 0), |i| {
-            (self.stunned_left[i], self.inspired_left[i], self.untouchable_left[i])
+            (
+                self.stunned_left[i],
+                self.inspired_left[i],
+                self.untouchable_left[i],
+            )
         })
     }
 }
@@ -591,7 +607,10 @@ impl World {
             return Err(Refusal::Unknown);
         }
         if let CastTarget::Regiment(t) = target {
-            let foe = self.regiments.owner(t).is_some_and(|o| self.stances.hostile(player, o));
+            let foe = self
+                .regiments
+                .owner(t)
+                .is_some_and(|o| self.stances.hostile(player, o));
             if !foe || !self.faces(player, t) {
                 return Err(Refusal::Unseen);
             }
@@ -601,7 +620,13 @@ impl World {
 
     /// [`crate::Command::Cast`]: this tick if in reach, else the hero walks
     /// there and casts on arrival.
-    pub(crate) fn cast(&mut self, player: PlayerId, hero: RegimentHandle, slot: u8, target: CastTarget) -> bool {
+    pub(crate) fn cast(
+        &mut self,
+        player: PlayerId,
+        hero: RegimentHandle,
+        slot: u8,
+        target: CastTarget,
+    ) -> bool {
         if self.cast_check(player, hero, slot, target).is_err() {
             return false;
         }
@@ -633,7 +658,10 @@ impl World {
         if self.tick > 0 && self.tick.is_multiple_of(60 * TICKS_PER_SECOND) {
             self.interest();
         }
-        let n = self.conquest.as_ref().map_or(0, |c| c.heroes.iter().count());
+        let n = self
+            .conquest
+            .as_ref()
+            .map_or(0, |c| c.heroes.iter().count());
         for k in 0..n {
             self.go_cast(k);
         }
@@ -741,7 +769,13 @@ impl World {
     }
 
     /// Hero `k`, in regiment slot `i`, casts ability `slot` at `target`.
-    fn cast_now(&mut self, k: usize, i: usize, slot: u8, target: CastTarget) -> Result<(), Refusal> {
+    fn cast_now(
+        &mut self,
+        k: usize,
+        i: usize,
+        slot: u8,
+        target: CastTarget,
+    ) -> Result<(), Refusal> {
         let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
         let h = *c.heroes.get(k);
         let kit = h.kit.ok_or(Refusal::Unknown)?;
@@ -1019,7 +1053,9 @@ impl World {
         };
         let h = self.regiments.handle(i);
         self.regiments.vanish_from_fight(i);
-        self.regiments.place(h, to, facing, 0).ok_or(Refusal::Rough)?;
+        self.regiments
+            .place(h, to, facing, 0)
+            .ok_or(Refusal::Rough)?;
         self.regiments.target[i] = None;
         Ok(to)
     }
@@ -1058,7 +1094,8 @@ impl World {
             let hp = share(250, n, hit.len() + m) * 3 / 2;
             if c.structures.stands(s) {
                 let scaled = hp * crate::structures::HP_SCALE;
-                c.structures.wear_down(s, scaled, &mut self.nav, &self.regiments);
+                c.structures
+                    .wear_down(s, scaled, &mut self.nav, &self.regiments);
             }
         }
     }
@@ -1091,7 +1128,15 @@ impl World {
                     (tiles, at, most),
                     lasts,
                 ),
-                None => summon_beside(&mut self.regiments, &self.nav, &self.units, p, unit, at, lasts),
+                None => summon_beside(
+                    &mut self.regiments,
+                    &self.nav,
+                    &self.units,
+                    p,
+                    unit,
+                    at,
+                    lasts,
+                ),
             };
             let Ok(r) = put else {
                 if first.is_none() {
@@ -1099,8 +1144,12 @@ impl World {
                 }
                 break;
             };
-            self.vision
-                .start(&self.regiments, &self.units, &self.terrain, r.index as usize);
+            self.vision.start(
+                &self.regiments,
+                &self.units,
+                &self.terrain,
+                r.index as usize,
+            );
             first.get_or_insert(r);
         }
         first.ok_or(Refusal::Crowded)
@@ -1166,13 +1215,29 @@ impl World {
         let tiles = Fx::from_int(i32::from(z.tiles));
         match z.pulse {
             Pulse::Cuts { damage } => {
-                let foes = round(&self.regiments, &self.units, &self.stances, z.owner, false, z.at, tiles);
+                let foes = round(
+                    &self.regiments,
+                    &self.units,
+                    &self.stances,
+                    z.owner,
+                    false,
+                    z.at,
+                    tiles,
+                );
                 for (m, &j) in foes.iter().enumerate() {
                     self.hurt(j, share(u32::from(damage), foes.len(), m));
                 }
             }
             Pulse::Storm { damage } => {
-                let foes = round(&self.regiments, &self.units, &self.stances, z.owner, false, z.at, tiles);
+                let foes = round(
+                    &self.regiments,
+                    &self.units,
+                    &self.stances,
+                    z.owner,
+                    false,
+                    z.at,
+                    tiles,
+                );
                 for j in foes {
                     morale::shake(&mut self.regiments, j, 3, morale::WHY_HERO);
                     self.hurt(j, u32::from(damage));
@@ -1222,7 +1287,9 @@ impl World {
     /// Hero slot `i`'s soldier's hit points at full health.
     fn hero_full_hp(&self, i: usize) -> u16 {
         let stats = &self.units[usize::from(self.regiments.unit[i])];
-        stats.hp_per_model.saturating_add(self.regiments.hp_bonus[i])
+        stats
+            .hp_per_model
+            .saturating_add(self.regiments.hp_bonus[i])
     }
 }
 
@@ -1240,8 +1307,8 @@ fn summon_beside(
 ) -> Result<RegimentHandle, Refusal> {
     let stats = *units.get(usize::from(unit)).ok_or(Refusal::Unknown)?;
     let near = Fx::from_int(SUMMON_TILES);
-    let spots = rings_round(at, 0)
-        .filter(|&s| (s - at).length() <= near && nav.clear_line(player, at, s));
+    let spots =
+        rings_round(at, 0).filter(|&s| (s - at).length() <= near && nav.clear_line(player, at, s));
     let spot = spot_among(regs, nav, &stats, player, spots).ok_or(Refusal::Crowded)?;
     if (spot - at).length() > near || !nav.clear_line(player, at, spot) {
         return Err(Refusal::Crowded);

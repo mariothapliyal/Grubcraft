@@ -130,4 +130,4 @@ Dropped (2026-11-22): Command Aura, Challenge, Wind Cut, Wanderer, Ward Talisman
   - One aimed at a place or a regiment goes at the nearest standing foe in its reach, so the hero never walks off its army's line to cast.
   - Foreclosure waits for a foe below half strength.
   - After a cast, a hero is given no other for 3 s past its reaction time, while the order is on its way.
-  - In the Conquest AI test (Veteran against Veteran, two pairings), heroes cast in the fighting; the planned finer rules (the thickest enemy, the enemy hero for a stun, the ultimate when 6 regiments fight) are left for the smarter AI generals.
+  - The `abilities` stress scenario checks a General's Daimyo casts within seconds of foes coming near (4.7 s). In the Conquest AI test's Veteran games, heroes come at tier 2 and rarely meet a foe before the game is decided, so few casts happen there yet. The planned finer rules (the thickest enemy, the enemy hero for a stun, the ultimate when 6 regiments fight) are left for the smarter AI generals.

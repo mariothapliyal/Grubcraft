@@ -172,7 +172,13 @@ fn hero(kit: Kit, level: u8) -> (World, RegimentHandle) {
         };
         assert!(order(&mut w, 0, spawn));
     }
-    let altar = w.structures().unwrap().iter().find(|v| v.tile == (20, 10)).unwrap().handle;
+    let altar = w
+        .structures()
+        .unwrap()
+        .iter()
+        .find(|v| v.tile == (20, 10))
+        .unwrap()
+        .handle;
     let hire = Command::Train {
         structure: altar,
         unit: HERO,
@@ -221,13 +227,30 @@ fn the_basic_ability_ranks_up_by_level_and_the_ultimate_opens_at_six() {
     let ranks: Vec<(u8, u8)> = (1..=10).map(|l| (rank(0, l), rank(1, l))).collect();
     assert_eq!(
         ranks,
-        [(1, 0), (1, 0), (1, 0), (2, 0), (2, 0), (2, 1), (3, 1), (3, 1), (3, 1), (3, 1)]
+        [
+            (1, 0),
+            (1, 0),
+            (1, 0),
+            (2, 0),
+            (2, 0),
+            (2, 1),
+            (3, 1),
+            (3, 1),
+            (3, 1),
+            (3, 1)
+        ]
     );
     let (mut w, r) = hero(Kit::Daimyo, 5);
-    assert_eq!(w.cast_check(0, r, 1, CastTarget::Hero), Err(Refusal::Locked));
+    assert_eq!(
+        w.cast_check(0, r, 1, CastTarget::Hero),
+        Err(Refusal::Locked)
+    );
     assert!(!cast(&mut w, r, 1, CastTarget::Hero));
     // The other side can't cast with it, and the aim must fit.
-    assert_eq!(w.cast_check(1, r, 0, CastTarget::Hero), Err(Refusal::Unknown));
+    assert_eq!(
+        w.cast_check(1, r, 0, CastTarget::Hero),
+        Err(Refusal::Unknown)
+    );
     let point = CastTarget::Point(FxVec2::from_ints(70, 64));
     assert_eq!(w.cast_check(0, r, 0, point), Err(Refusal::Unknown));
 }
@@ -254,7 +277,10 @@ fn rally_rallies_routers_near_and_lifts_everyone_then_cools_down() {
     assert!(w.regiments.morale[fi] < 200 + 250);
     let h = *w.hero_of(r).unwrap();
     assert_eq!(h.cooling(0, w.tick_count()), 40 * TICKS_PER_SECOND - 1);
-    assert_eq!(w.cast_check(0, r, 0, CastTarget::Hero), Err(Refusal::Cooling));
+    assert_eq!(
+        w.cast_check(0, r, 0, CastTarget::Hero),
+        Err(Refusal::Cooling)
+    );
 }
 
 #[test]
@@ -339,9 +365,17 @@ fn iaijutsu_dash_blinks_and_cuts_the_line_it_crosses_but_not_through_walls() {
     let (mut w, r) = hero(Kit::Ronin, 1);
     let crossed = spawn(&mut w, 1, LINE, 69, 64);
     let aside = spawn(&mut w, 1, LINE, 69, 80);
-    assert!(cast(&mut w, r, 0, CastTarget::Point(FxVec2::from_ints(73, 64))));
+    assert!(cast(
+        &mut w,
+        r,
+        0,
+        CastTarget::Point(FxVec2::from_ints(73, 64))
+    ));
     let at = w.regiments.get(r).unwrap().position;
-    assert!((at - FxVec2::from_ints(73, 64)).length() < Fx::from_int(2), "{at:?}");
+    assert!(
+        (at - FxVec2::from_ints(73, 64)).length() < Fx::from_int(2),
+        "{at:?}"
+    );
     // Rank 1: 60, six soldiers.
     assert_eq!(models(&w, crossed), 24 - 6);
     assert_eq!(models(&w, aside), 24);
@@ -366,7 +400,10 @@ fn spawn_brood_puts_regiments_down_beside_the_queen_that_vanish_and_feed_nobody(
     let i = slot(&w, spawned[0].0);
     assert!(w.regiments.summoned_left[i] > 0);
     seconds(&mut w, 31);
-    assert!(w.regiments.iter().all(|v| v.unit != SPAWN || v.owner != 0), "gone");
+    assert!(
+        w.regiments.iter().all(|v| v.unit != SPAWN || v.owner != 0),
+        "gone"
+    );
 }
 
 #[test]
@@ -410,7 +447,12 @@ fn kitsune_storm_burns_every_enemy_inside_each_second() {
     let inside = spawn(&mut w, 1, LINE, 64, 80);
     let outside = spawn(&mut w, 1, LINE, 100, 84);
     let friend = spawn(&mut w, 0, LINE, 64, 91);
-    assert!(cast(&mut w, r, 1, CastTarget::Point(FxVec2::from_ints(64, 84))));
+    assert!(cast(
+        &mut w,
+        r,
+        1,
+        CastTarget::Point(FxVec2::from_ints(64, 84))
+    ));
     seconds(&mut w, 11);
     // Ten seconds of 20.
     assert_eq!(models(&w, inside), 24 - 20);
@@ -424,14 +466,21 @@ fn split_beam_charges_three_volleys() {
     let (mut w, r) = hero(Kit::Refractor, 1);
     let i = slot(&w, r);
     assert!(cast(&mut w, r, 0, CastTarget::Hero));
-    assert_eq!((w.regiments.volleys_up[i], w.regiments.volley_bonus[i]), (3, 50));
+    assert_eq!(
+        (w.regiments.volleys_up[i], w.regiments.volley_bonus[i]),
+        (3, 50)
+    );
     assert_eq!(w.regiments.beam_percent(i), 150);
 }
 
 #[test]
 fn a_market_crash_halves_every_enemys_grub_income() {
     let (mut w, r) = hero(Kit::Magnate, 6);
-    assert_eq!(w.cast_check(0, r, 0, CastTarget::Hero), Err(Refusal::Unknown), "passive");
+    assert_eq!(
+        w.cast_check(0, r, 0, CastTarget::Hero),
+        Err(Refusal::Unknown),
+        "passive"
+    );
     assert!(cast(&mut w, r, 1, CastTarget::Hero));
     let c = w.conquest.as_mut().unwrap();
     assert!(c.economy.crashed_left(1) > 0 && c.economy.crashed_left(0) == 0);
@@ -473,8 +522,16 @@ fn maw_of_the_titan_culls_twelve_soldiers_and_bites_heroes_and_monsters() {
     let a = spawn(&mut w, 1, LINE, 64, 78);
     let b = spawn(&mut w, 1, LINE, 70, 78);
     let far = spawn(&mut w, 1, LINE, 100, 78);
-    assert!(cast(&mut w, r, 1, CastTarget::Point(FxVec2::from_ints(67, 78))));
-    assert_eq!((models(&w, a), models(&w, b), models(&w, far)), (18, 18, 24));
+    assert!(cast(
+        &mut w,
+        r,
+        1,
+        CastTarget::Point(FxVec2::from_ints(67, 78))
+    ));
+    assert_eq!(
+        (models(&w, a), models(&w, b), models(&w, far)),
+        (18, 18, 24)
+    );
 }
 
 #[test]
@@ -482,7 +539,12 @@ fn confusion_cloud_stuns_and_disorders_the_enemies_inside() {
     let (mut w, r) = hero(Kit::Whisperer, 1);
     let foe = spawn(&mut w, 1, LINE, 64, 76);
     let friend = spawn(&mut w, 0, LINE, 70, 80);
-    assert!(cast(&mut w, r, 0, CastTarget::Point(FxVec2::from_ints(64, 78))));
+    assert!(cast(
+        &mut w,
+        r,
+        0,
+        CastTarget::Point(FxVec2::from_ints(64, 78))
+    ));
     let (fi, ai) = (slot(&w, foe), slot(&w, friend));
     assert!(w.regiments.stunned_left[fi] > 0 && w.regiments.disorder[fi] > 0);
     assert_eq!(w.regiments.stunned_left[ai], 0);
@@ -505,9 +567,17 @@ fn puppet_army_stuns_only_the_routing_enemies_near() {
 fn burrow_charge_erupts_among_the_enemies_where_it_lands() {
     let (mut w, r) = hero(Kit::Devourer, 1);
     let foe = spawn(&mut w, 1, LINE, 64, 78);
-    assert!(cast(&mut w, r, 0, CastTarget::Point(FxVec2::from_ints(64, 76))));
+    assert!(cast(
+        &mut w,
+        r,
+        0,
+        CastTarget::Point(FxVec2::from_ints(64, 76))
+    ));
     let at = w.regiments.get(r).unwrap().position;
-    assert!((at - FxVec2::from_ints(64, 76)).length() < Fx::from_int(3), "{at:?}");
+    assert!(
+        (at - FxVec2::from_ints(64, 76)).length() < Fx::from_int(3),
+        "{at:?}"
+    );
     // Rank 1: 60, six soldiers; and in disorder.
     assert_eq!(models(&w, foe), 18);
     assert!(w.regiments.disorder[slot(&w, foe)] > 0);
@@ -544,9 +614,17 @@ fn prismatic_lance_shares_its_damage_down_the_line() {
     let a = spawn(&mut w, 1, LINE, 64, 74);
     let b = spawn(&mut w, 1, LINE, 64, 94);
     let aside = spawn(&mut w, 1, LINE, 80, 80);
-    assert!(cast(&mut w, r, 1, CastTarget::Point(FxVec2::from_ints(64, 70))));
+    assert!(cast(
+        &mut w,
+        r,
+        1,
+        CastTarget::Point(FxVec2::from_ints(64, 70))
+    ));
     // 250 shared by two: 125 each, 12 soldiers and a wound.
-    assert_eq!((models(&w, a), models(&w, b), models(&w, aside)), (12, 12, 24));
+    assert_eq!(
+        (models(&w, a), models(&w, b), models(&w, aside)),
+        (12, 12, 24)
+    );
 }
 
 #[test]
