@@ -383,6 +383,18 @@ pub(crate) fn drawn_walls(world: &World, player: PlayerId) -> (usize, usize) {
     (curved, mine.len())
 }
 
+/// One tick of `world`, through the recorder if there is one.
+fn step(
+    rec: &mut Option<gc_replay::Recorder>,
+    world: &mut World,
+    cmds: &[gc_sim::PlayerCommand],
+) -> gc_sim::TickStats {
+    match rec {
+        Some(r) => r.tick(world, cmds),
+        None => world.tick(cmds),
+    }
+}
+
 #[test]
 #[ignore = "a watching aid, run by hand"]
 fn wall_survey() {
@@ -411,11 +423,7 @@ fn wall_survey() {
     let mut rec = record.as_ref().map(|_| {
         gc_replay::Recorder::new(&game.setup(), &world, String::new()).conquest(plan.clone())
     });
-    let mut tick = |w: &mut World, c: &[gc_sim::PlayerCommand]| match rec.as_mut() {
-        Some(r) => r.tick(w, c),
-        None => w.tick(c),
-    };
-    game.open(&mut world, &mut tick);
+    game.open(&mut world, |w, c| step(&mut rec, w, c));
     let end = minutes * 60 * TICKS_PER_SECOND;
     let mut cmds = Vec::new();
     let mut marches = Marches::default();
@@ -423,7 +431,7 @@ fn wall_survey() {
     while world.verdict().is_none() && world.tick_count() < end {
         cmds.clear();
         minds.tick(&world, &mut cmds);
-        tick(&mut world, &cmds);
+        step(&mut rec, &mut world, &cmds);
         let t = world.tick_count();
         if t.is_multiple_of(TICKS_PER_SECOND) {
             marches.second(&world, &real);
@@ -487,7 +495,6 @@ fn wall_survey() {
     if walls {
         print_bases(&world, &real, &factions, choice, seed);
     }
-    drop(tick);
     if let (Some(path), Some(rec)) = (record, rec) {
         let mut replay = rec.finish();
         replay.header.map = Some(choice as u8);

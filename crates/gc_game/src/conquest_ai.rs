@@ -312,18 +312,14 @@ mod tests {
                 w.heroes_standing += u32::from(!h.dead());
                 w.top_level = w.top_level.max(u32::from(h.level));
             }
+            w.curved_walls = crate::wall_survey::drawn_walls(world, p).0 as u32;
             for d in (0..).map_while(|id| world.drawing(id)) {
-                if d.owner == p && d.width > 1 {
-                    let span = d.path.length() / i64::from(gc_sim::drawn::SUB);
-                    w.bridge_span = w.bridge_span.max(span as u32);
+                if d.owner != p || d.width <= 1 {
+                    continue;
                 }
-                if d.owner == p && d.path.points().len() > 2 {
-                    *if d.width > 1 {
-                        &mut w.bent_bridges
-                    } else {
-                        &mut w.curved_walls
-                    } += 1;
-                }
+                w.bent_bridges += u32::from(d.path.points().len() > 2);
+                let span = d.path.length() / i64::from(gc_sim::drawn::SUB);
+                w.bridge_span = w.bridge_span.max(span as u32);
             }
             let Some(st) = world.structures() else {
                 return w;

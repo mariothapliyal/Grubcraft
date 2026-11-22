@@ -26,7 +26,7 @@
 //! it is tested without a world.
 
 use gc_sim::drawn::{self, DrawnPath};
-use gc_sim::walls::wall_tiles;
+use gc_sim::walls::{Line, wall_tiles};
 
 /// How far from home the ring is planned, tiles: inside a walled town's
 /// reach (`gc_sim::towns::TOWN_REACH`).
@@ -127,18 +127,61 @@ impl Door {
     }
 }
 
-/// A line of the ring to draw, from tile to tile: straight, or a curve
-/// along the cut.
+/// A line of the ring to draw: straight from tile to tile (the old
+/// two-end order), or a curve along the cut (a drawn path).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Piece {
-    pub from: (i32, i32),
-    pub to: (i32, i32),
-    /// The path it is drawn along, from `from` to `to`.
-    pub path: DrawnPath,
+    pub line: Line,
+    /// The end of it nearer the ring's front, where its builder starts.
+    pub start: (i32, i32),
     /// How far round the ring from its front (its gate) it starts, tiles.
     pub round: u32,
     /// Where its two ends are in the ring's order round the town.
     at: [usize; 2],
+}
+
+impl Piece {
+    /// A straight line from tile `a` to tile `b`.
+    fn straight(a: (i32, i32), b: (i32, i32), at: [usize; 2]) -> Piece {
+        Piece {
+            line: Line::straight(a, b),
+            start: a,
+            round: 0,
+            at,
+        }
+    }
+
+    /// A curve along `path`.
+    fn curve(path: DrawnPath, at: [usize; 2]) -> Piece {
+        Piece {
+            line: Line::drawn(path, drawn::STANDARD),
+            start: path.ends().0,
+            round: 0,
+            at,
+        }
+    }
+
+    /// Its two end tiles, in the order it is drawn.
+    pub fn ends(&self) -> ((i32, i32), (i32, i32)) {
+        self.line.path.ends()
+    }
+
+    /// The tiles it covers, in order.
+    #[cfg(test)]
+    pub fn tiles(&self) -> Vec<(i32, i32)> {
+        line_tiles(&self.line)
+    }
+}
+
+/// The tiles `line` covers, as the sim lays them.
+#[cfg(test)]
+fn line_tiles(line: &Line) -> Vec<(i32, i32)> {
+    if line.old {
+        let (a, b) = line.path.ends();
+        wall_tiles(a, b).unwrap_or_default()
+    } else {
+        line.path.wall_tiles()
+    }
 }
 
 /// A ring laid out.
@@ -182,9 +225,15 @@ impl Layout {
         for p in &mut self.pieces {
             let (ra, rb) = (round_from(p.at[0]), round_from(p.at[1]));
             if rb < ra {
-                (p.from, p.to) = (p.to, p.from);
                 p.at.swap(0, 1);
-                p.path = reversed(&p.path);
+                let (a, b) = p.ends();
+                // A straight line is drawn the other way, from its end
+                // nearer the front; a curve keeps the way it was smoothed
+                // (turned round, its rounding could move a tile).
+                if p.line.old {
+                    p.line = Line::straight(b, a);
+                }
+                p.start = b;
             }
             p.round = ra.min(rb);
         }
@@ -713,26 +762,6 @@ fn smooth(span: &[(i32, i32)]) -> Option<DrawnPath> {
     })
 }
 
-/// `path` drawn the other way, if that covers the same tiles (the curve's
-/// rounding could move one); else `path` as it is.
-fn reversed(path: &DrawnPath) -> DrawnPath {
-    let points: Vec<(i16, i16)> = path.points().iter().rev().copied().collect();
-    let last = points.len() - 1;
-    let Some(back) = DrawnPath::new(&points, |k| path.corner(last - k)) else {
-        return *path;
-    };
-    let sorted = |p: &DrawnPath| {
-        let mut t = p.wall_tiles();
-        t.sort_unstable();
-        t
-    };
-    if sorted(&back) == sorted(path) {
-        back
-    } else {
-        *path
-    }
-}
-
 /// Lay the ring out on `site`, its front (the middle of its gate, or
 /// where its gate would be) at tile `front`. `None` when no ring can be
 /// laid: nothing is kept, or the kept ground runs to the square's rim.
@@ -797,20 +826,13 @@ pub(super) fn lay(site: &Site, front: Option<(i32, i32)>) -> Option<Layout> {
     let build = |stray: f32, curved: bool| {
         let mut pieces = Vec::new();
         let mut laid = vec![false; n];
-        let mut lay_path = |path: DrawnPath, at: [usize; 2]| {
-            for t in path.wall_tiles() {
+        let mut lay = |piece: Piece, tiles: Vec<(i32, i32)>| {
+            for t in tiles {
                 if let Some(i) = site.index(t) {
                     laid[i] = true;
                 }
             }
-            let (from, to) = path.ends();
-            pieces.push(Piece {
-                from,
-                to,
-                path,
-                round: 0,
-                at,
-            });
+            pieces.push(piece);
         };
         for (chain, from) in &chains {
             let spans = if curved {
@@ -820,14 +842,20 @@ pub(super) fn lay(site: &Site, front: Option<(i32, i32)>) -> Option<Layout> {
             };
             for [sa, sb] in spans {
                 let span = &chain[sa..=sb];
-                let curve = (curved.then(|| smooth(span)).flatten())
-                    .filter(|p| p.wall_tiles().into_iter().all(ok));
+                let curve = if curved { smooth(span) } else { None };
                 if let Some(path) = curve {
-                    lay_path(path, [from + sa, from + sb]);
-                    continue;
+                    let tiles = path.wall_tiles();
+                    if tiles.iter().all(|&t| ok(t)) {
+                        lay(Piece::curve(path, [from + sa, from + sb]), tiles);
+                        continue;
+                    }
                 }
                 for (a, b, [pa, pb]) in lines(span, stray, &fits) {
-                    lay_path(DrawnPath::straight(a, b), [from + sa + pa, from + sa + pb]);
+                    let tiles = wall_tiles(a, b).unwrap_or_default();
+                    lay(
+                        Piece::straight(a, b, [from + sa + pa, from + sa + pb]),
+                        tiles,
+                    );
                 }
             }
         }
@@ -989,7 +1017,7 @@ mod tests {
             })
             .collect();
         for p in &l.pieces {
-            for t in p.path.wall_tiles() {
+            for t in p.tiles() {
                 let i = s.index(t).unwrap();
                 rows[i / s.side as usize][i % s.side as usize] = 'w';
             }
@@ -999,9 +1027,7 @@ mod tests {
 
     /// The wall tiles the layout draws.
     fn tiles(l: &Layout) -> usize {
-        let mut all: Vec<_> = (l.pieces.iter())
-            .flat_map(|p| p.path.wall_tiles())
-            .collect();
+        let mut all: Vec<_> = (l.pieces.iter()).flat_map(super::Piece::tiles).collect();
         all.sort_unstable();
         all.dedup();
         all.len()
@@ -1011,7 +1037,7 @@ mod tests {
     fn closed(s: &Site, l: &Layout) -> bool {
         let mut laid = vec![false; s.ground.len()];
         for p in &l.pieces {
-            for t in p.path.wall_tiles() {
+            for t in p.tiles() {
                 laid[s.index(t).unwrap()] = true;
             }
         }
@@ -1198,8 +1224,8 @@ mod tests {
         assert!(l.closes && closed(&s, &l), "{:#?}", drawn(&s, &l));
         // Most of it is curves through several points, not lines.
         let curved: usize = (l.pieces.iter())
-            .filter(|p| p.path.points().len() > 2)
-            .map(|p| p.path.wall_tiles().len())
+            .filter(|p| p.line.path.points().len() > 2)
+            .map(|p| p.tiles().len())
             .sum();
         assert!(
             curved * 2 >= tiles(&l),
@@ -1209,7 +1235,11 @@ mod tests {
         );
         // Every curve is one the sim takes, and no longer than the stepped
         // cut it smooths (about a tile a tile round, 2 pi times 8).
-        assert!(l.pieces.iter().all(|p| p.path.bends_gently()));
+        assert!(
+            l.pieces
+                .iter()
+                .all(|p| p.line.old || p.line.path.bends_gently())
+        );
         assert!(tiles(&l) <= 56, "{} tiles: {:#?}", tiles(&l), drawn(&s, &l));
     }
 
@@ -1237,12 +1267,6 @@ mod tests {
         let long: Vec<(i32, i32)> = (0..40).map(|k| (k, 0)).collect();
         let runs = stretches(&long);
         assert!(runs.len() == 3 && runs.iter().all(|r| r[1] - r[0] <= CURVE_RUN));
-        // Turned the other way, it covers the same tiles.
-        let mut a = path.wall_tiles();
-        let mut b = reversed(&path).wall_tiles();
-        a.sort_unstable();
-        b.sort_unstable();
-        assert_eq!(a, b);
     }
 
     #[test]
@@ -1264,7 +1288,7 @@ mod tests {
         ];
         let row = |l: &Layout, s: &Site| {
             let mut ys: Vec<i32> = (l.pieces.iter())
-                .flat_map(|p| p.path.wall_tiles())
+                .flat_map(super::Piece::tiles)
                 .map(|t| t.1 - s.origin.1)
                 .collect();
             ys.sort_unstable();
@@ -1335,7 +1359,7 @@ mod tests {
         let near: Vec<_> = l.pieces.iter().take(2).collect();
         for end in door.beside() {
             assert!(
-                near.iter().any(|p| p.from == end || p.to == end),
+                near.iter().any(|p| p.ends().0 == end || p.ends().1 == end),
                 "{:#?} {:?}",
                 drawn(&s, &l),
                 l.pieces
@@ -1345,7 +1369,7 @@ mod tests {
         let n = s.ground.len();
         let mut laid = vec![false; n];
         for p in &l.pieces {
-            for t in p.path.wall_tiles() {
+            for t in p.tiles() {
                 laid[s.index(t).unwrap()] = true;
             }
         }

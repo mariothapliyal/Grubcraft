@@ -222,7 +222,7 @@ impl Engineer {
         works.flat_map(move |w| {
             let way = w.door.map(|d| (mid(d.step(-4)), mid(d.step(5))));
             let legs = w.pieces.iter().flat_map(move |p| {
-                (p.path.points().windows(2)).map(move |l| (at(&l[0]), at(&l[1])))
+                (p.line.path.points().windows(2)).map(move |l| (at(&l[0]), at(&l[1])))
             });
             legs.chain(way)
         })
@@ -430,12 +430,7 @@ impl Steward {
                 k += 1;
                 continue;
             }
-            // A wall a tile long has no path to draw: the old order's line.
-            let line = if p.from == p.to {
-                gc_sim::walls::Line::straight(p.from, p.to)
-            } else {
-                gc_sim::walls::Line::drawn(p.path, gc_sim::drawn::STANDARD)
-            };
+            let line = p.line;
             let tiles = (s.world.line_fits(s.party, wall.id, &line)).unwrap_or_default();
             let crowded = |t: &WallTile| t.fits == Err(Refusal::Crowded);
             // Walled already: on to the next.
@@ -460,22 +455,23 @@ impl Steward {
             if spare < cost * now {
                 return None;
             }
-            let worker = self.hands(s, look, grown, p.from)?;
+            let worker = self.hands(s, look, grown, p.start)?;
             self.engineer.works.as_mut()?.pieces.remove(k);
             // Drawn along its path, as a player drags a wall: a curve
             // where the ring bends with the land.
             let order = if line.old {
+                let (from, to) = p.ends();
                 Command::BuildWall {
                     regiment: worker,
                     building: wall.id,
-                    from: (p.from.0 as i16, p.from.1 as i16),
-                    to: (p.to.0 as i16, p.to.1 as i16),
+                    from: (from.0 as i16, from.1 as i16),
+                    to: (to.0 as i16, to.1 as i16),
                 }
             } else {
                 Command::DrawLine {
                     regiment: worker,
                     building: wall.id,
-                    path: p.path,
+                    path: line.path,
                     width: line.width,
                 }
             };
@@ -697,16 +693,12 @@ impl Steward {
     /// crossing near the straight way to the nearest. It looks once.
     fn bridge(&mut self, s: &Sense, look: &Look, home: Vec2, spare: u32) -> Option<Order> {
         let b = s.kit.works(Role::Bridge)?;
-        let line = (*self.engineer.bridge.get_or_insert_with(|| {
-            let target = super::super::nearest_other_start(s, home)?;
-            if !s.terrain.cut_off(home, super::super::other_starts(s, home)) {
-                return None;
-            }
-            narrowest_crossing(s, b.id, home, target)
-        }))?;
-        let (path, tiles) = line;
-        // Ordered: drawn once a deck of its own lies there, else the order
-        // is sent again after a while.
+        if matches!(self.engineer.bridge, Some(None)) {
+            return None;
+        }
+        // Ordered: drawn once a deck of its own lies there, else the way is
+        // looked for again after a while, since another side's deck may now
+        // stand on the one it chose.
         if let Some(sent) = self.engineer.bridge_sent {
             let drawn = look.mine.iter().any(|m| m.stats.role == Role::Bridge);
             if drawn || self.engineer.bridge_tries >= BRIDGE_TRIES {
@@ -716,7 +708,15 @@ impl Steward {
             if s.now < sent + BRIDGE_RETRY {
                 return None;
             }
+            self.engineer.bridge = None;
         }
+        let (path, tiles) = (*self.engineer.bridge.get_or_insert_with(|| {
+            let target = super::super::nearest_other_start(s, home)?;
+            if !s.terrain.cut_off(home, super::super::other_starts(s, home)) {
+                return None;
+            }
+            narrowest_crossing(s, b.id, home, target)
+        }))?;
         if spare < u32::from(b.stats.cost_grub) * tiles {
             return None;
         }
@@ -821,6 +821,11 @@ fn across(mid: Vec2, upright: bool, half: i32) -> Line {
 /// The tile `p` is on.
 fn tile_of(p: Vec2) -> (i32, i32) {
     (p.x.floor() as i32, p.y.floor() as i32)
+}
+
+/// The middle of tile `t`.
+fn tile_mid(t: (i32, i32)) -> Vec2 {
+    Vec2::new(t.0 as f32 + 0.5, t.1 as f32 + 0.5)
 }
 
 /// The ground round `home` as a ring would be laid on it (see
@@ -946,6 +951,8 @@ fn ring_site(s: &Sense, look: &Look, home: Vec2) -> Option<Site> {
 /// How far out from a tile of the ring it looks for the ground falling
 /// away or for water, tiles.
 const VANTAGE_OUT: f32 = 3.0;
+/// How far out from a tile of the ring water makes it a bank, tiles.
+const WATER_OUT: i32 = 2;
 
 /// Whether a wall at `tile` would hold well against what comes from
 /// outside a town round `home` (see [`Site::vantage`](ringwork::Site)):
@@ -953,15 +960,13 @@ const VANTAGE_OUT: f32 = 3.0;
 /// lower (its defenders fight downhill, its archers shoot further), or
 /// there is water just outside it (its attackers wade, and fight worse).
 fn vantage(s: &Sense, home: Vec2, tile: (i32, i32)) -> bool {
-    use gc_sim::terrain::{HEIGHT_UNITS, HIGH_GROUND};
-    let at = Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5);
+    let at = tile_mid(tile);
     let Some(out) = (at - home).try_normalize() else {
         return false;
     };
     let t = s.terrain;
-    let high = HIGH_GROUND as f32 / HEIGHT_UNITS as f32;
-    let crest = t.height(at) - t.height(at + out * VANTAGE_OUT) >= high;
-    let bank = !t.water(at) && (1..=2).any(|d| t.water(at + out * d as f32));
+    let crest = t.height(at) - t.height(at + out * VANTAGE_OUT) >= crate::ground::DOWNHILL;
+    let bank = !t.water(at) && (1..=WATER_OUT).any(|d| t.water(at + out * d as f32));
     crest || bank
 }
 
@@ -1039,7 +1044,7 @@ fn lay_works(s: &Sense, look: &Look, home: Vec2, no_gate: &[(i32, i32)]) -> Opti
             None => layout
                 .pieces
                 .first()
-                .map(|p| p.from)
+                .map(|p| p.start)
                 .or(way.map(|d| d.mid))
                 .into_iter()
                 .collect(),
@@ -1099,10 +1104,10 @@ fn narrowest_crossing(
     };
     // A bridge must reach ground of some size that home's own isn't
     // joined to: one over an inlet of its own bank, or out to a rock in
-    // the stream, takes it nowhere.
-    let across = |t: (i32, i32)| {
-        let at = Vec2::new(t.0 as f32 + 0.5, t.1 as f32 + 0.5);
-        (s.terrain.ground_of(at)).is_some_and(|g| {
+    // the stream, takes it nowhere. Looked at (a flood fill of the far
+    // ground) only for a crossing that would be the best yet.
+    let far = |t: (i32, i32)| {
+        (s.terrain.ground_of(tile_mid(t))).is_some_and(|g| {
             !s.terrain.is_joined(&g, home) && g.iter().filter(|&&c| c).count() >= FAR_GROUND
         })
     };
@@ -1126,19 +1131,17 @@ fn narrowest_crossing(
             let Some((from, to)) = banks(s, wet, dir) else {
                 continue;
             };
-            if !across(to) {
-                continue;
-            }
             let n = (to.0 - from.0).abs().max((to.1 - from.1).abs());
             // No bend makes a crossing shorter than its straight span.
             let straight = DrawnPath::straight(from, to).length();
             if n > BRIDGE_LONGEST || best.is_some_and(|(b, ..)| b <= straight) {
                 continue;
             }
-            if let Some((path, tiles)) = bent_bridge(from, to, &fits)
-                && best.is_none_or(|(b, ..)| path.length() < b)
+            if let Some((length, path, tiles)) = bent_bridge(from, to, &fits)
+                && best.is_none_or(|(b, ..)| length < b)
+                && far(to)
             {
-                best = Some((path.length(), path, tiles));
+                best = Some((length, path, tiles));
             }
         }
     }
@@ -1153,7 +1156,7 @@ const BOW_STEP: f32 = 0.5;
 const BOW_POINTS_EVERY: f32 = 4.0;
 
 /// The shortest path a bridge from tile `from` to tile `to` can be drawn
-/// along, with its tiles, as `fits` says: straight if it fits, else bowed
+/// along, with its length (in sub-units) and tiles, as `fits` says: straight if it fits, else bowed
 /// to one side in an even arc (its middle half a tile out, then further,
 /// to [`BOW_MOST`]), else an S-bend (out to one side, then the other);
 /// never bent past what the sim allows (see [`DrawnPath::bends_gently`]),
@@ -1163,10 +1166,10 @@ fn bent_bridge(
     from: (i32, i32),
     to: (i32, i32),
     fits: &dyn Fn(&DrawnPath) -> Option<u32>,
-) -> Option<(DrawnPath, u32)> {
+) -> Option<(i64, DrawnPath, u32)> {
     let straight = DrawnPath::straight(from, to);
     if let Some(t) = fits(&straight) {
-        return Some((straight, t));
+        return Some((straight.length(), straight, t));
     }
     // In half tiles, as a path's points are.
     let centre = |t: (i32, i32)| Vec2::new(2.0 * t.0 as f32 + 1.0, 2.0 * t.1 as f32 + 1.0);
@@ -1196,11 +1199,9 @@ fn bent_bridge(
         .clone()
         .filter_map(|h| path(&|t| 4.0 * h * t * (1.0 - t)));
     let esses = sizes.filter_map(|h| path(&|t| h * (core::f32::consts::TAU * t).sin()));
-    let mut found: Vec<(DrawnPath, u32)> = (bows.chain(esses))
-        .filter_map(|p| Some((p, fits(&p)?)))
-        .collect();
-    found.sort_by_key(|(p, _)| p.length());
-    found.into_iter().next()
+    (bows.chain(esses))
+        .filter_map(|p| Some((p.length(), p, fits(&p)?)))
+        .min_by_key(|&(length, ..)| length)
 }
 
 /// The last land tile before the water at `wet` going back along `dir`,
@@ -1256,13 +1257,13 @@ mod tests {
             let band = p.band(STANDARD);
             (!band.iter().any(rock)).then_some(band.len() as u32)
         };
-        let (path, tiles) = bent_bridge((20, 10), (20, 25), &fits).unwrap();
+        let (_, path, tiles) = bent_bridge((20, 10), (20, 25), &fits).unwrap();
         assert!(path.points().len() > 2, "bent: {:?}", path.points());
         assert_eq!(path.ends(), ((20, 10), (20, 25)));
         assert!(path.bends_gently() && !path.band(STANDARD).iter().any(rock));
         assert_eq!(tiles as usize, path.band(STANDARD).len());
         // With nothing in the way it stays straight.
-        let (path, _) =
+        let (_, path, _) =
             bent_bridge((20, 10), (20, 25), &|p| Some(p.points().len() as u32)).unwrap();
         assert_eq!(path, DrawnPath::straight((20, 10), (20, 25)));
         // A rock too wide to bend round: none.
