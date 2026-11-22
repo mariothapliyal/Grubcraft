@@ -102,6 +102,10 @@ pub struct ConquestUnit {
     /// A hero, and how it grows each level (see [`crate::heroes`]);
     /// `None` for any other unit.
     pub hero: Option<crate::heroes::HeroGrowth>,
+    /// A hero's abilities, and the unit type they summon (see
+    /// [`crate::abilities`]); `None` for any other unit, or a hero with
+    /// none.
+    pub kit: Option<crate::abilities::HeroKit>,
 }
 
 impl ConquestUnit {
@@ -152,6 +156,13 @@ impl ConquestUnit {
                 h.u16(g.hp);
                 h.u16(g.melee);
                 h.u16(g.missile);
+            }
+            None => h.u8(0),
+        }
+        match self.kit {
+            Some(k) => {
+                h.u8(1 + k.kit as u8);
+                h.u16(k.summons.unwrap_or(u16::MAX));
             }
             None => h.u8(0),
         }

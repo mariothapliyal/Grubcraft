@@ -93,7 +93,7 @@ Where the state lives:
   - **Market Crash** (ultimate): every enemy's Grub income -50% for 30 s.
 - *The Undertaker:*
   - **Raise Dead:** a Bound Dead regiment of as many soldiers as there are corpses within 8 tiles: at least 4, up to 6/10/14. It lasts 45 s.
-  - **Mass Grave** (ultimate), cut down: one Bound Dead regiment rises on its side and grows by one soldier for each soldier who dies within 10 tiles over 15 s, up to 20. One growing regiment rather than one for each death, so a big fight can't flood the regiment pool.
+  - **Mass Grave** (ultimate), cut down: one Bound Dead regiment rises on its side and grows by one soldier for each soldier who dies within 10 tiles over 15 s, up to its full strength (16 soldiers). One growing regiment rather than one for each death, so a big fight can't flood the regiment pool.
 - *The Usurer:*
   - **Leech Debt:** drains 15/25/35 a second from a regiment within 8 tiles for 3 s.
   - **Foreclosure** (ultimate): an enemy regiment within 10 tiles below half strength loses a third of its soldiers, back ranks first.
@@ -102,11 +102,11 @@ Dropped (2026-11-22): Command Aura, Challenge, Wind Cut, Wanderer, Ward Talisman
 
 ## Stages
 
-- **H2, all 24 in one stage:**
-  - **The engine:** casting with walking into range, cooldowns, ranks by level, the timed changes and zones.
-  - **On screen:** the hero panel's two abilities and the command grid's `A` (basic) and `S` (ultimate): click, then click the target. Tooltips from the roster.
-  - **Computer players** cast by simple rules.
-  - **Stress scenario** `abilities`.
+- **H2, all 24 in one stage (built 2026-11-22):**
+  - **The engine:** casting with walking into range, cooldowns, ranks by level, the timed changes and zones (`gc_sim::abilities`, tested in `ability_tests.rs`, one test or more for each ability).
+  - **On screen:** the hero panel's two abilities and the command grid's `A` (basic) and `S` (ultimate). One cast on the hero goes off at once; one aimed at a place or a regiment asks for a click on it ("click a place", "click an enemy regiment"), and Esc, a right-click or pressing the key again puts it down. A locked, cooling or stunned ability says why at once; a cast that a hero walked to and then couldn't make says why when it fails. A cast throws up a burst of dust where it went off, when that is seen. Tooltips from the roster.
+  - **Computer players** cast by simple rules (the Steward, `gc_ai/src/conquest/steward/heroes.rs`).
+  - **Stress scenario** `abilities`, and the golden replay `conquest-heroes-1v1`, which gives `Cast` at the hero and at a regiment.
 - **H3:** heroes in Field Battles.
 
 ## Real use
@@ -123,10 +123,11 @@ Dropped (2026-11-22): Command Aura, Challenge, Wind Cut, Wanderer, Ward Talisman
   - Every effect is fixed-point and ordered by regiment index.
   - Ability damage never draws on the combat dice.
   - Everything is in the state hash: cooldowns, timed changes, stuns, zones and casts waiting on range.
-- **Computer players:**
-  - **Casting**, checked each second:
-    - hit the thickest enemy in reach;
-    - buff or rally when the lines meet;
-    - stun the enemy hero in reach;
-    - the ultimate when 6 or more regiments are fighting within its reach;
-    - a blink only onto a target worth it, never into a ring of enemies.
+- **Bell Towers:** the Choir's Bell Tower silences faction powers near it, not hero abilities. A hero's ability is its own, as a regiment's attack is.
+- **Locked, cooling or stunned:** a cast order is still taken (in lockstep it has already left the player), and the hero does nothing; the game asks before sending, so a player only sees this when the state changed on the way.
+- **Computer players** (built, simpler than planned): every half second, each of their heroes casts the first of its two abilities, the ultimate first, that is ready and has a foe to go at.
+  - One cast on the hero (a rally, a summons, an aura) needs a standing foe within 8 tiles.
+  - One aimed at a place or a regiment goes at the nearest standing foe in its reach, so the hero never walks off its army's line to cast.
+  - Foreclosure waits for a foe below half strength.
+  - After a cast, a hero is given no other for 3 s past its reaction time, while the order is on its way.
+  - In the Conquest AI test (Veteran against Veteran, two pairings), heroes cast in the fighting; the planned finer rules (the thickest enemy, the enemy hero for a stun, the ultimate when 6 regiments fight) are left for the smarter AI generals.

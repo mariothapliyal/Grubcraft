@@ -565,6 +565,21 @@ regiment_fields! {
     /// A hero cutting its way out of a fight (see [`Regiments::break_out`]),
     /// while it falls back.
     breaking_out: bool = false,
+    /// Inspired by a hero's ability (see [`crate::abilities`]): ticks
+    /// left, melee attack added, percent faster reloading, and losing no
+    /// morale to casualties.
+    inspired_left: u16 = 0,
+    inspired_attack: u8 = 0,
+    inspired_reload: u8 = 0,
+    unshaken: bool = false,
+    /// Ticks left stunned by a hero's ability: held fast, striking and
+    /// shooting nothing (see [`crate::abilities`]).
+    stunned_left: u16 = 0,
+    /// Ticks left taking no damage (Thousand Cuts).
+    untouchable_left: u16 = 0,
+    /// Volleys left of a Split Beam, and the percent more each deals.
+    volleys_up: u8 = 0,
+    volley_bonus: u8 = 0,
 }
 
 impl Regiments {
@@ -1695,6 +1710,10 @@ impl Regiments {
     /// [`Regiments::take_damage`], also telling the hit points taken (less
     /// than `amount` when the regiment had fewer left).
     pub(crate) fn take_damage_hp(&mut self, i: usize, mut amount: u32) -> (u16, u32) {
+        // Untouchable (see [`crate::abilities`]).
+        if self.untouchable_left[i] > 0 {
+            return (0, 0);
+        }
         let asked = amount;
         let before = self.models[i];
         let hp = &mut self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize];
@@ -1757,6 +1776,9 @@ impl Regiments {
     /// into his place and takes what the blow had to spare. Returns soldiers
     /// lost.
     pub(crate) fn wound(&mut self, i: usize, k: u16, mut damage: u16) -> u16 {
+        if self.untouchable_left[i] > 0 {
+            return 0;
+        }
         let hp = &mut self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize];
         let k = k as usize;
         let mut lost = 0;

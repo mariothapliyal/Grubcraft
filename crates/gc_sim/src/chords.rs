@@ -184,9 +184,24 @@ impl Structures {
     pub(crate) fn charge_resonance(&mut self) {
         let full = MAX_RESONANCE * RESONANCE_TICKS;
         for p in 0..MAX_PARTIES {
-            let chords = u32::from(self.charging[p]);
+            // Twice as fast in a Symphony (see [`crate::abilities`]).
+            let sung = self.symphony_left[p] > 0;
+            self.symphony_left[p] = self.symphony_left[p].saturating_sub(1);
+            let chords = u32::from(self.charging[p]) * if sung { 2 } else { 1 };
             self.resonance[p] = (self.resonance[p] + chords).min(full);
         }
+    }
+
+    /// Player `p` is in a Symphony for `ticks` (over another, the longer).
+    pub(crate) fn symphony(&mut self, p: PlayerId, ticks: u16) {
+        if let Some(left) = self.symphony_left.get_mut(usize::from(p)) {
+            *left = (*left).max(ticks);
+        }
+    }
+
+    /// Whether player `p` is in a Symphony.
+    pub fn in_symphony(&self, p: PlayerId) -> bool {
+        self.symphony_left.get(usize::from(p)).is_some_and(|&s| s > 0)
     }
 
     /// Take `points` of player `p`'s Resonance (they have them).

@@ -82,6 +82,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Run { .. } => "Run",
         Command::HandOver { .. } => "HandOver",
         Command::UsePower { .. } => "UsePower",
+        Command::Cast { .. } => "Cast",
         Command::Evolve { .. } => "Evolve",
         Command::FocusTower { .. } => "FocusTower",
         Command::SetGate { .. } => "SetGate",
@@ -99,7 +100,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Burn { .. } => "Burn",
         Command::Concede => "Concede",
     };
-    const KINDS: [&str; 45] = [
+    const KINDS: [&str; 46] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -129,6 +130,7 @@ fn the_goldens_cover_every_kind_of_command() {
         "Brace",
         "HandOver",
         "UsePower",
+        "Cast",
         "Evolve",
         "FocusTower",
         "SetGate",

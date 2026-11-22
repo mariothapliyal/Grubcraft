@@ -7,6 +7,7 @@
 //! fails to decode is dropped.
 
 use gc_fixed::{Angle, Fx, FxVec2};
+use gc_sim::abilities::CastTarget;
 use gc_sim::orders::Step;
 use gc_sim::{
     Command, Formation, Mass, PlayerCommand, PowerTarget, RegimentHandle, StructureHandle,
@@ -637,6 +638,26 @@ pub fn write_command(w: &mut Writer, c: &Command) {
                 }
             }
         }
+        Command::Cast {
+            regiment,
+            ability,
+            target,
+        } => {
+            w.u8(53);
+            w.handle(regiment);
+            w.u8(ability);
+            match target {
+                CastTarget::Hero => w.u8(0),
+                CastTarget::Point(at) => {
+                    w.u8(1);
+                    w.vec(at);
+                }
+                CastTarget::Regiment(h) => {
+                    w.u8(2);
+                    w.handle(h);
+                }
+            }
+        }
         Command::UsePower { power, target } => {
             w.u8(22);
             w.u8(power);
@@ -873,6 +894,16 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             target: match r.u8()? {
                 0 => None,
                 1 => Some(r.handle()?),
+                _ => return None,
+            },
+        },
+        53 => Command::Cast {
+            regiment: r.handle()?,
+            ability: r.u8()?,
+            target: match r.u8()? {
+                0 => CastTarget::Hero,
+                1 => CastTarget::Point(r.vec()?),
+                2 => CastTarget::Regiment(r.handle()?),
                 _ => return None,
             },
         },

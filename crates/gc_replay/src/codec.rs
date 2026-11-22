@@ -7,6 +7,7 @@
 //! bumping [`crate::FORMAT`].
 
 use gc_fixed::{Angle, Fx, FxVec2};
+use gc_sim::abilities::CastTarget;
 use gc_sim::orders::Step;
 use gc_sim::structures::{
     Armour, Breaker, Quirk, Role, TowerAttack, TowerShot, Trap, VEINS, WallTwist,
@@ -246,6 +247,29 @@ impl Writer {
                 self.var(u64::from(g.missile));
             }
             None => self.bool(false),
+        }
+        // Format 58: heroes' abilities.
+        match u.kit {
+            Some(k) => {
+                self.u8(1 + k.kit as u8);
+                self.var(k.summons.map_or(0, |s| u64::from(s) + 1));
+            }
+            None => self.u8(0),
+        }
+    }
+
+    /// What a hero's cast is aimed at (format 58 on).
+    pub fn cast_target(&mut self, target: CastTarget) {
+        match target {
+            CastTarget::Hero => self.u8(0),
+            CastTarget::Point(at) => {
+                self.u8(1);
+                self.vec(at);
+            }
+            CastTarget::Regiment(h) => {
+                self.u8(2);
+                self.handle(h);
+            }
         }
     }
 
@@ -639,6 +663,16 @@ impl Writer {
                     }
                 }
             }
+            Command::Cast {
+                regiment,
+                ability,
+                target,
+            } => {
+                self.u8(55);
+                self.handle(regiment);
+                self.u8(ability);
+                self.cast_target(target);
+            }
             Command::UsePower { power, target } => {
                 self.u8(22);
                 self.u8(power);
@@ -998,7 +1032,26 @@ impl<'a> Reader<'a> {
                 missile: self.var_as()?,
             });
         }
+        if format >= 58 {
+            u.kit = match self.u8()? {
+                0 => None,
+                k => Some(gc_sim::abilities::HeroKit {
+                    kit: gc_sim::abilities::Kit::from_u8(k - 1)?,
+                    summons: self.maybe_id()?,
+                }),
+            };
+        }
         Some(u)
+    }
+
+    /// What a hero's cast is aimed at (format 58 on).
+    pub fn cast_target(&mut self) -> Option<CastTarget> {
+        Some(match self.u8()? {
+            0 => CastTarget::Hero,
+            1 => CastTarget::Point(self.vec()?),
+            2 => CastTarget::Regiment(self.handle()?),
+            _ => return None,
+        })
     }
 
     /// A caravan's trade post (format 24 on).
@@ -1238,6 +1291,11 @@ impl<'a> Reader<'a> {
                     1 => Some(self.handle()?),
                     _ => return None,
                 },
+            },
+            55 => Command::Cast {
+                regiment: self.handle()?,
+                ability: self.u8()?,
+                target: self.cast_target()?,
             },
             22 => Command::UsePower {
                 power: self.u8()?,

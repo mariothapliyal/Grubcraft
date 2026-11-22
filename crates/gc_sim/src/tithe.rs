@@ -324,11 +324,28 @@ impl Conquest {
         at: FxVec2,
         lasts: u16,
     ) -> Result<RegimentHandle, Refusal> {
+        let raise = (tiles, at, u16::MAX);
+        self.raise_up_to(regs, nav, units, stances, (player, unit), raise, lasts)
+    }
+
+    /// [`Conquest::raise`], `most` soldiers strong at most (a hero's Raise
+    /// Dead).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn raise_up_to(
+        &mut self,
+        regs: &mut Regiments,
+        nav: &Nav,
+        units: &[UnitStats],
+        stances: &Stances,
+        (player, unit): (PlayerId, UnitId),
+        (tiles, at, most): (u8, FxVec2, u16),
+        lasts: u16,
+    ) -> Result<RegimentHandle, Refusal> {
         let corpses = self.tithe.corpses_near(at, tiles);
         if corpses < u32::from(MIN_RAISED) {
             return Err(Refusal::NoCorpses);
         }
-        let models = Some(u16::try_from(corpses).unwrap_or(u16::MAX));
+        let models = Some(u16::try_from(corpses).unwrap_or(u16::MAX).min(most));
         let stats = sized(units, unit, models).ok_or(Refusal::Unknown)?;
         let spots = core::iter::once(at).chain(rings_round(at, 0));
         let spot = spot_among(regs, nav, &stats, player, spots).ok_or(Refusal::Crowded)?;

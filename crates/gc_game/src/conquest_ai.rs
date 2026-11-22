@@ -284,6 +284,8 @@ mod tests {
         pub heroes: u32,
         pub heroes_standing: u32,
         pub top_level: u32,
+        /// Hero abilities that went off (docs/44), over the match.
+        pub casts: u32,
     }
 
     impl Works {
@@ -360,6 +362,7 @@ mod tests {
                 heroes: self.heroes.max(o.heroes),
                 heroes_standing: self.heroes_standing.max(o.heroes_standing),
                 top_level: self.top_level.max(o.top_level),
+                casts: self.casts.max(o.casts),
             }
         }
     }
@@ -601,6 +604,14 @@ mod tests {
                 }
             }
             world.tick(&cmds);
+            for e in world.events() {
+                if let gc_sim::events::Event::Cast { hero, .. } = *e
+                    && let Some(w) = (world.regiments.owner(hero))
+                        .and_then(|o| works.get_mut(usize::from(o)))
+                {
+                    w.casts += 1;
+                }
+            }
             let t = world.tick_count();
             if first_contact.is_none()
                 && t.is_multiple_of(TICKS_PER_SECOND)
@@ -1502,7 +1513,7 @@ mod tests {
             [Faction::EmberClans, Faction::CarrionConcord],
             [Faction::Brood, Faction::Choir],
         ];
-        let (mut top, mut heroes) = (0, 0);
+        let (mut top, mut heroes, mut casts) = (0, 0, 0);
         for (factions, seeds) in pairs.iter().zip([[7, 9, 11], [8, 10, 12]]) {
             // The side that wins has had time for a hero (a side overrun
             // early may never get its hero building up). Not always: one
@@ -1515,11 +1526,12 @@ mod tests {
                 for (side, f) in played.sides.iter().zip(factions) {
                     let w = side.works;
                     println!(
-                        "seed {seed} {f:?}: {} heroes, {} standing, top level {}",
-                        w.heroes, w.heroes_standing, w.top_level
+                        "seed {seed} {f:?}: {} heroes, {} standing, top level {}, {} casts",
+                        w.heroes, w.heroes_standing, w.top_level, w.casts
                     );
                     top = top.max(w.top_level);
                     heroes += w.heroes;
+                    casts += w.casts;
                 }
                 let winner = played.winner().unwrap_or(0);
                 if played.sides[usize::from(winner)].works.heroes >= 1 {
@@ -1532,6 +1544,8 @@ mod tests {
         }
         assert!(heroes >= 3, "{heroes} heroes in two games");
         assert!(top >= 1);
+        // Their heroes cast their abilities in the fighting (docs/44).
+        assert!(casts >= 3, "{casts} casts in two games");
     }
 
     // A game takes seconds in a release build and minutes in a debug one,

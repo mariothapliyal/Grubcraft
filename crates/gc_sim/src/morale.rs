@@ -295,8 +295,12 @@ fn check(
     }
     // Wounds shake it as much as deaths: hit points lost, counted in men,
     // twice over once it is down to its breaking point.
-    let bled =
-        i32::from(regs.bled[i]) * 100 * CASUALTY_TENTHS_PER_PERCENT * if bloodied { 2 } else { 1 };
+    // Unshaken by a hero's ability (see [`crate::abilities`]), it feels none.
+    let bled = if regs.is_unshaken(i) {
+        0
+    } else {
+        i32::from(regs.bled[i]) * 100 * CASUALTY_TENTHS_PER_PERCENT * if bloodied { 2 } else { 1 }
+    };
     let mut tenths = -(bled / (full * i32::from(stats.hp_per_model.max(1))));
     if regs.engaged[i].is_some() {
         if i32::from(regs.models[i]) * 2 < full {
@@ -418,6 +422,21 @@ pub(crate) fn shift(regs: &mut Regiments, i: usize, points: i16) {
         points,
         0,
     );
+}
+
+/// Routing regiment `i` rallies at once (a hero's Rally), wavering with a
+/// little heart back, as one does that has run clear. A shattered one
+/// stays shattered.
+pub(crate) fn rally_now(regs: &mut Regiments, i: usize) {
+    if regs.morale_state[i] != MoraleState::Routing {
+        return;
+    }
+    regs.morale_state[i] = MoraleState::Wavering;
+    regs.morale[i] = WAVER_BELOW * SCALE / 2;
+    regs.why[i] = 0;
+    regs.target[i] = None;
+    regs.target_facing[i] = None;
+    regs.pace[i] = regs.speed[i];
 }
 
 /// Regiment `i` loses `points` of morale at once, as [`shift`] does, and
@@ -580,13 +599,7 @@ fn flee(
         regs.rout_clock[i] = regs.rout_clock[i].saturating_add(TICKS_PER_SECOND as u16);
         if clear_long_enough(regs, i) {
             regs.target[i] = None;
-            if regs.morale_state[i] == MoraleState::Routing {
-                // Rally: wavering, with a little heart back.
-                regs.morale_state[i] = MoraleState::Wavering;
-                regs.morale[i] = WAVER_BELOW * SCALE / 2;
-                regs.why[i] = 0;
-                regs.pace[i] = regs.speed[i];
-            }
+            rally_now(regs, i);
             return;
         }
     }

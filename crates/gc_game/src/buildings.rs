@@ -3167,6 +3167,10 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::NoHamlet => "No hamlet near there will hire out: none, or an enemy holds it.",
         Refusal::HeroTaken => "You already have that hero.",
         Refusal::HeroLimit => "One hero a tier: raise your tier for another.",
+        Refusal::Locked => "The hero's level hasn't opened that ability yet.",
+        Refusal::Stunned => "The hero can't cast while stunned or in a cocoon.",
+        Refusal::Unseen => "Aim it at an enemy regiment you can see.",
+        Refusal::Sturdy => "Only a regiment below half strength can be foreclosed on.",
     }
 }
 

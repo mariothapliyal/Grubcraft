@@ -36,6 +36,7 @@ mod forest;
 mod forest_pass;
 mod gate;
 mod gated_towns;
+mod abilities;
 mod heroes;
 mod high_water;
 mod make_way;
@@ -99,6 +100,7 @@ const SCENARIOS: &[Scenario] = &[
     evolve_tithe::SCENARIO,
     charges::SCENARIO,
     heroes::SCENARIO,
+    abilities::SCENARIO,
     dropped::SCENARIO,
     high_water::SCENARIO,
 ];

@@ -196,7 +196,7 @@ fn hp(w: &World, r: RegimentHandle) -> u16 {
 fn a_hero_is_hired_once_and_one_a_tier() {
     let (mut w, altar, r) = with_hero();
     let hero = *w.hero_of(r).unwrap();
-    assert_eq!((hero.level, hero.xp, hero.points), (1, 0, 1));
+    assert_eq!((hero.level, hero.xp), (1, 0));
     assert_eq!(hp(&w, r), 300);
     let bank = w.bank(0).unwrap();
     assert_eq!((bank.grub, bank.marrow), (5000 - 200, 1000 - 50));
@@ -238,7 +238,7 @@ fn enemies_dying_near_a_hero_level_it_up() {
     w.regiments.take_damage(foe_i, 100);
     w.tick(&[]);
     let hero = *w.hero_of(r).unwrap();
-    assert_eq!((hero.xp, hero.level, hero.points), (LEVELS[0], 2, 2));
+    assert_eq!((hero.xp, hero.level), (LEVELS[0], 2));
     // The level's hit points come whole, and its blows land harder.
     assert_eq!(hp(&w, r), 330);
     let i = w.regiments.resolve(r).unwrap();

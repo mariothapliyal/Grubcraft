@@ -4,18 +4,31 @@
 //! (saving for it); it hires a hero as soon as it may (one a tier), in the
 //! order the roster lists them, and revives a fallen one as soon as it can
 //! pay, without holding back its buildings and tier to save for either.
-//! Heroes march with the army like any regiment.
+//! Heroes march with the army like any regiment, and cast their two
+//! abilities (docs/44-hero-abilities.md) by simple rules: the ultimate
+//! first, when a foe is near enough (in reach, for one aimed at a place or
+//! a regiment), never walking off to cast.
 
-use gc_sim::Command;
+use gc_sim::abilities::{Aim, CastTarget};
 use gc_sim::structures::Refusal;
+use gc_sim::{Command, TICKS_PER_SECOND};
 use glam::Vec2;
 
 use super::super::Sense;
+use crate::perception::{Seen, to_fx_vec};
 use super::super::kit::KitBuilding;
 use super::{Clicks, Look, Steward, trains_fighters};
 
 /// Fighting regiments it has before it puts up its hero building.
 const ARMY_FIRST: usize = 3;
+
+/// How near a foe must be for a hero to cast an ability on itself (a rally,
+/// a summons, an aura), in tiles.
+const FIGHT_TILES: f32 = 8.0;
+
+/// How long after a cast it gives a hero no other, past its reaction time
+/// (while the order is on its way, the hero looks ready still).
+const CAST_AGAIN_TICKS: u32 = 3 * TICKS_PER_SECOND;
 
 impl Steward {
     /// The hero building to put up, if it is time: none yet, the second
@@ -81,6 +94,64 @@ impl Steward {
                     self.busy.push((m.view.handle, Some(hero.id), s.now));
                 }
                 return;
+            }
+        }
+    }
+
+    /// Each of its heroes casts the first of its abilities (the ultimate,
+    /// then the basic one) that is ready and has a foe to go at: the
+    /// nearest standing foe it sees, within [`FIGHT_TILES`] for one cast on
+    /// the hero, within reach for one aimed. Foreclosure waits for a foe
+    /// below half strength.
+    pub(super) fn cast_abilities(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
+        let reaction = s.reaction;
+        self.cast
+            .retain(|&(_, t)| s.now < t + reaction + CAST_AGAIN_TICKS);
+        let foes: Vec<&Seen> = (s.view.regiments.iter())
+            .filter(|r| s.view.hostile(s.party, r.owner) && !r.broken())
+            .collect();
+        for me in look.army.iter().filter(|r| !r.broken()) {
+            let Some(hero) = s.world.hero_of(me.handle).filter(|h| h.kit.is_some()) else {
+                continue;
+            };
+            if self.cast.iter().any(|&(h, _)| h == me.handle) {
+                continue;
+            }
+            let nearest = |reach: f32, weak: bool| {
+                (foes.iter())
+                    .filter(|f| !weak || u32::from(f.models) * 2 < u32::from(f.full))
+                    .map(|f| (f, f.pos.distance(me.pos)))
+                    .filter(|&(_, d)| d <= reach)
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(f, _)| *f)
+            };
+            for slot in [1, 0] {
+                let Some(a) = hero.ability(slot).filter(|a| !a.passive) else {
+                    continue;
+                };
+                let reach = f32::from(a.range);
+                let target = match a.aim {
+                    Aim::Hero => nearest(FIGHT_TILES, false).map(|_| CastTarget::Hero),
+                    Aim::Point => nearest(reach, false).map(|f| CastTarget::Point(to_fx_vec(f.pos))),
+                    Aim::Regiment => {
+                        nearest(reach, a.name == "Foreclosure").map(|f| CastTarget::Regiment(f.handle))
+                    }
+                };
+                let Some(target) = target else {
+                    continue;
+                };
+                if s.world.cast_check(s.party, me.handle, slot, target).is_err() {
+                    continue;
+                }
+                let cast = Command::Cast {
+                    regiment: me.handle,
+                    ability: slot,
+                    target,
+                };
+                if clicks.give(s.now, cast) {
+                    self.cast.push((me.handle, s.now));
+                }
+                break;
             }
         }
     }
