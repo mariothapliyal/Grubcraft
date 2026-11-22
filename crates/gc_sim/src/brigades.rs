@@ -116,7 +116,7 @@ const SIGHT: u32 = 4;
 const LOST: u8 = 5;
 /// While any regiment of an attack-move brigade has turned aside to fight
 /// within this of the anchor, in tiles, the body halts.
-const HUNT_NEAR: Fx = Fx::from_int(25);
+pub(crate) const HUNT_NEAR: Fx = Fx::from_int(25);
 /// How far ahead of the anchor the track is checked for ground that has
 /// changed, in tiles, and how often, in ticks.
 const WATCH: Fx = Fx::from_int(16);
@@ -688,6 +688,14 @@ impl Brigades {
                 && self.pool[usize::from(self.of[i]) - 1].hunt == hunt
                 && regs.target[i].is_some()
         })
+    }
+
+    /// The way the attack-move brigade regiment slot `i` marches in goes
+    /// about where it is, if it marches in one.
+    pub(crate) fn heading(&self, i: usize) -> Option<FxVec2> {
+        let slot = usize::from(*self.of.get(i)?).checked_sub(1)?;
+        let b = &self.pool[slot];
+        (b.hunt && b.phase == Phase::Marching && b.len >= 2).then(|| b.at(b.arc).1)
     }
 
     /// Whether a brigade steers regiment slot `i` now: it walks at the

@@ -1820,6 +1820,13 @@ impl Regiments {
         })
     }
 
+    /// The enemy regiment `h` is fighting in melee, or failing that the
+    /// one it is ordered or has turned to attack.
+    pub fn foe_of(&self, h: RegimentHandle) -> Option<RegimentHandle> {
+        let i = self.resolve(h)?;
+        self.engaged[i].or(self.attack_target[i])
+    }
+
     /// What regiment `i` is doing, for the screen.
     fn doing(&self, i: usize) -> Doing {
         if self.morale_state[i].broken() {

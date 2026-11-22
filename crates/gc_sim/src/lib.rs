@@ -3408,16 +3408,47 @@ impl World {
 
     /// The nearest enemy regiment slot `i`'s side can see, standing (and
     /// not on a wall, out of the reach of those below) and within
-    /// [`orders::HUNT_RADIUS`] of it (or its bows' reach, if further).
+    /// [`orders::HUNT_RADIUS`] of it (or its bows' reach, if further); for
+    /// one advancing in line, the one opposite it (see below).
     /// Looked up in last tick's combat grid, so a regiment that
     /// only arrived this tick is noticed at the next look.
     fn foe_near(&self, i: usize) -> Option<RegimentHandle> {
         let regs = &self.regiments;
         let owner = regs.owner[i];
-        let reach = self.units[regs.unit[i] as usize]
+        let mut reach = self.units[regs.unit[i] as usize]
             .range
             .max(orders::HUNT_RADIUS);
+        // One advancing in line with a brigade takes the enemy opposite
+        // it, not whichever is nearest: across the way counts double, and
+        // a foe a friend already goes for counts as further by the hunt's
+        // reach for each, so a line takes on a line. And while friends of
+        // its line fight near by, one with nothing in reach looks as far
+        // as [`brigades::HUNT_NEAR`], so a wing the enemy's line does not
+        // reach wheels in on its flank instead of walking on past.
+        let line = match regs.plan(i).hunt {
+            Some(orders::Step::Move {
+                brigade, target, ..
+            }) if brigade != 0 => {
+                let ahead =
+                    (self.brigades.heading(i)).unwrap_or((target - regs.position[i]).normalized());
+                (ahead != FxVec2::ZERO).then_some((ahead, brigade))
+            }
+            _ => None,
+        };
         let here = regs.position[i];
+        if let Some((_, number)) = line
+            && (0..regs.alive.len()).any(|k| {
+                let d = regs.position[k] - here;
+                regs.alive[k]
+                    && regs.owner[k] == owner
+                    && (regs.engaged[k].is_some() || regs.reload[k] > 0)
+                    && d.x.abs() < brigades::HUNT_NEAR
+                    && d.y.abs() < brigades::HUNT_NEAR
+                    && matches!(regs.plan(k).hunt, Some(orders::Step::Move { brigade, .. }) if brigade == number)
+            })
+        {
+            reach = reach.max(brigades::HUNT_NEAR);
+        }
         let mut best: Option<(Fx, usize)> = None;
         let slack = reach + self.combat.max_step();
         self.combat.near_enemies(here, slack, owner, |j| {
@@ -3428,12 +3459,31 @@ impl World {
             {
                 return;
             }
-            let d = (regs.position[j] - here).length();
-            if d <= reach
-                && best.is_none_or(|b| (d, j) < b)
-                && self.vision.sees(owner, j, regs.owner[j])
-            {
-                best = Some((d, j));
+            let to = regs.position[j] - here;
+            let d = to.length();
+            let Some((ahead, _)) = line else {
+                if d <= reach
+                    && best.is_none_or(|b| (d, j) < b)
+                    && self.vision.sees(owner, j, regs.owner[j])
+                {
+                    best = Some((d, j));
+                }
+                return;
+            };
+            let across = to.dot(FxVec2::new(Fx::ZERO - ahead.y, ahead.x));
+            let mut score = to.dot(ahead).abs() + across.abs() * 2;
+            if d > reach || best.is_some_and(|b| (score, j) >= b) {
+                return;
+            }
+            let foe = Some(regs.handle(j));
+            let on = (0..regs.alive.len())
+                .filter(|&k| {
+                    regs.alive[k] && regs.owner[k] == owner && regs.attack_target[k] == foe
+                })
+                .count();
+            score += orders::HUNT_RADIUS * on as i32;
+            if best.is_none_or(|b| (score, j) < b) && self.vision.sees(owner, j, regs.owner[j]) {
+                best = Some((score, j));
             }
         });
         best.map(|(_, j)| regs.handle(j))
