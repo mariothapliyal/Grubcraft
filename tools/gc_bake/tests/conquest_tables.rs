@@ -138,7 +138,7 @@ fn starting_state_matches_the_economy_doc() {
             .iter()
             .map(|u| u32::from(u.start_count))
             .sum();
-        assert_eq!(starters, 5 + 4 + 3 + 4 + 1);
+        assert_eq!(starters, 5 + 6 + 3 + 4 + 1);
     });
 }
 
