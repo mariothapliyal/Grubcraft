@@ -2,8 +2,9 @@
 //! regiments in line ordered as one group to attack-move through six of
 //! the enemy's standing in line: straight opposite, shifted half a line
 //! east, a line of four, a line with its middle pushed forward and a line
-//! slanting away. Each should take the enemy opposite it and none stand
-//! by while the rest fight, so the line meets theirs as a line, not as a
+//! slanting away. Each should take the enemy opposite it (where one
+//! stands straight opposite within reach) and none stand by while the
+//! rest fight, so the line meets theirs as a line, not as a
 //! crowd on whichever of them it saw first.
 
 use gc_fixed::{Fx, FxVec2};
@@ -52,10 +53,6 @@ struct Clash {
     left: (u32, u32),
     /// Soldiers at the start, ours and theirs.
     start: (u32, u32),
-}
-
-fn across(a: FxVec2, b: FxVec2) -> f32 {
-    crate::fx_to_f32((a.x - b.x).abs())
 }
 
 fn clash(real: &Real, report: &mut Report, theirs: &Theirs) -> Clash {
@@ -114,7 +111,7 @@ fn clash(real: &Real, report: &mut Report, theirs: &Theirs) -> Clash {
     let gaps: Vec<f32> = (first.iter().zip(&starts))
         .filter_map(|(f, at)| {
             let (_, there) = foe_starts.iter().find(|(h, _)| Some(*h) == *f)?;
-            Some(across(*at, *there))
+            Some(crate::fx_to_f32((at.x - there.x).abs()))
         })
         .collect();
     let on: Vec<usize> = (foe_starts.iter())
@@ -177,7 +174,7 @@ fn run(real: &Real, report: &mut Report) {
                 shift: 0,
                 back: |i| 3 * i as i32,
             },
-            true,
+            false,
         ),
     ] {
         let c = clash(real, report, &theirs);

@@ -875,8 +875,9 @@ of the enemy's standing in line.
    attack-move's reach) further for each friend, so a line takes on a
    line before two pile on one.
 2. **No one stands by.** While friends of its group fight within 25
-   tiles (the distance the group halts for), one with nothing in reach
-   looks as far as that, so a wing the enemy's line does not reach wheels
+   tiles (the same test the group halts by, now one function,
+   `brigades::fights_near`), one with nothing in reach looks as far as
+   that, so a wing the enemy's line does not reach wheels
    in on its flank, and one left behind when the group broke up joins
    the fight instead of walking past it.
 
@@ -885,20 +886,23 @@ before.
 
 ### What it measured
 
-| Enemy line | Fought first, of theirs | All six of ours fighting | Their soldiers lost in 60 s |
+| Enemy line | Fought first, of theirs | All six of ours fighting | Soldiers lost in 60 s, theirs / ours |
 |---|---|---|---|
-| Straight opposite | 6 (was 6) | 13.8 s (was 13.8 s) | 76 (was 75) |
-| Middle two 8 tiles forward | 6 (was 2) | 14.1 s (was never) | 77 (was 32) |
-| Slanting back 3 a regiment | 6 (was 2) | 25.4 s (was never) | 80 (was 20) |
-| Shifted 15 tiles east | 4 (was 4) | 16.1 s (was never) | 59 (was 64) |
-| A line of 4 | 4 (was 4) | 16.4 s (was 26.4 s) | 66 of 88 (was 60) |
+| Straight opposite | 6 (was 6) | 13.8 s (was 13.8 s) | 76 / 51 (was 75 / 52) |
+| Middle two 8 tiles forward | 6 (was 2) | 11.2 s (was never) | 80 / 62 (was 32 / 26) |
+| Slanting back 3 a regiment | 5 (was 2) | 14.1 s (was never) | 70 / 48 (was 20 / 16) |
+| Shifted 15 tiles east | 4 (was 4) | 13.8 s (was never) | 51 / 29 (was 64 / 32) |
+| A line of 4 | 4 (was 4) | 13.9 s (was 26.4 s) | 60 of 88 / 39 (was 60 / 40) |
 
-Ours lost about the same as before in each, except against the bulging
-and slanting lines, where more of ours fought: 49 and 51 of 132 (was 26
-and 16).
+Of 132 soldiers a side (the line of 4 has 88). Where main left most of
+the line standing, now all of it fights, and both sides lose more.
 
 ### What it does not do yet
 
+- Against the slanting line the regiment at the far end, whose
+  opposite stands 26 tiles off when the group halts, goes for the next
+  one in instead (10 tiles across): the halted body does not walk it on
+  toward its own.
 - Shifted half a regiment's width the pairing is a coin toss: three of
   ours went for the end of the enemy's line and its far end, which no
   one of ours could reach, was left alone. Pairing the whole line at

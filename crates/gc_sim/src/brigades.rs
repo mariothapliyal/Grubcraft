@@ -501,8 +501,29 @@ fn chain(list: &mut [u32], mut kept: usize, mut joins: impl FnMut(u32, u32) -> b
     kept
 }
 
+/// Whether a regiment of `owner`'s that turned aside from an attack-move
+/// with its brigade `number` fights within [`HUNT_NEAR`] of `at` (not one
+/// standing with no way to its quarry: the far side of a wall or deep
+/// water). The body halts for one, and its members look as far for a foe.
+pub(crate) fn fights_near(regs: &Regiments, owner: PlayerId, number: u16, at: FxVec2) -> bool {
+    (0..regs.alive.len()).any(|j| {
+        let d = regs.position[j] - at;
+        d.x.abs() < HUNT_NEAR
+            && d.y.abs() < HUNT_NEAR
+            && regs.alive[j]
+            && regs.owner[j] == owner
+            && (regs.engaged[j].is_some() || regs.reload[j] > 0 || regs.stepped(j))
+            && regs.planned(j)
+            && {
+                let plan = regs.plan(j);
+                plan.diverted
+                    && matches!(plan.hunt, Some(Step::Move { brigade, .. }) if brigade == number)
+            }
+    })
+}
+
 /// The way to the right of one going `dir`.
-fn right_of(dir: FxVec2) -> FxVec2 {
+pub(crate) fn right_of(dir: FxVec2) -> FxVec2 {
     FxVec2::new(-dir.y, dir.x)
 }
 
@@ -966,22 +987,7 @@ impl Brigades {
         // near by.
         if self.pool[slot].hunt && (tick + slot as u32).is_multiple_of(SIGHT) {
             let b = &self.pool[slot];
-            let (at, number) = (b.at(b.arc).0, b.number);
-            self.pool[slot].halted = (0..regs.alive.len()).any(|j| {
-                if !regs.alive[j] || regs.owner[j] != owner {
-                    return false;
-                }
-                let plan = regs.plan(j);
-                let d = regs.position[j] - at;
-                // (Not for one standing with no way to its quarry: the
-                // far side of a wall or deep water.)
-                let fights = regs.engaged[j].is_some() || regs.reload[j] > 0 || regs.stepped(j);
-                plan.diverted
-                    && matches!(plan.hunt, Some(Step::Move { brigade, .. }) if brigade == number)
-                    && d.x.abs() < HUNT_NEAR
-                    && d.y.abs() < HUNT_NEAR
-                    && fights
-            });
+            self.pool[slot].halted = fights_near(regs, owner, b.number, b.at(b.arc).0);
         }
         let b = &mut self.pool[slot];
         b.arc += b.speed;
