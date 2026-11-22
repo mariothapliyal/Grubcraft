@@ -132,18 +132,28 @@ impl Bodies {
         }
     }
 
-    /// Every pair of high bodies (upper, lower) where a river runs from
-    /// the upper on down into the lower, sorted.
-    fn falls(&self) -> Vec<(u16, u16)> {
-        let mut pairs = Vec::new();
-        for c in &self.chains {
-            for (k, &a) in c.iter().enumerate() {
-                pairs.extend(c[k + 1..].iter().filter(|&&b| b != 0).map(|&b| (a, b)));
+    /// Which water system each body is in: bodies joined by any river,
+    /// through the lakes it crosses and the rivers it joins, share one
+    /// (the lowest body's number in it). Body 0 is its own.
+    fn systems(&self) -> Vec<u16> {
+        let mut of: Vec<u16> = (0..self.level.len() as u16).collect();
+        fn root(of: &mut [u16], mut b: u16) -> u16 {
+            while of[usize::from(b)] != b {
+                let up = of[usize::from(of[usize::from(b)])];
+                of[usize::from(b)] = up;
+                b = up;
+            }
+            b
+        }
+        for chain in &self.chains {
+            let mut high = chain.iter().copied().filter(|&b| b != 0);
+            let Some(first) = high.next() else { continue };
+            for b in high {
+                let (x, y) = (root(&mut of, first), root(&mut of, b));
+                of[usize::from(x.max(y))] = x.min(y);
             }
         }
-        pairs.sort_unstable();
-        pairs.dedup();
-        pairs
+        (0..of.len() as u16).map(|b| root(&mut of, b)).collect()
     }
 
     /// How many bodies stand over the line, for reports.
@@ -175,13 +185,14 @@ pub(super) fn settle(h: &mut Grid, body: &[u16], bodies: &mut Bodies, keep: &[bo
 
 /// Lower each body until no dry land beside its water lies under it, and
 /// keep the rivers running downhill, until nothing changes. Dry land is
-/// any tile above its own water, whichever body it belongs to: a lake
-/// beside another river's dry bank spills over it as over open ground.
-/// (A river's own lower reach beside it is not a bank, wet or dry: water
-/// falls into it.)
+/// any tile above its own water, at the line or in a body of another
+/// water system: a lake beside another river's dry bank spills over it as
+/// over open ground. (Bodies of its own system are not banks, wet or dry:
+/// water falls into its lower reaches, and its upper ones stand no lower
+/// than it.)
 fn contain(h: &mut Grid, body: &[u16], bodies: &mut Bodies) {
     let n = h.n as i32;
-    let falls_into = bodies.falls();
+    let system = bodies.systems();
     let mut was = bodies.level.clone();
     bodies.order();
     for round in 0..=ROUNDS {
@@ -203,9 +214,8 @@ fn contain(h: &mut Grid, body: &[u16], bodies: &mut Bodies) {
                     }
                     let k = (py * n + px) as usize;
                     let c = body[k];
-                    if c != b
-                        && h.v[k] >= bodies.level(c)
-                        && (c == 0 || falls_into.binary_search(&(b, c)).is_err())
+                    if h.v[k] >= bodies.level(c)
+                        && (c == 0 || system[usize::from(c)] != system[usize::from(b)])
                     {
                         let r = &mut rim[usize::from(b)];
                         *r = (*r).min(h.v[k]);
@@ -384,6 +394,18 @@ mod tests {
         let reach = bodies.add(3 * ONE);
         body[bank] = reach;
         bodies.chain([lake, reach, 0]);
+        settle(&mut h, &body, &mut bodies, &keep);
+        assert_eq!(bodies.level(lake), 5 * ONE);
+        // Nor is a reach further down a river it runs into (a separate
+        // chain): the water still runs on downstream.
+        let (mut h, mut body) = bowl(6 * ONE);
+        h.v[bank] = 4 * ONE + ONE / 2;
+        let mut bodies = Bodies::new();
+        let lake = bodies.add(5 * ONE);
+        let (joined, below) = (bodies.add(4 * ONE), bodies.add(3 * ONE));
+        body[bank] = below;
+        bodies.chain([lake, joined]);
+        bodies.chain([joined, below, 0]);
         settle(&mut h, &body, &mut bodies, &keep);
         assert_eq!(bodies.level(lake), 5 * ONE);
     }
