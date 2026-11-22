@@ -27,28 +27,16 @@ const RAFT_TIMBER: [u8; 3] = [130, 110, 84];
 const WRECK_TIMBERS: usize = 2;
 const WRECK_TIMBER: [u8; 3] = [112, 106, 100];
 
-/// The river's surface at `at` (tiles), on a map drawn with water at
-/// `level`: the river's own line over it (its tile's own level on highland
-/// water), raised by the rivers' rise. Eased between tile centres as the
-/// drawn water is (`river_at` in the world shader), so a piece riding
-/// over a fall slides down it with the water instead of dropping a step.
-pub fn surface(t: &gc_sim::terrain::Terrain, level: f32, at: gc_fixed::FxVec2) -> f32 {
-    let base = i32::from(t.water_level());
-    let tile = |x: i32, y: i32| {
-        let p = gc_fixed::FxVec2::from_ints(x, y);
-        (t.water_line_at(p) - base + i32::from(t.river_rise(p))) as f32
-    };
-    let line = eased(crate::from_fx_vec(at), tile);
-    level + line / HEIGHT_UNITS as f32
-}
-
-/// `of` each tile, eased between tile centres at `at` (tiles).
-fn eased(at: Vec2, of: impl Fn(i32, i32) -> f32) -> f32 {
-    let s = at - Vec2::splat(0.5);
-    let (x, y) = (s.x.floor() as i32, s.y.floor() as i32);
-    let f = s - s.floor();
-    let row = |y| of(x, y) + (of(x + 1, y) - of(x, y)) * f.x;
-    row(y) + (row(y + 1) - row(y)) * f.y
+/// The river's surface at `at` (tiles) on `map`: the water's own level,
+/// eased between tile centres as it is drawn ([`gc_map::Map::water_at`]),
+/// so a piece riding over a fall slides down it with the water instead of
+/// dropping a step at the tile edge; raised by a flood or dropped by low
+/// water as the map's line is, and by the rivers' rise.
+pub fn surface(map: &gc_map::Map, t: &gc_sim::terrain::Terrain, at: gc_fixed::FxVec2) -> f32 {
+    let (x, y) = (at.x.floor_int(), at.y.floor_int());
+    let lift = t.water_line_at(at) - i32::from(t.tile_level(x, y)) + i32::from(t.river_rise(at));
+    let p = crate::from_fx_vec(at);
+    map.water_at(p.x, p.y) + lift as f32 / HEIGHT_UNITS as f32
 }
 
 /// The trunks to draw for `pieces`, floating at the river's `surface` at
@@ -120,21 +108,6 @@ mod tests {
         assert!((e.at.x - (10.0 - LOG_LENGTH / 2.0)).abs() < 1e-4);
         assert!((e.at.z - 4.0).abs() < 1e-4 && (e.at.y - 2.0).abs() < 1e-4);
         assert!((e.scale * 7.0 - LOG_LENGTH).abs() < 1e-4);
-    }
-
-    #[test]
-    fn the_surface_eases_between_tile_centres_as_drawn() {
-        // A fall between tile 4 (level 2) and tile 5 (level 0).
-        let fall = |x: i32, _| if x <= 4 { 2.0 } else { 0.0 };
-        assert!((eased(Vec2::new(4.5, 3.5), fall) - 2.0).abs() < 1e-5);
-        assert!((eased(Vec2::new(5.0, 3.5), fall) - 1.0).abs() < 1e-5);
-        assert!((eased(Vec2::new(5.5, 3.5), fall) - 0.0).abs() < 1e-5);
-        // No step as a piece crosses the tiles' edge.
-        let (a, b) = (
-            eased(Vec2::new(4.999, 3.2), fall),
-            eased(Vec2::new(5.001, 3.2), fall),
-        );
-        assert!((a - b).abs() < 0.01);
     }
 
     #[test]

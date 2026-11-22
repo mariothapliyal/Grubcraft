@@ -135,14 +135,12 @@ impl Bodies {
     /// Every pair of high bodies (upper, lower) where a river runs from
     /// the upper on down into the lower, sorted.
     fn falls(&self) -> Vec<(u16, u16)> {
-        let mut pairs: Vec<(u16, u16)> = (self.chains.iter())
-            .flat_map(|c| {
-                c.iter()
-                    .enumerate()
-                    .flat_map(move |(k, &a)| c[k + 1..].iter().map(move |&b| (a, b)))
-            })
-            .filter(|&(_, b)| b != 0)
-            .collect();
+        let mut pairs = Vec::new();
+        for c in &self.chains {
+            for (k, &a) in c.iter().enumerate() {
+                pairs.extend(c[k + 1..].iter().filter(|&&b| b != 0).map(|&b| (a, b)));
+            }
+        }
         pairs.sort_unstable();
         pairs.dedup();
         pairs
@@ -205,7 +203,10 @@ fn contain(h: &mut Grid, body: &[u16], bodies: &mut Bodies) {
                     }
                     let k = (py * n + px) as usize;
                     let c = body[k];
-                    if h.v[k] >= bodies.level(c) && falls_into.binary_search(&(b, c)).is_err() {
+                    if c != b
+                        && h.v[k] >= bodies.level(c)
+                        && (c == 0 || falls_into.binary_search(&(b, c)).is_err())
+                    {
                         let r = &mut rim[usize::from(b)];
                         *r = (*r).min(h.v[k]);
                     }
