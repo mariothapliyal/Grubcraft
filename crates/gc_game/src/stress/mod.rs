@@ -22,6 +22,7 @@
 //! same on every machine; time is held only to the generous budget.
 
 mod abilities;
+mod advance_in_line;
 mod ai_ring;
 pub(crate) mod arena;
 mod big_army;
@@ -97,6 +98,7 @@ const SCENARIOS: &[Scenario] = &[
     brigade::COLUMN_GATE,
     brigade::BIG_GATE,
     make_way::SCENARIO,
+    advance_in_line::SCENARIO,
     evolve_tithe::SCENARIO,
     charges::SCENARIO,
     heroes::SCENARIO,
