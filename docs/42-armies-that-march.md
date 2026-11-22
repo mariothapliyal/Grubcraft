@@ -931,12 +931,15 @@ the line standing, now all of it fights, and both sides lose more.
   a drag still draws it deep. `Ctrl+number` saves a plain group again and
   says the army is no more.
 - **Join.** `Alt+number` sends the selected regiments that are not in
-  army `number` to join it. Where the army stands now is read back as the
-  order that would put it there in its own shape
-  (`arrange::Shape::stand`), and the shape is laid out about that for the
-  army and the newcomers together: each newcomer takes a free place of its
-  kind (one left by a regiment lost) or stands behind, and only the
-  newcomers are sent, as one brigade if there are several. They join the
+  army `number` to join it. An army remembers which regiment holds each
+  place in its shape (`arrange::Army`: each holds its own when locked,
+  and each order to the army hands out the places afresh, left to right
+  by kind). Where the army stands now is fitted from where the holders
+  stand (`Army::standing`), so it is found again after the army has
+  moved, turned or lost regiments. The holders keep their places and are
+  not ordered; each newcomer takes a free place of its kind (one left by
+  a regiment lost), else any free place, else stands behind
+  (`Army::join`), sent as one brigade if there are several. They join the
   group, and the next order to the army takes them with it. This is where
   reinforcements meet armies: a refilled or newly raised regiment is
   selected and sent with `Alt+number`.
