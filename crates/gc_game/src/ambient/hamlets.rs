@@ -58,6 +58,15 @@ fn radius(model: Model) -> f32 {
     }
 }
 
+/// Whether `model` is a house, hut or barn: a building with a door and a
+/// roof.
+fn dwelling(model: Model) -> bool {
+    matches!(
+        model,
+        Model::GrubfolkHut | Model::GrubfolkHouse | Model::GrubfolkBarn
+    )
+}
+
 /// A small random stream from a seed (xorshift).
 #[derive(Clone, Debug)]
 pub(super) struct Rng(u32);
@@ -428,10 +437,11 @@ pub struct Hamlets {
     sites: Vec<(Vec2, Vec<Extra>)>,
     /// What size each site is, in the same order.
     sizes: Vec<Size>,
+    /// How far from its middle each site's models reach, in tiles (0 for a
+    /// site left bare).
+    reaches: Vec<f32>,
     /// Seconds since each site was ruined, if it has been.
     ruined: Vec<Option<f32>>,
-    /// Seconds since the dead were last counted ([`Hamlets::due`]).
-    clock: f32,
 }
 
 /// How far from its middle a hamlet's models reach, in tiles.
@@ -440,7 +450,7 @@ pub(super) const SPREAD: f32 = 12.0;
 impl Hamlets {
     /// Lay out the hamlets of `map`'s Villages, Towns and Bazaar.
     pub fn new(map: &Map) -> Hamlets {
-        let (sites, sizes) = map
+        let (sites, sizes): (Vec<(Vec2, Vec<Extra>)>, Vec<Size>) = map
             .objects
             .iter()
             .filter_map(|o| {
@@ -454,39 +464,56 @@ impl Hamlets {
                 Some(((centre, lay(map, centre, o.at, size)), size))
             })
             .unzip();
-        let sizes: Vec<Size> = sizes;
+        let reaches = (sites.iter())
+            .map(|(centre, extras)| {
+                (extras.iter())
+                    .map(|e| {
+                        Vec2::new(e.at.x, e.at.z).distance(*centre) + radius(e.model) * e.scale
+                    })
+                    .fold(0.0, f32::max)
+            })
+            .collect();
         Hamlets {
             ruined: vec![None; sizes.len()],
+            reaches,
             sites,
             sizes,
-            clock: 0.0,
         }
     }
 
-    /// `dt` seconds on (the ruins smoulder down): whether it is time to
-    /// count the dead in the hamlets still standing ([`Hamlets::ruin_where`]),
-    /// once a second.
-    pub fn due(&mut self, dt: f32) -> bool {
+    /// `dt` seconds on: the ruins smoulder down.
+    pub fn age(&mut self, dt: f32) {
         for r in self.ruined.iter_mut().flatten() {
             *r += dt;
         }
-        self.clock += dt;
-        if self.clock < 1.0 || self.ruined.iter().all(Option::is_some) {
-            return false;
-        }
-        self.clock = 0.0;
-        true
+    }
+
+    /// The hamlets with houses that are still standing.
+    fn standing(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.sites.len()).filter(|&i| self.ruined[i].is_none() && self.reaches[i] > 0.0)
+    }
+
+    /// Whether any hamlet is left to ruin.
+    pub fn any_standing(&self) -> bool {
+        self.standing().next().is_some()
+    }
+
+    /// Whether `p` is among the models of a hamlet still standing.
+    pub fn in_standing(&self, p: Vec2) -> bool {
+        self.standing()
+            .any(|i| p.distance_squared(self.sites[i].0) <= self.reaches[i] * self.reaches[i])
     }
 
     /// Ruin each standing hamlet with [`RUIN_DEAD`] of the fallen `lying`
     /// among its models, and give the sites newly ruined.
     pub fn ruin_where(&mut self, lying: &[Vec2]) -> Vec<usize> {
-        let ruin: Vec<usize> = (0..self.sites.len())
-            .filter(|&i| self.ruined[i].is_none())
+        let ruin: Vec<usize> = (self.standing())
             .filter(|&i| {
-                let (centre, reach) = (self.sites[i].0, self.reach(i));
-                reach > 0.0
-                    && lying.iter().filter(|p| p.distance(centre) <= reach).count() >= RUIN_DEAD
+                let (centre, reach) = (self.sites[i].0, self.reaches[i]);
+                (lying.iter())
+                    .filter(|p| p.distance_squared(centre) <= reach * reach)
+                    .nth(RUIN_DEAD - 1)
+                    .is_some()
             })
             .collect();
         for &i in &ruin {
@@ -500,7 +527,10 @@ impl Hamlets {
     /// a different way each.
     fn ruin(&mut self, i: usize) {
         self.ruined[i] = Some(0.0);
-        let mut rng = Rng::seeded(self.sites[i].0.x.to_bits() ^ self.sites[i].0.y.to_bits() << 7);
+        let centre = self.sites[i].0;
+        let mut rng = Rng::new((centre.x as i32, centre.y as i32), self.sizes[i]);
+        // Not the stream the hamlet was laid out with.
+        rng.unit();
         for e in &mut self.sites[i].1 {
             let (tint, lean) = match e.model {
                 Model::GrubfolkWell => (SCORCHED, 0),
@@ -529,9 +559,8 @@ impl Hamlets {
         occupied: impl Fn((i32, i32)) -> bool + 'a,
     ) -> impl Iterator<Item = (Vec3, f32, f32)> + 'a {
         let left = self.ruined[i].map_or(1.0, |r| r / SMOULDER);
-        self.houses(i, occupied)
-            .filter(move |_| left < 1.0)
-            .map(move |e| (e.at, radius(e.model) * e.scale, left))
+        let houses = (left < 1.0).then(|| self.houses(i, occupied));
+        (houses.into_iter().flatten()).map(move |e| (e.at, radius(e.model) * e.scale, left))
     }
 
     /// The roofs of site `i`'s houses and barn that are not built over
@@ -559,12 +588,7 @@ impl Hamlets {
         i: usize,
         occupied: impl Fn((i32, i32)) -> bool + 'a,
     ) -> impl Iterator<Item = &'a Extra> + 'a {
-        self.sites[i].1.iter().filter(move |e| {
-            matches!(
-                e.model,
-                Model::GrubfolkHut | Model::GrubfolkHouse | Model::GrubfolkBarn
-            ) && !built_on(e, &occupied)
-        })
+        (self.sites[i].1.iter()).filter(move |e| dwelling(e.model) && !built_on(e, &occupied))
     }
 
     /// The models of the hamlets within `reach` tiles of `focus`, but not
@@ -601,11 +625,7 @@ impl Hamlets {
     /// How far from its middle site `i`'s models reach, in tiles; nothing
     /// if the site was left bare.
     pub fn reach(&self, i: usize) -> f32 {
-        let (centre, extras) = &self.sites[i];
-        extras
-            .iter()
-            .map(|e| Vec2::new(e.at.x, e.at.z).distance(*centre) + radius(e.model) * e.scale)
-            .fold(0.0, f32::max)
+        self.reaches[i]
     }
 
     /// How big site `i` is.
@@ -799,9 +819,8 @@ pub(super) mod tests {
         let mut h = Hamlets::new(&map);
         let centre = |k: usize| Vec2::new(sites[k].1.0 as f32 + 0.5, sites[k].1.1 as f32 + 0.5);
         let fresh = site(&h, sites[0].1).to_vec();
-        // Not counted until a second has gone by.
-        assert!(!h.due(0.5));
-        assert!(h.due(0.5));
+        assert!(h.any_standing());
+        assert!(h.in_standing(centre(0)) && !h.in_standing(centre(0) + Vec2::new(40.0, 0.0)));
         // A few dead, or many far off, ruin nothing.
         let few = vec![centre(0) + Vec2::new(2.0, 0.0); RUIN_DEAD - 1];
         let far = vec![centre(0) + Vec2::new(40.0, 0.0); RUIN_DEAD * 3];
@@ -826,14 +845,7 @@ pub(super) mod tests {
         }
         // A roof for every house and the barn, at its model's height.
         let roofs = h.roofs(0, |_| 2.0, |_| map.water_level() + 2.0, |_| false);
-        let houses = (fresh.iter())
-            .filter(|e| {
-                matches!(
-                    e.model,
-                    Model::GrubfolkHut | Model::GrubfolkHouse | Model::GrubfolkBarn
-                )
-            })
-            .count();
+        let houses = fresh.iter().filter(|e| dwelling(e.model)).count();
         assert_eq!(roofs.len(), houses);
         assert!(roofs.iter().all(|&(_, up)| (up - 2.0).abs() < 0.2));
         assert!(
@@ -843,7 +855,8 @@ pub(super) mod tests {
         // They smoulder a while, then the smoke is done.
         assert_eq!(h.smouldering(0, |_| false).count(), houses);
         assert_eq!(h.smouldering(1, |_| false).count(), 0);
-        h.due(SMOULDER);
+        assert!(!h.in_standing(centre(0)) && h.in_standing(centre(1)));
+        h.age(SMOULDER);
         assert_eq!(h.smouldering(0, |_| false).count(), 0);
     }
 }

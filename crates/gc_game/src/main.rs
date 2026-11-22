@@ -323,10 +323,11 @@ const COMMANDER_OUT: f32 = 160.0;
 const COMMANDER_BLOCK_HEIGHT: f32 = 0.6;
 const COMMANDER_POLE: [f32; 3] = [0.3, 5.0, 0.3];
 const COMMANDER_FLAG: [f32; 3] = [2.6, 1.8, 0.25];
+/// How often the dead are counted for ruined hamlets and the crows'
+/// bodies, in seconds of effects time.
+const RUIN_CHECK: f32 = 1.0;
 /// A regiment whose volley left this many ticks ago or less is shooting.
 const SHOOTING_TICKS: u32 = 24;
-/// Ground height for the cameras: the terrain, or the water's surface where
-/// it is deeper than the bed.
 /// Where the bodies of the fallen lie on the field for a crow to stand on:
 /// those come to rest (not flying from a blow, not sinking to make room).
 fn lying_bodies(puppets: &Puppets) -> impl Iterator<Item = Vec2> + '_ {
@@ -335,6 +336,8 @@ fn lying_bodies(puppets: &Puppets) -> impl Iterator<Item = Vec2> + '_ {
         .map(|c| aftermath::body_at(c.pos, c.facing))
 }
 
+/// Ground height for the cameras: the terrain, or the water's surface where
+/// it is deeper than the bed.
 fn ground_of(map: &Map, p: Vec2) -> f32 {
     map.surface_at(p.x, p.y)
 }
@@ -944,6 +947,9 @@ struct Running {
     gate_swings: buildings::GateSwings,
     /// Fallen standards, crows and grime (see [`aftermath`]).
     aftermath: aftermath::Aftermath,
+    /// Seconds since the dead were last counted for ruins and the crows'
+    /// bodies ([`App::tend_ruins`]).
+    ruin_clock: f32,
     /// How far `--siege` has staged its siege: 0 to place it, 1 to order
     /// the attacks.
     siege_scene: Option<u8>,
@@ -1941,6 +1947,7 @@ impl App {
             siege: siege::Siege::new(capacities.regiments as usize),
             gate_swings: buildings::GateSwings::default(),
             aftermath: aftermath::Aftermath::default(),
+            ruin_clock: 0.0,
             siege_scene: None,
             gate_scene: None,
             wall_scene: None,
@@ -8783,16 +8790,26 @@ impl Running {
     /// the ground. Then, when `showing`, the smoke of the ruins that still
     /// smoulder, on screen and in sight.
     fn tend_ruins(&mut self, dt: f32, showing: bool, cull: &gc_render::Cull) {
-        let ruins = self.ambient.hamlets.due(dt);
-        let bodies = self.aftermath.bodies_due(dt);
+        self.ambient.hamlets.age(dt);
+        self.ruin_clock += dt;
+        let due = self.ruin_clock >= RUIN_CHECK;
+        let ruins = due && self.ambient.hamlets.any_standing();
+        let bodies = due && self.aftermath.on_bodies();
+        if due {
+            self.ruin_clock = 0.0;
+        }
         if ruins || bodies {
             let lying: Vec<Vec2> = lying_bodies(&self.puppets).collect();
             if bodies {
                 self.aftermath.keep_bodies(&lying);
             }
             if ruins {
+                // Only the dead in a hamlet still standing count, and only
+                // those the viewer has seen.
                 let (reveal, fog) = (self.reveal_all, &self.fog);
+                let hamlets = &self.ambient.hamlets;
                 let seen: Vec<Vec2> = (lying.into_iter())
+                    .filter(|&p| hamlets.in_standing(p))
                     .filter(|p| reveal || fog.sees_tile((p.x.floor() as i32, p.y.floor() as i32)))
                     .collect();
                 let (map, scenery) = (&self.heightmap, &self.scenery);
@@ -8814,7 +8831,7 @@ impl Running {
         }
         let (reveal, fog) = (self.reveal_all, &self.fog);
         let hamlets = &self.ambient.hamlets;
-        for i in (0..hamlets.len()).filter(|&i| hamlets.ruined(i)) {
+        for i in 0..hamlets.len() {
             for (at, r, done) in hamlets.smouldering(i, |t| self.scenery.occupied_at(t)) {
                 let tile = (at.x.floor() as i32, at.z.floor() as i32);
                 if !cull.on_screen(at, r + 4.0) || !(reveal || fog.sees_tile(tile)) {
