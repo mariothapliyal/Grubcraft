@@ -16,84 +16,15 @@ use gc_replay::{Recorder, Replay};
 use gc_sim::scenario::{DRILL_UNITS, Drill};
 use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, World};
 use gc_ui::lobby::{
-    DiscoveredGame, Faction, LobbySettings, MAX_PLAYERS, NetError, NetEvent, Network, OnDrop,
-    Profile, SlotEdit, SlotKind,
+    DiscoveredGame, LobbySettings, MAX_PLAYERS, NetError, NetEvent, Network, OnDrop, SlotEdit,
+    SlotKind,
 };
 
+mod common;
+
+use common::{STEP, address, id, join, join_with, lan, lan_as, pass, profile, settle};
+
 const SEED: u64 = 0x6772_7562;
-
-/// How far the clock moves between looks at the network: finer than any
-/// game's frame.
-const STEP: Duration = Duration::from_millis(1);
-
-fn id(version: &str) -> Identity {
-    Identity {
-        version: version.into(),
-        data_hash: 42,
-        map_hash: |_, _| 7,
-    }
-}
-
-fn profile(name: &str) -> Profile {
-    Profile {
-        name: name.into(),
-        color: 0,
-        faction: Faction::EmberClans,
-        version: "test".into(),
-    }
-}
-
-fn lan_as(net: &MemoryNet, id: Identity) -> Lan {
-    Lan::on(id, Box::new(net.clone()))
-}
-
-fn lan(net: &MemoryNet) -> Lan {
-    lan_as(net, id("test"))
-}
-
-fn address(host: &Lan) -> String {
-    format!("127.0.0.1:{}", host.port().unwrap())
-}
-
-/// `joiner` joins `host`, which answers meanwhile.
-fn join(net: &MemoryNet, joiner: &mut Lan, name: &str, host: &mut Lan) -> Result<(), NetError> {
-    let target = address(host);
-    join_with(net, joiner, name, &target, "", host)
-}
-
-fn join_with(
-    net: &MemoryNet,
-    joiner: &mut Lan,
-    name: &str,
-    target: &str,
-    password: &str,
-    host: &mut Lan,
-) -> Result<(), NetError> {
-    joiner.start_join(&profile(name), target, password)?;
-    loop {
-        net.advance(STEP);
-        host.pump(net.now());
-        if let Some(done) = joiner.joining() {
-            return done;
-        }
-    }
-}
-
-/// Run every machine for `time`.
-fn pass(net: &MemoryNet, lans: &mut [&mut Lan], time: Duration) {
-    let end = net.now() + time;
-    while net.now() < end {
-        net.advance(STEP);
-        for l in lans.iter_mut() {
-            l.pump(net.now());
-        }
-    }
-}
-
-/// Run every machine for a moment.
-fn settle(net: &MemoryNet, lans: &mut [&mut Lan]) {
-    pass(net, lans, Duration::from_millis(300));
-}
 
 const SETUP: MatchSetup = MatchSetup {
     seed: SEED,

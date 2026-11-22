@@ -323,13 +323,13 @@ struct ClientGame {
     /// Turn bundles received and not yet simulated, in turn order.
     ready: VecDeque<Vec<PlayerCommand>>,
     next_turn: u32,
-    /// When the next turn is due on this machine's clock.
+    /// When the next turn is due on this machine's clock; `None` until the
+    /// first turn arrives, and after a turn came late (the clock then
+    /// starts again from when it does).
     due: Option<Instant>,
-    /// A turn was due and hadn't come: the clock moves to when it does.
-    starved: bool,
     /// The fewest turns waiting after one was played, over the last
     /// `looked` turns played on time.
-    spare: Option<u32>,
+    spare: u32,
     looked: u32,
     /// Turns to play ahead of the clock, moving it earlier.
     rush: u32,
@@ -551,30 +551,27 @@ impl Lan {
     /// a coming turn. The host keeps the player numbers given; a joiner's
     /// orders are always its own player's.
     pub fn submit(&mut self, commands: impl IntoIterator<Item = PlayerCommand>) {
-        match &mut self.role {
+        let send = match &mut self.role {
             Role::Host(h) => {
                 if let Some(g) = &mut h.game {
                     g.inbox.extend(commands);
                 }
+                false
             }
-            Role::Client(c) => {
-                if let Some(g) = &mut c.game {
-                    let me = g.me;
-                    g.outbox.extend(
-                        commands
-                            .into_iter()
-                            .map(|c| PlayerCommand { player: me, ..c }),
-                    );
-                    if g.outbox.is_empty() {
-                        return;
-                    }
-                }
-            }
-            Role::Idle => {}
-        }
+            Role::Client(c) => c.game.as_mut().is_some_and(|g| {
+                let me = g.me;
+                g.outbox.extend(
+                    commands
+                        .into_iter()
+                        .map(|c| PlayerCommand { player: me, ..c }),
+                );
+                !g.outbox.is_empty()
+            }),
+            Role::Idle => false,
+        };
         // A joiner's orders go to the host now, not with the next frame's
         // pump.
-        if matches!(self.role, Role::Client(_)) {
+        if send {
             let now = self.net.now();
             self.flush(now, false);
         }
@@ -1202,8 +1199,7 @@ impl Lan {
                     ready: VecDeque::new(),
                     next_turn: 0,
                     due: None,
-                    starved: false,
-                    spare: None,
+                    spare: u32::MAX,
                     looked: 0,
                     rush: 0,
                     outbox: Vec::new(),
@@ -2291,8 +2287,7 @@ fn adapt_delay(h: &mut Host, length: Duration) {
         // Only how uneven the trips are: a joiner's clock starts when the
         // first turns arrive, so the trip itself is behind it already, and
         // only a turn slower than those eats into its buffer.
-        .filter(|p| p.link.rtt().is_some())
-        .map(|p| p.link.jitter() * 2)
+        .filter_map(|p| p.link.rtt().map(|_| p.link.jitter() * 2))
         .max();
     let Some(worst) = worst else { return };
     let wanted = ((worst + DELAY_MARGIN)
@@ -2412,6 +2407,12 @@ impl ClientGame {
     fn behind(&self) -> bool {
         self.ready.len() as u32 > self.delay + CATCH_UP_AFTER
     }
+
+    /// Start a new look at the fewest turns waiting.
+    fn reset_spare(&mut self) {
+        self.spare = u32::MAX;
+        self.looked = 0;
+    }
 }
 
 /// The next turn on a joiner, by its own clock: one every `length` while
@@ -2423,38 +2424,38 @@ impl ClientGame {
 /// the host than it needs to be: docs/11-networking.md, "Order lag").
 fn client_turn(g: &mut ClientGame, now: Instant, length: Duration) -> Option<Vec<PlayerCommand>> {
     if g.ready.is_empty() {
-        // A turn due and none here: it is late.
-        g.starved |= g.due.is_some_and(|due| now >= due);
+        // A turn due and none here: it is late, and the clock starts
+        // again when it comes.
+        if g.due.is_some_and(|due| now >= due) {
+            g.due = None;
+        }
         return None;
     }
+    let late = g.due.is_none();
     let due = *g.due.get_or_insert(now);
     let early = now < due;
     if early && !g.behind() && g.rush == 0 {
         return None;
     }
-    let late = std::mem::take(&mut g.starved) || now > due + length * 2;
+    // After a stall, don't rush the turns that piled up on the clock.
+    let stalled = now > due + length * 2;
     if early {
         // Catching up or draining spare turns: the clock stays, so it
         // moves a turn earlier.
         g.rush = g.rush.saturating_sub(1);
     } else {
-        // Late (or after a stall, which mustn't rush the turns that piled
-        // up on the clock): the clock follows the turn that came.
-        g.due = Some(if late { now } else { due } + length);
+        g.due = Some(if stalled { now } else { due } + length);
     }
     g.next_turn += 1;
     let turn = g.ready.pop_front();
-    let spare = g.ready.len() as u32;
-    if late {
-        g.spare = None;
-        g.looked = 0;
+    if late || stalled {
+        g.reset_spare();
     } else {
-        g.spare = Some(g.spare.map_or(spare, |s| s.min(spare)));
+        g.spare = g.spare.min(g.ready.len() as u32);
         g.looked += 1;
         if g.looked >= SPARE_EVERY {
-            g.rush = g.spare.unwrap_or(0).saturating_sub(SPARE_KEPT);
-            g.spare = None;
-            g.looked = 0;
+            g.rush = g.spare.saturating_sub(SPARE_KEPT);
+            g.reset_spare();
         }
     }
     if g.rejoining {

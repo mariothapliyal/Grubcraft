@@ -8,46 +8,20 @@
 //! `cargo test -p gc_net --test order_lag -- --ignored --nocapture`
 //! prints the table in docs/11-networking.md ("Order lag").
 
+mod common;
+
 use std::time::Duration;
 
-use gc_fixed::{Fx, FxVec2};
+use common::{STEP, join, lan, pass, profile};
+use gc_fixed::{Fx, FxVec2, Pcg32};
+use gc_net::Lan;
 use gc_net::net::{MemoryNet, Net};
-use gc_net::{Identity, Lan};
 use gc_sim::{Command, PlayerCommand, RegimentHandle};
-use gc_ui::lobby::{Faction, LobbySettings, NetEvent, Network, Profile, SlotEdit};
+use gc_ui::lobby::{LobbySettings, NetEvent, Network, SlotEdit};
 
 const SEED: u64 = 0x6c61_6721;
-const STEP: Duration = Duration::from_millis(1);
 /// A 60 Hz display's frame, rounded to the network clock's millisecond.
 const FRAME: Duration = Duration::from_millis(17);
-
-fn profile(name: &str) -> Profile {
-    Profile {
-        name: name.into(),
-        color: 0,
-        faction: Faction::EmberClans,
-        version: "test".into(),
-    }
-}
-
-fn lan(net: &MemoryNet) -> Lan {
-    let id = Identity {
-        version: "test".into(),
-        data_hash: 42,
-        map_hash: |_, _| 7,
-    };
-    Lan::on(id, Box::new(net.clone()))
-}
-
-fn pass(net: &MemoryNet, lans: &mut [&mut Lan], time: Duration) {
-    let end = net.now() + time;
-    while net.now() < end {
-        net.advance(STEP);
-        for l in lans.iter_mut() {
-            l.pump(net.now());
-        }
-    }
-}
 
 /// A host and one joiner on `net`, their match started and loaded.
 fn two_machines(net: &MemoryNet) -> (Lan, Lan) {
@@ -55,12 +29,7 @@ fn two_machines(net: &MemoryNet) -> (Lan, Lan) {
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
     let mut joiner = lan(net);
-    let target = format!("127.0.0.1:{}", host.port().unwrap());
-    joiner.start_join(&profile("Alex"), &target, "").unwrap();
-    while joiner.joining().is_none() {
-        net.advance(STEP);
-        host.pump(net.now());
-    }
+    join(net, &mut joiner, "Alex", &mut host).unwrap();
     let me = joiner.lobby().unwrap().local_slot;
     joiner.edit_slot(me, SlotEdit::Ready(true));
     pass(
@@ -105,28 +74,28 @@ fn tag_of(c: &PlayerCommand) -> Option<u16> {
     }
 }
 
-/// One network to measure on.
+/// One kind of link to measure on.
 #[derive(Clone, Copy)]
-pub struct Link {
-    pub name: &'static str,
+struct Route {
+    name: &'static str,
     /// One way, each packet: from this to that.
-    pub one_way: (u64, u64),
-    pub loss: u32,
+    one_way: (u64, u64),
+    loss: u32,
     /// Halfway through, each packet takes this long instead (a slower
     /// route, or a busier one).
-    pub later: Option<(u64, u64)>,
+    later: Option<(u64, u64)>,
 }
 
 /// What a run found, in milliseconds.
 #[derive(Debug)]
-pub struct Lag {
-    pub host: Vec<u64>,
-    pub joiner: Vec<u64>,
+struct Lag {
+    host: Vec<u64>,
+    joiner: Vec<u64>,
     /// The input delay the match settled on, in turns.
-    pub delay: u32,
+    delay: u32,
     /// Frames, after the first five seconds of measuring, where the
     /// joiner had a turn due but none had come: its world hitched.
-    pub hitches: u32,
+    hitches: u32,
 }
 
 struct Machine {
@@ -144,6 +113,19 @@ struct Machine {
 }
 
 impl Machine {
+    fn new(lan: Lan, player: u8, phase: Duration) -> Machine {
+        Machine {
+            lan,
+            player,
+            next_frame: phase,
+            clicked: Vec::new(),
+            sent: Vec::new(),
+            lags: Vec::new(),
+            last_turn: None,
+            hitches: 0,
+        }
+    }
+
     fn frame(&mut self, now_net: std::time::Instant, now: Duration, measuring: bool) {
         self.lan.pump(now_net);
         let orders: Vec<PlayerCommand> = self
@@ -177,7 +159,7 @@ impl Machine {
 /// Play `seconds` of match on `network`, each machine clicking an order
 /// about every 700 ms at a moment that doesn't line up with its frames,
 /// after a warm-up that lets the input delay settle.
-pub fn measure(network: Link, seconds: u64) -> Lag {
+fn measure(network: Route, seconds: u64) -> Lag {
     let net = MemoryNet::new(SEED);
     let latency = |(lo, hi)| net.set_latency(Duration::from_millis(lo), Duration::from_millis(hi));
     latency(network.one_way);
@@ -185,30 +167,12 @@ pub fn measure(network: Link, seconds: u64) -> Lag {
     net.set_loss(network.loss);
     let start = net.now();
     let mut machines = [
-        Machine {
-            lan: host,
-            player: 0,
-            next_frame: Duration::ZERO,
-            clicked: Vec::new(),
-            sent: Vec::new(),
-            lags: Vec::new(),
-            last_turn: None,
-            hitches: 0,
-        },
-        Machine {
-            lan: joiner,
-            player: 1,
-            next_frame: Duration::from_millis(7),
-            clicked: Vec::new(),
-            sent: Vec::new(),
-            lags: Vec::new(),
-            last_turn: None,
-            hitches: 0,
-        },
+        Machine::new(host, 0, Duration::ZERO),
+        Machine::new(joiner, 1, Duration::from_millis(7)),
     ];
     let warm_up = Duration::from_secs(8);
     let end = warm_up + Duration::from_secs(seconds);
-    let mut rng = SEED;
+    let mut rng = Pcg32::new(SEED, 0);
     let mut next_click = [
         warm_up + Duration::from_millis(3),
         warm_up + Duration::from_millis(11),
@@ -232,10 +196,7 @@ pub fn measure(network: Link, seconds: u64) -> Lag {
             if now >= next_click[i] && now < end {
                 m.clicked.push((tag, now));
                 tag = tag.wrapping_add(1).max(1);
-                rng ^= rng << 13;
-                rng ^= rng >> 7;
-                rng ^= rng << 17;
-                next_click[i] = now + Duration::from_millis(400 + rng % 600);
+                next_click[i] = now + Duration::from_millis(400 + u64::from(rng.below(600)));
             }
             if now >= m.next_frame {
                 m.next_frame += FRAME;
@@ -256,44 +217,44 @@ pub fn measure(network: Link, seconds: u64) -> Lag {
     }
 }
 
-pub const NETWORKS: [Link; 7] = [
-    Link {
+const ROUTES: [Route; 7] = [
+    Route {
         name: "Same computer",
         one_way: (0, 1),
         loss: 0,
         later: None,
     },
-    Link {
+    Route {
         name: "Home Wi-Fi",
         one_way: (2, 8),
         loss: 1,
         later: None,
     },
-    Link {
+    Route {
         name: "Tailscale, same city",
         one_way: (8, 16),
         loss: 0,
         later: None,
     },
-    Link {
+    Route {
         name: "Tailscale, across NZ",
         one_way: (15, 30),
         loss: 1,
         later: None,
     },
-    Link {
+    Route {
         name: "Tailscale relay (Sydney)",
         one_way: (40, 70),
         loss: 1,
         later: None,
     },
-    Link {
+    Route {
         name: "Poor link",
         one_way: (80, 160),
         loss: 3,
         later: None,
     },
-    Link {
+    Route {
         name: "Across NZ, then relayed",
         one_way: (15, 30),
         loss: 1,
@@ -320,7 +281,7 @@ fn orders_come_through_quickly_over_tailscale() {
         ("Tailscale, across NZ", 100, 170),
         ("Tailscale relay (Sydney)", 110, 260),
     ] {
-        let n = NETWORKS.iter().find(|n| n.name == name).unwrap();
+        let n = ROUTES.iter().find(|n| n.name == name).unwrap();
         let lag = measure(*n, 60);
         assert!(mean(&lag.host) <= host, "{name}: host {:?}", lag.host);
         assert!(
@@ -335,9 +296,9 @@ fn orders_come_through_quickly_over_tailscale() {
 #[test]
 #[ignore = "prints the order lag table; run by hand"]
 fn order_lag_table() {
-    println!("| Network | One way | Delay | Host mean / p95 | Joiner mean / p95 | Hitches |");
+    println!("| Link | One way | Delay | Host mean / p95 | Joiner mean / p95 | Hitches |");
     println!("|---|---|---|---|---|---|");
-    for n in NETWORKS {
+    for n in ROUTES {
         let lag = measure(n, 120);
         println!(
             "| {} | {}-{} ms | {} turns | {} / {} ms | {} / {} ms | {} |",

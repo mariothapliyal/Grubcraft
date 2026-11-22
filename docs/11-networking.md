@@ -43,13 +43,13 @@ Measured 2026-11-22 (`crates/gc_net/tests/order_lag.rs`; `cargo test -p gc_net -
 
 | Link | One way | Before: delay, host / joiner lag (mean) | After: delay, host / joiner lag (mean, p95) | Hitches after |
 |---|---|---|---|---|
-| Same computer | 0-1 ms | 1 turn, 72 / 105 ms | 1 turn, 72 / 88 ms (97 / 114) | 0 |
-| Home Wi-Fi | 2-8 ms, 1% lost | 1 turn, 76 / 107 ms | 1 turn, 76 / 93 ms (99 / 117) | 0 |
-| Tailscale, same city | 8-16 ms | 1 turn, 78 / 126 ms | 1 turn, 76 / 71 ms (99 / 96) | 0 |
-| Tailscale, across NZ | 15-30 ms, 1% lost | 2 turns, 123 / 182 ms | 1 turn, 74 / 143 ms (98 / 168) | 0 |
-| Tailscale relay (Sydney) | 40-70 ms, 1% lost | 3 turns, 152 / 292 ms | 1 turn, 78 / 223 ms (101 / 262) | 1 |
-| Poor link | 80-160 ms, 3% lost | 5 turns, 234 / 481 ms | 2 turns, 123 / 382 ms (148 / 437) | 1 |
-| Across NZ, then relayed halfway | 15-30, then 40-70 ms | 3 turns, 144 / 222 ms | 1 turn, 74 / 178 ms (98 / 248) | 2 |
+| Same computer | 0-1 ms | 1 turn, 72 / 105 ms | 1 turn, 73 / 90 ms (97 / 115) | 0 |
+| Home Wi-Fi | 2-8 ms, 1% lost | 1 turn, 76 / 107 ms | 1 turn, 74 / 100 ms (96 / 126) | 0 |
+| Tailscale, same city | 8-16 ms | 1 turn, 78 / 126 ms | 1 turn, 74 / 70 ms (96 / 98) | 0 |
+| Tailscale, across NZ | 15-30 ms, 1% lost | 2 turns, 123 / 182 ms | 1 turn, 77 / 145 ms (100 / 169) | 0 |
+| Tailscale relay (Sydney) | 40-70 ms, 1% lost | 3 turns, 152 / 292 ms | 1 turn, 75 / 227 ms (96 / 257) | 1 |
+| Poor link | 80-160 ms, 3% lost | 5 turns, 234 / 481 ms | 2 turns, 123 / 370 ms (148 / 424) | 2 |
+| Across NZ, then relayed halfway | 15-30, then 40-70 ms | 3 turns, 144 / 222 ms | 1 turn, 77 / 174 ms (100 / 230) | 1 |
 
 Before, no row hitched, at the cost of a delay that grew with distance. Where the lag goes now:
 
