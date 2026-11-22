@@ -108,7 +108,8 @@
 //! the menu.
 //!
 //! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general|warlord`
-//! starts a Field Battle against one computer player of that level;
+//! starts a Field Battle against one computer player of that level (with
+//! `--players N`, against N - 1 of them, each for themselves);
 //! `--conquest ribcage_pass|four_teeth|land-mixed|...` starts Conquest on that map (a
 //! shipped map's file or a lobby map's name), every other start held by an idle side;
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
@@ -512,6 +513,8 @@ struct Options {
     audio: bool,
     /// Start straight into a Field Battle against one AI of this level.
     battle: Option<u8>,
+    /// With `--battle`: how many play, each for themselves (2 to 6).
+    players: usize,
     /// Start straight into Conquest on this lobby Conquest map.
     conquest: Option<usize>,
     /// Open a LAN lobby at once (`--host`), or join one (`--join ADDRESS`
@@ -580,6 +583,7 @@ fn parse_args() -> Options {
         menu: None,
         audio: true,
         battle: None,
+        players: 2,
         time_of_day: None,
         sky: None,
         conquest: None,
@@ -678,6 +682,13 @@ fn parse_args() -> Options {
         let value = args.next().unwrap_or_default();
         let ok = match flag.as_str() {
             "--seed" => value.parse().map(|v| opts.seed = v).is_ok(),
+            "--players" => match value.parse() {
+                Ok(v @ 2..=6) => {
+                    opts.players = v;
+                    true
+                }
+                _ => false,
+            },
             "--map" => {
                 let def = gc_map::shipped(&value)
                     .map_or_else(|| gc_map::MapDef::load(std::path::Path::new(&value)), Ok);
@@ -866,7 +877,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--hidden-frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord [--players 2-6]] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--hidden-frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--season spring|summer|autumn|winter] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
@@ -2065,7 +2076,8 @@ impl App {
                 }
             }
             if let Some(level) = opts.battle {
-                let mut setup = battle::quick_battle(level, r.menu.settings(), opts.seed);
+                let mut setup =
+                    battle::quick_battle(level, r.menu.settings(), opts.seed, opts.players);
                 opts.set_sky(&mut setup);
                 r.start_match(MatchKind::Battle(setup));
             }

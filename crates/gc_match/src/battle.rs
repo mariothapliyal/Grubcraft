@@ -685,27 +685,32 @@ fn champion_news(
     }
 }
 
-/// `--battle`: you against one AI of `level`, as the lobby would set it up.
-/// The AI plays your faction, on the map a new lobby starts on, made from
+/// `--battle`: you against one AI of `level` (or, with `--players N`, each
+/// of `players - 1` for themselves), as the lobby would set it up. The AIs
+/// play your faction, on the map a new lobby starts on, made from
 /// `map_seed`.
-pub fn quick_battle(level: u8, settings: &Settings, map_seed: u64) -> MatchStart {
+pub fn quick_battle(level: u8, settings: &Settings, map_seed: u64, players: usize) -> MatchStart {
     let mut me = Slot::open(0);
     me.kind = SlotKind::Human;
     me.name.clone_from(&settings.player_name);
     me.faction = settings.faction;
     me.color = settings.player_color % COLORS;
-    let mut ai = Slot::open(1);
-    ai.kind = SlotKind::Ai;
-    ai.name = "AI 2".into();
-    ai.faction = me.faction;
-    ai.color = (me.color + 1) % COLORS;
-    ai.ai_level = level;
+    let mut slots = vec![me];
+    for k in 1..players.clamp(2, 6) {
+        let mut ai = Slot::open(k);
+        ai.kind = SlotKind::Ai;
+        ai.name = format!("AI {}", k + 1);
+        ai.faction = slots[0].faction;
+        ai.color = (slots[0].color + k as u8) % COLORS;
+        ai.ai_level = level;
+        slots.push(ai);
+    }
     MatchStart {
         settings: LobbySettings {
             map_seed,
             ..LobbySettings::default()
         },
-        players: vec![me, ai],
+        players: slots,
         local_player: 0,
         seed: None,
     }
@@ -1477,6 +1482,41 @@ pub(crate) mod tests {
                 assert!(
                     met.is_some_and(|s| s < 600),
                     "{k} seed {seed}: the armies never met"
+                );
+            }
+        }
+    }
+
+    /// Three and five computer players round a ring of starts (Measured
+    /// land made for that many, docs/27) find each other and fight it
+    /// out: three for themselves on 256 tiles, two against three on 320
+    /// (the Small sizes the lobby makes for them).
+    #[test]
+    #[ignore = "slow: plays battles on ring maps, run by hand in release"]
+    fn ring_battles_meet() {
+        let n: u64 = std::env::var("AI_BATTLES").map_or(2, |v| v.parse().unwrap());
+        let vet = Some(Difficulty::Veteran);
+        let games: [(&[Option<Difficulty>], &[u8], u32); 2] = [
+            (&[vet; 3], &[0, 1, 2], 256),
+            (&[vet; 5], &[0, 1, 0, 1, 1], 320),
+        ];
+        for (slots, teams, tiles) in games {
+            for seed in 1..=n {
+                let map = gc_map::FieldMap::new(gc_map::MEASURED, tiles, seed, teams.len()).make();
+                assert_eq!(map.starts().len(), teams.len());
+                let setup = lobby(slots, teams);
+                let played = play_on(&setup, seed, 20, map, |_| {});
+                let met = played.first_contact.map(|t| t / gc_sim::TICKS_PER_SECOND);
+                println!(
+                    "{} players seed {seed}: met at {met:?} s, {:?} after {} s",
+                    teams.len(),
+                    played.battle.outcome,
+                    played.ticks / gc_sim::TICKS_PER_SECOND
+                );
+                assert!(
+                    met.is_some_and(|s| s < 600),
+                    "{} players seed {seed}: the armies never met",
+                    teams.len()
                 );
             }
         }
