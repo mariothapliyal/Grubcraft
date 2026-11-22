@@ -848,7 +848,7 @@
         (
             role: "Mother, support",
             hired_at: "Queen's Chamber",
-            per_level: (hp: 30, melee_damage: 2),
+            per_level: (hp: 27, melee_damage: 2),
             abilities: [
                 (
                     name: "Spawn Brood",
@@ -888,14 +888,14 @@
                 name: "The Queen-in-Waiting",
                 faction: Brood,
                 models: 1,
-                hp_per_model: 300,
+                hp_per_model: 280,
                 files: 1,
                 speed: 3.5,
                 turn_rate: 160.0,
                 file_spacing: 1.6,
                 rank_spacing: 2.4,
                 melee_attack: 40,
-                melee_defence: 45,
+                melee_defence: 40,
                 melee_damage: 14,
                 charge_bonus: 0,
                 never_routs: true,
@@ -904,7 +904,7 @@
         (
             role: "Bruiser",
             hired_at: "Queen's Chamber",
-            per_level: (hp: 45, melee_damage: 3),
+            per_level: (hp: 40, melee_damage: 3),
             abilities: [
                 (
                     name: "Gorge",
@@ -943,14 +943,14 @@
                 name: "The Devourer",
                 faction: Brood,
                 models: 1,
-                hp_per_model: 420,
+                hp_per_model: 390,
                 files: 1,
                 speed: 4.0,
                 turn_rate: 180.0,
                 file_spacing: 1.75,
                 rank_spacing: 2.5,
                 melee_attack: 60,
-                melee_defence: 45,
+                melee_defence: 40,
                 melee_damage: 24,
                 charge_bonus: 30,
                 never_routs: true,
@@ -959,7 +959,7 @@
         (
             role: "Controller",
             hired_at: "Queen's Chamber",
-            per_level: (hp: 28, melee_damage: 1),
+            per_level: (hp: 25, melee_damage: 1),
             abilities: [
                 (
                     name: "Mind-Spore",
@@ -998,14 +998,14 @@
                 name: "The Whisperer",
                 faction: Brood,
                 models: 1,
-                hp_per_model: 280,
+                hp_per_model: 260,
                 files: 1,
                 speed: 3.5,
                 turn_rate: 200.0,
                 file_spacing: 1.4,
                 rank_spacing: 2.0,
                 melee_attack: 35,
-                melee_defence: 40,
+                melee_defence: 35,
                 melee_damage: 12,
                 charge_bonus: 0,
                 never_routs: true,

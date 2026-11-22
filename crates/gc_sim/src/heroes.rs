@@ -29,7 +29,7 @@
 
 use alloc::vec::Vec;
 
-use gc_fixed::FxVec2;
+use gc_fixed::{Fx, FxVec2};
 
 use crate::combat::Combat;
 use crate::conquest::ConquestUnit;
@@ -59,6 +59,18 @@ pub const FALL: i16 = 10;
 /// plus [`REVIVE_LEVEL_PERCENT`] a level.
 pub const REVIVE_PERCENT: u32 = 50;
 pub const REVIVE_LEVEL_PERCENT: u32 = 15;
+
+/// Morale a regiment loses for each soldier a hero kills in melee
+/// (`morale::WHY_HERO`): a hero is a shock weapon, breaking lines it cuts
+/// into, though it can be pulled down.
+pub const HERO_SHOCK: i16 = 4;
+/// Melee blows on a hero land this many percent as hard: only a few men of
+/// a line reach a one-man block, so without it a hero shrugs off whole
+/// regiments.
+pub const HERO_EXPOSED_PERCENT: u64 = 130;
+/// How far a hero cutting its way out must get from every enemy regiment's
+/// block before it marches on as usual, in tiles.
+pub const CLEAR_TILES: i32 = 4;
 
 /// How a hero grows each level past the first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -315,6 +327,14 @@ impl Heroes {
                 continue;
             };
             h.at = regs.position[i];
+            // Clear of the fight it cut its way out of, or out of time to
+            // (its fall back would end the march where it stands): on to
+            // where it was sent, as a march.
+            if regs.breaking_out[i]
+                && (regs.falling_back[i] <= 1 || clear_of_foes(regs, stats, stances, i))
+            {
+                regs.end_break_out(i);
+            }
             if regs.morale_state[i].broken() || regs.cocoon_left[i] > 0 {
                 continue;
             }
@@ -400,6 +420,23 @@ fn fall(regs: &mut Regiments, stats: &[UnitStats], units: &[ConquestUnit], h: &H
             morale::shake(regs, j, FALL, morale::WHY_GENERAL);
         }
     }
+}
+
+/// Whether every enemy regiment's block is more than [`CLEAR_TILES`] from
+/// hero regiment `i`'s middle.
+fn clear_of_foes(regs: &Regiments, stats: &[UnitStats], stances: &Stances, i: usize) -> bool {
+    let near = Fx::from_int(CLEAR_TILES);
+    let (at, owner) = (regs.position[i], regs.owner[i]);
+    !(0..regs.alive.len()).any(|j| {
+        if !regs.alive[j] || !stances.hostile(owner, regs.owner[j]) {
+            return false;
+        }
+        let half = stats.get(usize::from(regs.unit[j])).map_or(Fx::ZERO, |u| {
+            let (w, d) = u.block_size_in(regs.formation[j], regs.files[j], regs.models[j]);
+            w.max(d) / 2
+        });
+        (regs.position[j] - at).length() <= near + half
+    })
 }
 
 #[cfg(test)]

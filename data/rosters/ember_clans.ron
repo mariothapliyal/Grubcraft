@@ -930,7 +930,7 @@
         (
             role: "Commander, mounted",
             hired_at: "Ancestor Shrine",
-            per_level: (hp: 36, melee_damage: 2),
+            per_level: (hp: 32, melee_damage: 2),
             abilities: [
                 (
                     name: "Rally",
@@ -969,14 +969,14 @@
                 name: "The Daimyo",
                 faction: EmberClans,
                 models: 1,
-                hp_per_model: 340,
+                hp_per_model: 310,
                 files: 1,
                 speed: 5.5,
                 turn_rate: 180.0,
                 file_spacing: 1.4,
                 rank_spacing: 2.0,
                 melee_attack: 55,
-                melee_defence: 50,
+                melee_defence: 45,
                 melee_damage: 18,
                 charge_bonus: 40,
                 never_routs: true,
@@ -985,7 +985,7 @@
         (
             role: "Duelist",
             hired_at: "Ancestor Shrine",
-            per_level: (hp: 32, melee_damage: 3),
+            per_level: (hp: 29, melee_damage: 3),
             abilities: [
                 (
                     name: "Iaijutsu Dash",
@@ -1023,14 +1023,14 @@
                 name: "The Ronin",
                 faction: EmberClans,
                 models: 1,
-                hp_per_model: 300,
+                hp_per_model: 280,
                 files: 1,
                 speed: 4.25,
                 turn_rate: 240.0,
                 file_spacing: 1.0,
                 rank_spacing: 1.0,
                 melee_attack: 65,
-                melee_defence: 45,
+                melee_defence: 40,
                 melee_damage: 22,
                 charge_bonus: 20,
                 never_routs: true,
@@ -1039,7 +1039,7 @@
         (
             role: "Mystic",
             hired_at: "Ancestor Shrine",
-            per_level: (hp: 26, melee_damage: 1, missile_damage: 2),
+            per_level: (hp: 23, melee_damage: 1, missile_damage: 2),
             flags: [AntiAir],
             abilities: [
                 (
@@ -1084,14 +1084,14 @@
                 name: "The Onmyoji",
                 faction: EmberClans,
                 models: 1,
-                hp_per_model: 260,
+                hp_per_model: 240,
                 files: 1,
                 speed: 3.5,
                 turn_rate: 200.0,
                 file_spacing: 1.0,
                 rank_spacing: 1.0,
                 melee_attack: 35,
-                melee_defence: 35,
+                melee_defence: 30,
                 melee_damage: 10,
                 charge_bonus: 0,
                 never_routs: true,

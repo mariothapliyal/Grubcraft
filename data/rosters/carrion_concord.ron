@@ -865,7 +865,7 @@
         (
             role: "Economy",
             hired_at: "Vault of Names",
-            per_level: (hp: 30, melee_damage: 1),
+            per_level: (hp: 27, melee_damage: 1),
             abilities: [
                 (
                     name: "Hostile Takeover",
@@ -902,14 +902,14 @@
                 name: "The Magnate",
                 faction: CarrionConcord,
                 models: 1,
-                hp_per_model: 300,
+                hp_per_model: 280,
                 files: 1,
                 speed: 3.5,
                 turn_rate: 160.0,
                 file_spacing: 1.4,
                 rank_spacing: 1.4,
                 melee_attack: 35,
-                melee_defence: 40,
+                melee_defence: 35,
                 melee_damage: 12,
                 charge_bonus: 0,
                 never_routs: true,
@@ -918,7 +918,7 @@
         (
             role: "Necromancy",
             hired_at: "Vault of Names",
-            per_level: (hp: 32, melee_damage: 2),
+            per_level: (hp: 29, melee_damage: 2),
             abilities: [
                 (
                     name: "Raise Dead",
@@ -958,14 +958,14 @@
                 name: "The Undertaker",
                 faction: CarrionConcord,
                 models: 1,
-                hp_per_model: 320,
+                hp_per_model: 290,
                 files: 1,
                 speed: 3.25,
                 turn_rate: 180.0,
                 file_spacing: 1.0,
                 rank_spacing: 1.0,
                 melee_attack: 40,
-                melee_defence: 40,
+                melee_defence: 35,
                 melee_damage: 14,
                 charge_bonus: 0,
                 never_routs: true,
@@ -974,7 +974,7 @@
         (
             role: "Duelist, debuff",
             hired_at: "Vault of Names",
-            per_level: (hp: 36, melee_damage: 3),
+            per_level: (hp: 32, melee_damage: 3),
             abilities: [
                 (
                     name: "Leech Debt",
@@ -1015,14 +1015,14 @@
                 name: "The Usurer",
                 faction: CarrionConcord,
                 models: 1,
-                hp_per_model: 340,
+                hp_per_model: 310,
                 files: 1,
                 speed: 4.0,
                 turn_rate: 220.0,
                 file_spacing: 1.0,
                 rank_spacing: 1.0,
                 melee_attack: 55,
-                melee_defence: 45,
+                melee_defence: 40,
                 melee_damage: 20,
                 charge_bonus: 0,
                 never_routs: true,

@@ -149,9 +149,9 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
 
 | Hero | Role | HP (+/lvl) | Speed | Turn | Spacing | Atk / Def / Dmg (+/lvl) | Chg | Ranged (dmg +/lvl) |
 |---|---|---|---|---|---|---|---|---|
-| The Daimyo | Commander, mounted | 340 (+36) | 5.5 | 180 | 1.4 / 2.0 | 55 / 50 / 18 (+2) | 40 | |
-| The Ronin | Duelist | 300 (+32) | 4.25 | 240 | 1.0 / 1.0 | 65 / 45 / 22 (+3) | 20 | |
-| The Onmyōji | Mystic | 260 (+26) | 3.5 | 200 | 1.0 / 1.0 | 35 / 35 / 10 (+1) | 0 | 22, 14 (+2), 2.5 s, 70% |
+| The Daimyo | Commander, mounted | 310 (+32) | 5.5 | 180 | 1.4 / 2.0 | 55 / 45 / 18 (+2) | 40 | |
+| The Ronin | Duelist | 280 (+29) | 4.25 | 240 | 1.0 / 1.0 | 65 / 40 / 22 (+3) | 20 | |
+| The Onmyōji | Mystic | 240 (+23) | 3.5 | 200 | 1.0 / 1.0 | 35 / 30 / 10 (+1) | 0 | 22, 14 (+2), 2.5 s, 70% |
 
 - **The Daimyo** (hired at the Ancestor Shrine)
   - **Rally** · active · 40 s · radius 12 — Routing regiments in the area rally at once; all regiments there gain 15/25/35 morale. [ModifyMorale]
@@ -250,9 +250,9 @@ Larvae are not spent on abilities. Each Hive and Hatchery Pit holds up to 3 larv
 
 | Hero | Role | HP (+/lvl) | Speed | Turn | Spacing | Atk / Def / Dmg (+/lvl) | Chg | Ranged (dmg +/lvl) |
 |---|---|---|---|---|---|---|---|---|
-| The Queen-in-Waiting | Mother, support | 300 (+30) | 3.5 | 160 | 1.6 / 1.6 | 40 / 45 / 14 (+2) | 0 | |
-| The Devourer | Bruiser | 420 (+45) | 4.0 | 180 | 1.6 / 1.6 | 60 / 45 / 24 (+3) | 30 | |
-| The Whisperer | Controller | 280 (+28) | 3.5 | 200 | 1.0 / 1.0 | 35 / 40 / 12 (+1) | 0 | |
+| The Queen-in-Waiting | Mother, support | 280 (+27) | 3.5 | 160 | 1.6 / 1.6 | 40 / 40 / 14 (+2) | 0 | |
+| The Devourer | Bruiser | 390 (+40) | 4.0 | 180 | 1.6 / 1.6 | 60 / 40 / 24 (+3) | 30 | |
+| The Whisperer | Controller | 260 (+25) | 3.5 | 200 | 1.0 / 1.0 | 35 / 35 / 12 (+1) | 0 | |
 
 - **The Queen-in-Waiting** (hired at the Queen's Chamber)
   - **Spawn Brood** · active · 40 s — Hatches 1/2/3 Spawnlings regiments beside her for 30 s. [Summon]
@@ -329,9 +329,9 @@ The Choir has no summoned units.
 
 | Hero | Role | HP (+/lvl) | Speed | Turn | Spacing | Atk / Def / Dmg (+/lvl) | Chg | Ranged (dmg +/lvl) |
 |---|---|---|---|---|---|---|---|---|
-| The Maestro | Economy, support | 300 (+30) | 3.5 | 180 | 1.2 / 1.2 | 40 / 45 / 14 (+2) | 0 | |
-| The Refractor | Damage | 320 (+32) | 3.75 | 200 | 1.2 / 1.2 | 45 / 40 / 10 (+1) | 0 | 26, 18 (+2), 2.0 s, 80% |
-| The Hollow Bell | Control | 360 (+38) | 3.5 | 160 | 1.4 / 1.4 | 45 / 50 / 16 (+2) | 0 | |
+| The Maestro | Economy, support | 280 (+27) | 3.5 | 180 | 1.2 / 1.2 | 40 / 40 / 14 (+2) | 0 | |
+| The Refractor | Damage | 290 (+29) | 3.75 | 200 | 1.2 / 1.2 | 45 / 35 / 10 (+1) | 0 | 26, 18 (+2), 2.0 s, 80% |
+| The Hollow Bell | Control | 330 (+34) | 3.5 | 160 | 1.4 / 1.4 | 45 / 45 / 16 (+2) | 0 | |
 
 - **The Maestro** (hired at the Sanctum of Echoes)
   - **Crescendo** · active · 35 s · radius 12 · 10 s — Friendly regiments reload 15/25/35% faster and gain +10/15/20 melee attack. [ModifyStat]
@@ -435,9 +435,9 @@ Grubfolk Militia are neutral hirelings; until the data has a neutral faction the
 
 | Hero | Role | HP (+/lvl) | Speed | Turn | Spacing | Atk / Def / Dmg (+/lvl) | Chg | Ranged (dmg +/lvl) |
 |---|---|---|---|---|---|---|---|---|
-| The Magnate | Economy | 300 (+30) | 3.5 | 160 | 1.4 / 1.4 | 35 / 40 / 12 (+1) | 0 | |
-| The Undertaker | Necromancy | 320 (+32) | 3.25 | 180 | 1.0 / 1.0 | 40 / 40 / 14 (+2) | 0 | |
-| The Usurer | Duelist, debuff | 340 (+36) | 4.0 | 220 | 1.0 / 1.0 | 55 / 45 / 20 (+3) | 0 | |
+| The Magnate | Economy | 280 (+27) | 3.5 | 160 | 1.4 / 1.4 | 35 / 35 / 12 (+1) | 0 | |
+| The Undertaker | Necromancy | 290 (+29) | 3.25 | 180 | 1.0 / 1.0 | 40 / 35 / 14 (+2) | 0 | |
+| The Usurer | Duelist, debuff | 310 (+32) | 4.0 | 220 | 1.0 / 1.0 | 55 / 40 / 20 (+3) | 0 | |
 
 - **The Magnate** (hired at the Vault of Names)
   - **Hostile Takeover** · active · 180 s · range 8 — A hamlet becomes your exclusive trade post for 120/180/240 s. [Economy, Control]
