@@ -48,7 +48,7 @@ const STEPS: [Step; 6] = [
     Step {
         title: "Team up",
         scene: team,
-        text: "Network battles: Enter chats your team, Shift+Enter all. Alt+click pings a spot. P pauses. Esc surrenders by team vote.",
+        text: "Network: Enter chats team, Shift+Enter all. Alt+click pings. P pauses. Esc votes to surrender. Dropped out? Play, then Rejoin.",
     },
 ];
 
