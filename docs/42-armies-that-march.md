@@ -698,6 +698,11 @@ pace and on the route.
   It found the Broodmother Bulk (rank 3.0 to 3.9), Colossus Maw (3.5 to
   3.9) and Reclaimer (1.5 to 1.75) too big for their room, now widened
   (Mario's choice, 22 November 2026, 9:20 am NZDT: big bodies only).
+  The Brood heroes, which landed the same day, were too big as well
+  and are widened the same way: the Queen-in-Waiting (rank 1.6 to
+  2.4), the Devourer (1.6 by 1.6 to 1.75 by 2.5) and the Whisperer
+  (1.0 by 1.0 to 1.4 by 2.0). No golden replay has a hero in it, so
+  none changed.
   Listed as known and left as they are: levelled pikes (drawn reaching
   ahead of the block on purpose) and the Brood line troops (Chitin
   Guard, Mantid Reapers, Shellbacks, Spitters, Skitterlings, Burrowers),
