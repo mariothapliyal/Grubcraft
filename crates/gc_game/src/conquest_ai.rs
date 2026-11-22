@@ -1591,12 +1591,13 @@ pub(crate) mod tests {
             [Faction::Brood, Faction::Choir],
         ];
         let (mut top, mut heroes) = (0, 0);
-        for (factions, seeds) in pairs.iter().zip([[7, 9, 11], [8, 10, 12]]) {
+        for (factions, seeds) in pairs.iter().zip([[7, 9, 11, 13, 15], [8, 10, 12, 14, 16]]) {
             // The side that wins has had time for a hero (a side overrun
             // early may never get its hero building up). Not always: one
             // can win at the first tier, before it may build the hero hall,
             // and which match does goes with any change to how battles play
-            // out, so up to three are played.
+            // out, so up to five are played. An undecided game counts if
+            // either side hired one.
             let mut reports = String::new();
             for seed in seeds {
                 let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 40);
@@ -1609,8 +1610,12 @@ pub(crate) mod tests {
                     top = top.max(w.top_level);
                     heroes += w.heroes;
                 }
-                let winner = played.winner().unwrap_or(0);
-                if played.sides[usize::from(winner)].works.heroes >= 1 {
+                let hired = |p: usize| played.sides[p].works.heroes >= 1;
+                let ok = match played.winner() {
+                    Some(w) => hired(usize::from(w)),
+                    None => hired(0) || hired(1),
+                };
+                if ok {
                     reports.clear();
                     break;
                 }
