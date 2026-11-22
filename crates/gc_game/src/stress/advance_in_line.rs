@@ -1,6 +1,6 @@
 //! Advancing in line (docs/42-armies-that-march.md, stage 4): six
 //! regiments in line ordered as one group to attack-move through six of
-//! the enemy's standing in line: straight opposite, shifted half a line
+//! the enemy's standing in line: straight opposite, shifted 15 tiles
 //! east, a line of four, a line with its middle pushed forward and a line
 //! slanting away. Each should take the enemy opposite it (where one
 //! stands straight opposite within reach) and none stand by while the
@@ -47,7 +47,7 @@ struct Clash {
     most_across: f32,
     /// The most of ours that took on one foe first.
     crowded: usize,
-    /// When all of ours had a foe.
+    /// When every one of ours had come to blows.
     all_in: Option<u32>,
     /// Soldiers left, ours and theirs, at the limit.
     left: (u32, u32),
@@ -96,6 +96,8 @@ fn clash(real: &Real, report: &mut Report, theirs: &Theirs) -> Clash {
         .collect();
     report.tick(&mut world, &orders);
     let mut first: Vec<Option<RegimentHandle>> = vec![None; ours.len()];
+    // Whether each of ours has come to blows yet.
+    let mut fought = vec![false; ours.len()];
     let mut all_in = None;
     for t in 1..=LIMIT * TICKS_PER_SECOND {
         report.tick(&mut world, &[]);
@@ -104,7 +106,11 @@ fn clash(real: &Real, report: &mut Report, theirs: &Theirs) -> Clash {
                 *f = world.regiments.foe_of(h);
             }
         }
-        if all_in.is_none() && first.iter().all(Option::is_some) {
+        for v in of(&world, &ours) {
+            let k = ours.iter().position(|&h| h == v.handle).unwrap();
+            fought[k] |= v.engaged;
+        }
+        if all_in.is_none() && fought.iter().all(|&f| f) {
             all_in = Some(t);
         }
     }

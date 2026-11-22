@@ -3424,17 +3424,18 @@ impl World {
     fn foe_near(&self, i: usize, hunt: orders::Step) -> Option<RegimentHandle> {
         let regs = &self.regiments;
         let owner = regs.owner[i];
-        let mut reach = self.units[regs.unit[i] as usize]
+        let reach = self.units[regs.unit[i] as usize]
             .range
             .max(orders::HUNT_RADIUS);
         let here = regs.position[i];
         // One advancing in line with a brigade takes the enemy opposite
-        // it, not whichever is nearest: across the way counts double, and
-        // a foe a friend already goes for counts as further by the hunt's
-        // reach for each, so a line takes on a line. And while friends of
-        // its line fight near by, one with nothing in reach looks as far
-        // as its brigade halts for them, so a wing the enemy's line does
-        // not reach wheels in on its flank instead of walking on past.
+        // it, not whichever is nearest: across the way counts double (and
+        // back along it, behind, double too), and a foe friends already
+        // fight or go for counts as further by the hunt's reach for each,
+        // so a line takes on a line. And while friends of its line fight
+        // near by, one with nothing in reach looks as far as its brigade
+        // halts for them, so a wing the enemy's line does not reach wheels
+        // in on its flank instead of walking on past.
         let line = match hunt {
             orders::Step::Move {
                 brigade, target, ..
@@ -3444,49 +3445,62 @@ impl World {
             }
             _ => None,
         };
-        if let Some((_, number)) = line
-            && reach < brigades::HUNT_NEAR
-            && brigades::fights_near(regs, owner, number, here)
-        {
-            reach = brigades::HUNT_NEAR;
-        }
-        let mut best: Option<(Fx, usize)> = None;
-        let slack = reach + self.combat.max_step();
-        self.combat.near_enemies(here, slack, owner, |j| {
-            if !regs.alive[j]
-                || regs.on_wall[j]
-                || regs.morale_state[j].broken()
-                || !self.stances.hostile(owner, regs.owner[j])
-            {
-                return;
-            }
-            let to = regs.position[j] - here;
-            let d = to.length();
-            let mut score = line.map_or(d, |(ahead, _)| {
-                to.dot(ahead).abs() + to.dot(brigades::right_of(ahead)).abs() * 2
+        let look = |reach: Fx| {
+            let mut best: Option<(Fx, usize)> = None;
+            let slack = reach + self.combat.max_step();
+            self.combat.near_enemies(here, slack, owner, |j| {
+                if !regs.alive[j]
+                    || regs.on_wall[j]
+                    || regs.morale_state[j].broken()
+                    || !self.stances.hostile(owner, regs.owner[j])
+                {
+                    return;
+                }
+                let to = regs.position[j] - here;
+                let d = to.length();
+                let mut score = line.map_or(d, |(ahead, _)| {
+                    let along = to.dot(ahead);
+                    let along = if along < Fx::ZERO {
+                        Fx::ZERO - along * 2
+                    } else {
+                        along
+                    };
+                    along + to.dot(brigades::right_of(ahead)).abs() * 2
+                });
+                // (A regiment filed in more than one cell is met more than
+                // once.)
+                if d > reach
+                    || best.is_some_and(|b| b.1 == j || (score, j) >= b)
+                    || !self.vision.sees(owner, j, regs.owner[j])
+                {
+                    return;
+                }
+                if line.is_some() {
+                    let foe = Some(regs.handle(j));
+                    let on = (0..regs.alive.len())
+                        .filter(|&k| {
+                            (regs.attack_target[k] == foe || regs.engaged[k] == foe)
+                                && regs.alive[k]
+                                && regs.owner[k] == owner
+                        })
+                        .count();
+                    score += orders::HUNT_RADIUS * on as i32;
+                }
+                if best.is_none_or(|b| (score, j) < b) {
+                    best = Some((score, j));
+                }
             });
-            // (A regiment filed in more than one cell is met more than
-            // once.)
-            if d > reach
-                || best.is_some_and(|b| b.1 == j || (score, j) >= b)
-                || !self.vision.sees(owner, j, regs.owner[j])
+            best.map(|(_, j)| regs.handle(j))
+        };
+        look(reach).or_else(|| match line {
+            Some((_, number))
+                if reach < brigades::HUNT_NEAR
+                    && brigades::fights_near(regs, owner, number, here) =>
             {
-                return;
+                look(brigades::HUNT_NEAR)
             }
-            if line.is_some() {
-                let foe = Some(regs.handle(j));
-                let on = (0..regs.alive.len())
-                    .filter(|&k| {
-                        regs.attack_target[k] == foe && regs.alive[k] && regs.owner[k] == owner
-                    })
-                    .count();
-                score += orders::HUNT_RADIUS * on as i32;
-            }
-            if best.is_none_or(|b| (score, j) < b) {
-                best = Some((score, j));
-            }
-        });
-        best.map(|(_, j)| regs.handle(j))
+            _ => None,
+        })
     }
 
     /// Where regiment slot `i` falls back to: [`combat::FALL_BACK_TILES`]

@@ -872,12 +872,13 @@ of the enemy's standing in line.
    with a group scores the enemies it can see by how far along the
    group's way they are plus twice how far across it, not by straight
    distance. One a friend already goes for counts as 12 tiles (an
-   attack-move's reach) further for each friend, so a line takes on a
-   line before two pile on one.
+   attack-move's reach) further for each friend fighting it or going for
+   it, so a line takes on a line before two pile on one. One behind (the
+   line has passed it) counts its distance back double too.
 2. **No one stands by.** While friends of its group fight within 25
    tiles (the same test the group halts by, now one function,
-   `brigades::fights_near`), one with nothing in reach looks as far as
-   that, so a wing the enemy's line does not reach wheels
+   `brigades::fights_near`), one with nothing in its own reach looks
+   as far as that, so a wing the enemy's line does not reach wheels
    in on its flank, and one left behind when the group broke up joins
    the fight instead of walking past it.
 
@@ -886,13 +887,13 @@ before.
 
 ### What it measured
 
-| Enemy line | Fought first, of theirs | All six of ours fighting | Soldiers lost in 60 s, theirs / ours |
+| Enemy line | Taken on first, of theirs | All six of ours in melee | Soldiers lost in 60 s, theirs / ours |
 |---|---|---|---|
-| Straight opposite | 6 (was 6) | 13.8 s (was 13.8 s) | 76 / 51 (was 75 / 52) |
-| Middle two 8 tiles forward | 6 (was 2) | 11.2 s (was never) | 80 / 62 (was 32 / 26) |
-| Slanting back 3 a regiment | 5 (was 2) | 14.1 s (was never) | 70 / 48 (was 20 / 16) |
-| Shifted 15 tiles east | 4 (was 4) | 13.8 s (was never) | 51 / 29 (was 64 / 32) |
-| A line of 4 | 4 (was 4) | 13.9 s (was 26.4 s) | 60 of 88 / 39 (was 60 / 40) |
+| Straight opposite | 6 (was 6) | 16.5 s (was 16.5 s) | 76 / 51 (was 75 / 52) |
+| Middle two 8 tiles forward | 6 (was 2) | 16.6 s (was never) | 80 / 62 (was 32 / 26) |
+| Slanting back 3 a regiment | 5 (was 2) | 22.2 s (was never) | 70 / 48 (was 20 / 16) |
+| Shifted 15 tiles east | 4 (was 4) | 22.5 s (was never) | 51 / 29 (was 64 / 32) |
+| A line of 4 | 4 (was 4) | 18.6 s (was 28.8 s) | 60 of 88 / 39 (was 60 / 40) |
 
 Of 132 soldiers a side (the line of 4 has 88). Where main left most of
 the line standing, now all of it fights, and both sides lose more.
@@ -903,9 +904,15 @@ the line standing, now all of it fights, and both sides lose more.
   opposite stands 26 tiles off when the group halts, goes for the next
   one in instead (10 tiles across): the halted body does not walk it on
   toward its own.
-- Shifted half a regiment's width the pairing is a coin toss: three of
-  ours went for the end of the enemy's line and its far end, which no
-  one of ours could reach, was left alone. Pairing the whole line at
-  once (sorting both lines along the way) would settle it, at the cost
+- The wider look checks only sight and distance, like the 12-tile one:
+  across a river or a wall it may pick a foe it has no way to, and stand
+  turned aside until that foe breaks.
+- Computer players give every order to one group the same brigade
+  number, so friends still fighting from that group's last order count
+  as fighting with its new one.
+- Shifted 15 tiles (half the 10 tiles between regiments out of step)
+  the pairing is a coin toss: three of ours went for the end of the
+  enemy's line and its far end, which no one of ours could reach, was
+  left alone. Pairing the whole line at once (sorting both lines along the way) would settle it, at the cost
   of a per-group plan the simulation's memory budget has no room for
   today.
