@@ -27,12 +27,16 @@ const RAFT_TIMBER: [u8; 3] = [130, 110, 84];
 const WRECK_TIMBERS: usize = 2;
 const WRECK_TIMBER: [u8; 3] = [112, 106, 100];
 
-/// The river's surface at `at` (tiles), on a map drawn with water at
-/// `level`: the river's own line over it (its tile's own level on highland
-/// water), raised by the rivers' rise.
-pub fn surface(t: &gc_sim::terrain::Terrain, level: f32, at: gc_fixed::FxVec2) -> f32 {
-    let line = t.water_line_at(at) - i32::from(t.water_level()) + i32::from(t.river_rise(at));
-    level + line as f32 / HEIGHT_UNITS as f32
+/// The river's surface at `at` (tiles) on `map`: the water's own level,
+/// eased between tile centres as it is drawn ([`gc_map::Map::water_at`]),
+/// so a piece riding over a fall slides down it with the water instead of
+/// dropping a step at the tile edge; raised by a flood or dropped by low
+/// water as the map's line is, and by the rivers' rise.
+pub fn surface(map: &gc_map::Map, t: &gc_sim::terrain::Terrain, at: gc_fixed::FxVec2) -> f32 {
+    let (x, y) = (at.x.floor_int(), at.y.floor_int());
+    let lift = t.water_line_at(at) - i32::from(t.tile_level(x, y)) + i32::from(t.river_rise(at));
+    let p = crate::from_fx_vec(at);
+    map.water_at(p.x, p.y) + lift as f32 / HEIGHT_UNITS as f32
 }
 
 /// The trunks to draw for `pieces`, floating at the river's `surface` at
