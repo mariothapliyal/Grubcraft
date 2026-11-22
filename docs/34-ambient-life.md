@@ -218,7 +218,7 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Ruins when a hamlet is raided (the simulation has no raiding yet), a palisade round a Town, chimney smoke and lamp light in the evening, and hamlets that grow with trading.
+- Ruins from raiding (the simulation has no raiding yet; a fight in a hamlet ruins it on screen since stage 12), a palisade round a Town, chimney smoke and lamp light in the evening, and hamlets that grow with trading.
 
 ## Stage 5b as built: the villagers
 
@@ -253,7 +253,7 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Crows perched on corpses, and a crow that takes a bite (one now perches on a fallen standard: stage 9).
+- A crow that takes a bite (one perches on a fallen standard since stage 9, the others on the bodies since stage 12).
 
 ## Stage 6b as built: caravans between hamlets
 
@@ -276,7 +276,7 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Carts and porters on the road from a faction base's seep to its granary (stage 3), a worn road where they go, a cart's wheels easing to rest when it stops (they snap to the Idle pose, at most 22 degrees), other lands' fauna (the Brood's, the Choir's), and crows perched on corpses.
+- Carts and porters on the road from a faction base's seep to its granary (stage 3), a worn road where they go, a cart's wheels easing to rest when it stops (they snap to the Idle pose, at most 22 degrees) and other lands' fauna (the Brood's, the Choir's); crows on the bodies came in stage 12.
 
 ## Stage 7 as built: butterflies, moths and dragonflies
 
@@ -296,7 +296,7 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Ripples under the dragonflies, fish that are seen (the rises are only their rings), insects that shy from armies and soldiers (they ignore everyone), butterflies on particular flowers, other lands' fauna (the Brood's, the Choir's), and crows on corpses.
+- Ripples under the dragonflies, fish that are seen (the rises are only their rings), insects that shy from armies and soldiers (they ignore everyone), butterflies on particular flowers and other lands' fauna (the Brood's, the Choir's).
 
 ## Stage 8 as built: fish rises
 
@@ -398,3 +398,24 @@ Workers' real traffic already wears paths, so nothing was added: workers are reg
 ### Not yet
 
 - Herons that fish on a river's reach rather than only fen land, a heron's call, jackals that shadow an army's dead, boar that charge, and any of the three on a painted map's other lands (a jackal on the Highland, say). The heron's flight is a straight low line; it does not climb over trees or turn to a river.
+
+## Stage 12 as built: crows on the bodies, ruined hamlets
+
+*2026-11-22. Game only, a picture: nothing in the simulation, nothing hashed, saved or sent (`gc_sim`, `gc_net`, `gc_replay` and `gc_ai` are untouched). No new model: the crow of stage 6 and the hamlet models of 5a.*
+
+### What a player sees
+
+- **Crows on the bodies.** The crows that come to a wiped-out regiment no longer only peck at the ground between the dead: after the one on the standard's stub, each lands on a body of its own (the nearest the flock's centre first, up to thirteen) and stands on its chest pecking. The rest of a big flock stand on the ground among them as before. They rise with the flock when soldiers come near and go back to the same bodies. A body that sinks away to make room for newer dead (a very big battle) leaves its crow standing on the ground where it lay.
+- **Ruined hamlets.** A Village, Town or Bazaar where a fight leaves twelve of the fallen among its houses (the dead the viewer has seen) is ruined: its cottages and barn are burnt out, charred black but still standing, and smoulder for three minutes (a thin smoke from each, dying down); its haystacks are burnt to ash, its well scorched, its wattle fences knocked flat and its market stalls tipped over. Its people hide indoors and do not come out again, and none are found there by a camera that comes later. About fourteen seconds on, crows come to roost: one on the ridge of each house and the barn (six at most) and two on the green. They stay for the rest of the match, put up and circling whenever soldiers come within a tile and a half of the hamlet's edge and settling back on the same roofs once they have gone. A house a player later builds over sends its crow down to the green. A viewer joining an online match late sees a hamlet ruined where the dead of an earlier fight lie (it is ruined at the first count after catching up, not during it).
+
+### How it works
+
+- `aftermath::Flock` has `perches` (a place and a height over the ground: bodies on a battlefield at `BODY_TOP` 0.16, roofs on a roost), a `spread` (how far out its crows sit: 3.5 on a battlefield, the hamlet's reach on a roost, which with `SCATTER_BEYOND` 1.5 is how near soldiers put them up; the old 5 tiles on a battlefield) and `roost`. `bird` gives crow 0 of a battlefield flock the standard as before and crow `k` the `k - 1`th perch (a roost's crow `k` the `k`th); a perched crow does not hop. Roosts are their own list (`Aftermath::roosts`), never expire and are not merged with battlefield flocks.
+- `Aftermath::bodies(at, lying)` is called right after `wiped`: `main.rs`'s `lying_bodies` gives the bodies at rest (not thrown, not sinking), each where it comes to rest (`Corpse::rest`, so a man still falling or thrown counts where he will lie) at `body_at`, 0.3 tiles behind the feet the corpse is placed by, as the soldier falls back. Bodies are only handed to a flock whose crows have not come yet (none jumps from the ground onto a body), and never for workers. `Running::tend_ruins` counts the dead once a second (`RUIN_CHECK`): `keep_bodies` sets a perch to the ground when no corpse lies within 0.35 of it.
+- In the same once-a-second count, while any hamlet stands, `Hamlets::ruin_where(lying)` gets the bodies that lie in a standing hamlet (`in_standing`) on tiles the viewer sees: a site is ruined when `RUIN_DEAD` (12) of them lie within its reach (`Hamlets::age` runs the smoulder clocks every frame). `ruin` sets the site's models' tint and lean (fences 150 to 240, stalls 200 to 255, each a random way); `roofs` gives each house's and barn's top (its model height from the scenery pack) for `Aftermath::roost`, and `smouldering` the houses for `Running::tend_ruins`, which puts hearth smoke at the side of each (clear of the crow on the ridge) while it is on screen and in sight. `Villagers::advance` keeps a ruined site's group in alarm (indoors) and makes no group at one.
+- Tests: crows stand on the bodies they were given and none beyond `DEAD_RADIUS`, the standard's crow stays on its stub, a sunk body leaves its crow on the ground; a roost has a crow on each roof at its height and two more, scatters when soldiers come to its edge and is still there ten flock lifetimes on, and a wipe-out in a ruin makes its own flock; twelve dead ruin a hamlet once and only that one, its models are charred in place, fences and stalls down, its roofs at the model's height (none built over), and it smoulders for three minutes; a ruined hamlet's people go indoors for good and none are made there.
+
+### Not yet
+
+- Caravans still go to and from a ruined hamlet, a ruin is never rebuilt, and the sim has no raiding (a ruin is only the picture of a fight there). Crows on a ruin's roof ridge sit at its middle (the top of the model), not along the ridge; a crow that tugs at a body rather than pecks; caws for the soundscape.
+

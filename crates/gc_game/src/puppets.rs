@@ -892,6 +892,10 @@ impl Fallen {
 pub struct Corpse {
     pub pos: Vec2,
     pub facing: Vec2,
+    /// Where he comes to rest, and facing which way, once his fall (and any
+    /// throw or recoil) is over.
+    pub rest: Vec2,
+    pub rest_facing: Vec2,
     pub owner: u8,
     pub unit: u16,
     /// His look, as he had it standing ([`Soldier::look`]).
@@ -2765,9 +2769,12 @@ impl Puppets {
         let corpse = move |f: &Fallen, sink: f32| {
             let age = self.time - f.fell;
             let (pos, facing, lift) = f.pose(age);
+            let (rest, rest_facing, _) = f.pose(f32::INFINITY);
             Corpse {
                 pos,
                 facing,
+                rest,
+                rest_facing,
                 lift,
                 owner: f.player(),
                 unit: f.unit,

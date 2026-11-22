@@ -328,6 +328,9 @@ const COMMANDER_OUT: f32 = 160.0;
 const COMMANDER_BLOCK_HEIGHT: f32 = 0.6;
 const COMMANDER_POLE: [f32; 3] = [0.3, 5.0, 0.3];
 const COMMANDER_FLAG: [f32; 3] = [2.6, 1.8, 0.25];
+/// How often the dead are counted for ruined hamlets and the crows'
+/// bodies, in seconds of effects time.
+const RUIN_CHECK: f32 = 1.0;
 /// An army's one standard (docs/42, "Standing armies"): a tall pole at
 /// its middle with a wide flag, and a bar on the flag for each step of its
 /// number (the key it is on).
@@ -368,6 +371,15 @@ fn push_standard(
         lift,
     });
     (mid, lift)
+}
+
+/// Where the bodies of the fallen lie on the field for a crow to stand on,
+/// each where it comes to rest (a man still falling or thrown counts where
+/// he will lie), leaving out those sinking to make room for newer dead.
+fn lying_bodies(puppets: &Puppets) -> impl Iterator<Item = Vec2> + '_ {
+    (puppets.corpses())
+        .filter(|c| c.sink == 0.0)
+        .map(|c| aftermath::body_at(c.rest, c.rest_facing))
 }
 
 /// Ground height for the cameras: the terrain, or the water's surface where
@@ -991,6 +1003,9 @@ struct Running {
     gate_swings: buildings::GateSwings,
     /// Fallen standards, crows and grime (see [`aftermath`]).
     aftermath: aftermath::Aftermath,
+    /// Seconds since the dead were last counted for ruins and the crows'
+    /// bodies ([`Running::tend_ruins`]).
+    ruin_clock: f32,
     /// How far `--siege` has staged its siege: 0 to place it, 1 to order
     /// the attacks.
     siege_scene: Option<u8>,
@@ -1995,6 +2010,7 @@ impl App {
             siege: siege::Siege::new(capacities.regiments as usize),
             gate_swings: buildings::GateSwings::default(),
             aftermath: aftermath::Aftermath::default(),
+            ruin_clock: 0.0,
             siege_scene: None,
             gate_scene: None,
             wall_scene: None,
@@ -5065,6 +5081,11 @@ impl Running {
                 .filter(|r| reveal || world.sees(viewer, r.handle))
                 .map(|r| from_fx_vec(r.position)),
         );
+        self.tend_ruins(
+            dt.as_secs_f32() * fx_speed,
+            live && !viewing && !self.commander,
+            &cull,
+        );
         // Blows behind the menu, in Commander View (where the soldiers are
         // blocks) and under the unit viewer show nothing, and don't pile up.
         if viewing || self.commander || !live {
@@ -6590,6 +6611,7 @@ impl Running {
         self.arrows = field::Arrows::new(field::MAX_STUCK);
         self.siege.clear();
         self.aftermath.clear();
+        self.ruin_clock = 0.0;
         self.ambient.walkers.clear();
         self.ambient.wildlife.clear();
         self.ambient.birds.clear();
@@ -7418,6 +7440,8 @@ impl Running {
                             .map(|(h, _)| h);
                         self.aftermath
                             .wiped(regiment, at, facing, tint, dead, victor);
+                        // The crows that come stand on the bodies.
+                        (self.aftermath).bodies(regiment, at, lying_bodies(&self.puppets));
                     }
                 }
                 Event::Contact { regiment, foe } => {
@@ -9063,6 +9087,78 @@ impl Running {
                 },
                 part: self.buildings.town_part(s.building),
             });
+        }
+    }
+
+    /// What the dead leave in the land, `dt` seconds of effects time on:
+    /// once a second, a hamlet with enough of the fallen the viewer has seen
+    /// among its houses is ruined and crows come to roost on it, and a crow
+    /// whose body has sunk away (to make room for newer dead) comes down to
+    /// the ground. Then, when `showing`, the smoke of the ruins that still
+    /// smoulder, on screen and in sight.
+    fn tend_ruins(&mut self, dt: f32, showing: bool, cull: &gc_render::Cull) {
+        self.ambient.hamlets.age(dt);
+        self.ruin_clock += dt;
+        let due = self.ruin_clock >= RUIN_CHECK;
+        let ruins = due && self.ambient.hamlets.any_standing();
+        let bodies = due && self.aftermath.on_bodies();
+        if due {
+            self.ruin_clock = 0.0;
+        }
+        if due {
+            // A burnt house built over since is hidden: its crow goes to the
+            // green.
+            let scenery = &self.scenery;
+            (self.aftermath)
+                .unroof(|p| scenery.occupied_at((p.x.floor() as i32, p.y.floor() as i32)));
+        }
+        if ruins || bodies {
+            let lying: Vec<Vec2> = lying_bodies(&self.puppets).collect();
+            if bodies {
+                self.aftermath.keep_bodies(&lying);
+            }
+            // A viewer catching up on an online match ruins nothing while
+            // the fights already played go by (the dead still lie there
+            // after, so the first count once it has caught up does it).
+            if ruins && !(self.online.is_some() && self.menu.net().catching_up()) {
+                // Only the dead in a hamlet still standing count, and only
+                // those the viewer has seen.
+                let (reveal, fog) = (self.reveal_all, &self.fog);
+                let hamlets = &self.ambient.hamlets;
+                let seen: Vec<Vec2> = (lying.into_iter())
+                    .filter(|&p| hamlets.in_standing(p))
+                    .filter(|p| reveal || fog.sees_tile((p.x.floor() as i32, p.y.floor() as i32)))
+                    .collect();
+                let (map, scenery) = (&self.heightmap, &self.scenery);
+                for i in self.ambient.hamlets.ruin_where(&seen) {
+                    let hamlets = &self.ambient.hamlets;
+                    let roofs = hamlets.roofs(
+                        i,
+                        |m| scenery.height_of(m),
+                        |p| ground_of(map, p),
+                        |t| scenery.occupied_at(t),
+                    );
+                    let (centre, reach) = (hamlets.centre(i), hamlets.reach(i));
+                    self.aftermath.roost(centre, reach, roofs.into_iter());
+                }
+            }
+        }
+        if !showing || dt <= 0.0 {
+            return;
+        }
+        let (reveal, fog) = (self.reveal_all, &self.fog);
+        let hamlets = &self.ambient.hamlets;
+        for i in 0..hamlets.len() {
+            for (at, r, done) in hamlets.smouldering(i, |t| self.scenery.occupied_at(t)) {
+                let tile = (at.x.floor() as i32, at.z.floor() as i32);
+                if !cull.on_screen(at, r + 4.0) || !(reveal || fog.sees_tile(tile)) {
+                    continue;
+                }
+                // From the charred wall to one side, so a crow on the
+                // ridge sits clear of it, dying down as it burns out.
+                let side = Vec3::new(r * 0.45, 0.6, r * 0.2);
+                self.effects.hearth(at + side, r * 0.5 * (1.0 - done), dt);
+            }
         }
     }
 
