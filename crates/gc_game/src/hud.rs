@@ -561,7 +561,7 @@ impl Running {
         let (mut unit, mut same, mut icon, mut same_icon) = (None, true, Icon::Sword, true);
         let mut color = crate::color_of(&self.parties, side);
         let mut ground = "";
-        let mut general = false;
+        let (mut general, mut first) = (false, None);
         let (mut orders, mut why, mut queued) = (Orders::None, 0u16, 0u8);
         let led = self
             .world
@@ -575,7 +575,7 @@ impl Running {
             let stats = &self.units.stats[r.unit as usize];
             let this = troop_icon(stats);
             if n == 0 {
-                (unit, icon) = (Some(r.unit), this);
+                (unit, icon, first) = (Some(r.unit), this, Some(h));
                 color = crate::color_of(&self.parties, r.owner);
                 ground = standing_word(&self.world, &r);
             } else {
@@ -632,6 +632,10 @@ impl Running {
             queued: if n == 1 { queued } else { 0 },
             why,
             shapes: &[],
+            // A hero alone: its hit points.
+            hero_hp: first
+                .filter(|&h| n == 1 && self.world.hero_of(h).is_some())
+                .and_then(|h| self.world.health_of(h)),
         };
         Some((name, selection))
     }
