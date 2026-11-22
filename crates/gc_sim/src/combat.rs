@@ -356,8 +356,10 @@ fn ground_ends(
 /// would lock onto, only gets away after the tick it was ordered to fall
 /// back: on that tick its foes still hold it, for their parting blow.
 fn parted(regs: &Regiments, blocks: &[Block], i: usize, j: usize) -> bool {
-    let backs_away =
-        |k: usize, from: usize| blocks[k].side_facing(blocks[from].centre) == Side::Front;
+    // A hero cutting its way out gets away whichever side its foes are on.
+    let backs_away = |k: usize, from: usize| {
+        regs.breaking_out(k) || blocks[k].side_facing(blocks[from].centre) == Side::Front
+    };
     (regs.falling_back[i] > 0 && backs_away(i, j))
         || ((1..FALL_BACK_TICKS).contains(&regs.falling_back[j]) && backs_away(j, i))
 }
@@ -2968,7 +2970,12 @@ impl Combat {
             regs.pressed[j] = regs.pressed[j].saturating_add(shove);
             // A veteran's blows cut deeper (see [`veterancy`]); they push
             // no harder.
-            let landed = landed * veterancy::damage_percent(regs, i) / 100;
+            let mut landed = landed * veterancy::damage_percent(regs, i) / 100;
+            // A hero stands out in the press: more blows find it than its
+            // one-man frontage lets through (they push it no harder).
+            if regs.hero_level[j] > 0 {
+                landed = landed * crate::heroes::HERO_EXPOSED_PERCENT / 100;
+            }
             let blows = (self.tell).then_some(&mut self.blows);
             duel(
                 regs,
@@ -3876,6 +3883,11 @@ fn duel(
                 0 => Outcome::Wounded,
                 men => {
                     veterancy::credit(regs, units, i, regs.unit[j], men, false);
+                    // A hero's kills strike fear into the ranks it cuts.
+                    if regs.hero_level[i] > 0 {
+                        let points = crate::heroes::HERO_SHOCK.saturating_mul(men as i16);
+                        crate::morale::shake(regs, j, points, crate::morale::WHY_HERO);
+                    }
                     if regs.models[j] > 0 {
                         line = Line::of(regs, units, j, side, theirs_last_file);
                     }

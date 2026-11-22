@@ -2598,6 +2598,7 @@ mod tests {
             (why::FIRE, m::WHY_FIRE),
             (why::WATER, m::WHY_WATER),
             (why::CHAMPION, m::WHY_CHAMPION),
+            (why::HERO, m::WHY_HERO),
         ] {
             assert_eq!(ui, sim);
         }

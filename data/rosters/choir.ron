@@ -696,7 +696,7 @@
         (
             role: "Economy, support",
             hired_at: "Sanctum of Echoes",
-            per_level: (hp: 30, melee_damage: 2),
+            per_level: (hp: 27, melee_damage: 2),
             flags: [Crystal],
             abilities: [
                 (
@@ -736,14 +736,14 @@
                 name: "The Maestro",
                 faction: Choir,
                 models: 1,
-                hp_per_model: 300,
+                hp_per_model: 280,
                 files: 1,
                 speed: 3.5,
                 turn_rate: 180.0,
                 file_spacing: 1.2,
                 rank_spacing: 1.2,
                 melee_attack: 40,
-                melee_defence: 45,
+                melee_defence: 40,
                 melee_damage: 14,
                 charge_bonus: 0,
                 never_routs: true,
@@ -752,7 +752,7 @@
         (
             role: "Damage",
             hired_at: "Sanctum of Echoes",
-            per_level: (hp: 32, melee_damage: 1, missile_damage: 2),
+            per_level: (hp: 29, melee_damage: 1, missile_damage: 2),
             flags: [Crystal, DirectFire, AntiAir],
             abilities: [
                 (
@@ -792,14 +792,14 @@
                 name: "The Refractor",
                 faction: Choir,
                 models: 1,
-                hp_per_model: 320,
+                hp_per_model: 290,
                 files: 1,
                 speed: 3.75,
                 turn_rate: 200.0,
                 file_spacing: 1.2,
                 rank_spacing: 1.2,
                 melee_attack: 45,
-                melee_defence: 40,
+                melee_defence: 35,
                 melee_damage: 10,
                 charge_bonus: 0,
                 never_routs: true,
@@ -809,7 +809,7 @@
         (
             role: "Control",
             hired_at: "Sanctum of Echoes",
-            per_level: (hp: 38, melee_damage: 2),
+            per_level: (hp: 34, melee_damage: 2),
             flags: [Crystal],
             abilities: [
                 (
@@ -849,14 +849,14 @@
                 name: "The Hollow Bell",
                 faction: Choir,
                 models: 1,
-                hp_per_model: 360,
+                hp_per_model: 330,
                 files: 1,
                 speed: 3.5,
                 turn_rate: 160.0,
                 file_spacing: 1.4,
                 rank_spacing: 1.4,
                 melee_attack: 45,
-                melee_defence: 50,
+                melee_defence: 45,
                 melee_damage: 16,
                 charge_bonus: 0,
                 never_routs: true,

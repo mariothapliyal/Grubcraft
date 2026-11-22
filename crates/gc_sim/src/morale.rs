@@ -116,6 +116,8 @@ pub const WHY_FIRE: u16 = 1 << 9;
 pub const WHY_WATER: u16 = 1 << 10;
 /// Its side's champion lost a duel.
 pub const WHY_CHAMPION: u16 = 1 << 11;
+/// A hero cut its soldiers down (see [`crate::heroes::HERO_SHOCK`]).
+pub const WHY_HERO: u16 = 1 << 12;
 /// The steady pressures, recomputed at every check; the rest are knocks.
 /// Flank and rear blows count as knocks: a regiment soon turns to face
 /// them, but the nerve they cost stays spent.

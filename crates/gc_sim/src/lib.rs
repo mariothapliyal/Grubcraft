@@ -140,7 +140,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 96;
+pub const SIM_VERSION: u32 = 97;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -2420,8 +2420,17 @@ impl World {
                     hunt,
                     brigade,
                 };
+                // A hero told to go elsewhere while it fights cuts its way
+                // out (see `heroes`); anyone else marches on once free.
+                let hero = self.hero_of(regiment).is_some();
+                let held = self.regiments.resolve(regiment).is_some_and(|i| {
+                    self.regiments.engaged[i].is_some() || self.regiments.breaking_out(i)
+                });
                 let done = self.march(regiment, step);
                 if done {
+                    if hero && held && !hunt {
+                        self.regiments.break_out(regiment);
+                    }
                     self.regiments.fresh(regiment, hunt.then_some(step));
                 }
                 done
