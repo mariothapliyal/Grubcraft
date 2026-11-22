@@ -176,8 +176,15 @@ struct MoveConfig {
     /// The glTF animation's name.
     anim: String,
     act: String,
-    #[serde(default = "any")]
+    /// Left out (empty), any.
+    #[serde(default)]
     weapon: String,
+    /// In place of `weapon`, several the move is made for alike (a plain
+    /// death a katana man and a yari man play too, beside their own, since
+    /// the picker keeps the moves made for a man's weapon over those for
+    /// any): one move per weapon, its frames stored once.
+    #[serde(default)]
+    weapons: Vec<String>,
     #[serde(default = "any")]
     side: String,
     /// The joints it plays on when layered.
@@ -230,6 +237,30 @@ fn named<T: Copy + std::fmt::Debug>(all: &[T], name: &str, what: &str) -> Result
 }
 
 impl MoveConfig {
+    /// Its tags, once per weapon it is made for (`weapons`, else `weapon`).
+    fn tag_sets(&self) -> Result<Vec<rig::Tags>, String> {
+        let tags = self.tags()?;
+        if self.weapons.is_empty() {
+            return Ok(vec![tags]);
+        }
+        let mut seen = self.weapons.clone();
+        seen.sort();
+        seen.dedup();
+        if !self.weapon.is_empty() || self.pair.is_some() || seen.len() != self.weapons.len() {
+            return Err(format!(
+                "move {:?}: weapons is in place of weapon, names each once, and is not for a kill",
+                self.anim
+            ));
+        }
+        self.weapons
+            .iter()
+            .map(|w| {
+                let weapon = named(&gc_assets::anim::Weapon::ALL, w, "weapon")?;
+                Ok(rig::Tags { weapon, ..tags })
+            })
+            .collect()
+    }
+
     fn tags(&self) -> Result<rig::Tags, String> {
         use gc_assets::anim::{ADDITIVE, Act, LOOPS, Mask, Side, Weapon};
         let act = named(&Act::ALL, &self.act, "act")?;
@@ -287,7 +318,14 @@ impl MoveConfig {
             .unwrap_or(matches!(act, Act::Idle | Act::Walk | Act::Run | Act::Guard));
         Ok(rig::Tags {
             act,
-            weapon: named(&Weapon::ALL, &self.weapon, "weapon")?,
+            weapon: named(
+                &Weapon::ALL,
+                match self.weapon.as_str() {
+                    "" => "Any",
+                    w => w,
+                },
+                "weapon",
+            )?,
             side: named(&Side::ALL, &self.side, "side")?,
             mask: named(&Mask::ALL, &self.mask, "mask")?,
             flags: if loops { LOOPS } else { 0 } | if self.additive { ADDITIVE } else { 0 },
@@ -1200,8 +1238,9 @@ fn bake_model(
                     None => (&src, None),
                 };
                 for m in moves {
-                    let tags = m.tags()?;
-                    let mut globals = sampled_move(m, tags, moves_src, to_model, &skel, &joints)?;
+                    let tag_sets = m.tag_sets()?;
+                    let mut globals =
+                        sampled_move(m, tag_sets[0], moves_src, to_model, &skel, &joints)?;
                     // A hand carries a held joint in a library's move that
                     // does not key it; one that does moves it as keyed.
                     let carried: Vec<_> = match to_model {
@@ -1220,7 +1259,9 @@ fn bake_model(
                     for frame in &mut globals {
                         carry(frame, &carried, &rig.parent);
                     }
-                    posed.push(posed_move(m, tags, globals, pose_frames)?);
+                    for &tags in &tag_sets {
+                        posed.push(posed_move(m, tags, globals.clone(), pose_frames)?);
+                    }
                 }
             }
             Some(posed)
@@ -2201,6 +2242,34 @@ mod tests {
                 .unwrap_err()
                 .contains("clip Attack2")
         );
+    }
+
+    #[test]
+    fn a_move_made_for_several_weapons_is_one_per_weapon() {
+        use gc_assets::anim::Weapon;
+        let weapons = |text: &str| {
+            ron::from_str::<MoveConfig>(text)
+                .unwrap()
+                .tag_sets()
+                .map(|t| t.iter().map(|t| t.weapon).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            weapons(r#"(anim: "D", act: "Death", weapons: ["Any", "Spear"])"#),
+            Ok(vec![Weapon::Any, Weapon::Spear])
+        );
+        assert_eq!(
+            weapons(r#"(anim: "D", act: "Death", weapon: "Spear")"#),
+            Ok(vec![Weapon::Spear])
+        );
+        // In place of `weapon`, and never for a kill, whose halves pair.
+        for bad in [
+            r#"(anim: "D", act: "Death", weapon: "Spear", weapons: ["Any"])"#,
+            r#"(anim: "D", act: "Death", weapon: "Any", weapons: ["Spear"])"#,
+            r#"(anim: "D", act: "Death", weapons: ["Spear", "Spear"])"#,
+            r#"(anim: "K", act: "Killed", contact: Some(0.4), pair: Some("P"), weapons: ["Any"])"#,
+        ] {
+            assert!(weapons(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

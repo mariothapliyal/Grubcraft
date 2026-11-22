@@ -265,11 +265,15 @@ const KILL_SIZES: core::ops::RangeInclusive<f32> = 0.9..=1.1;
 /// Ember men's metres): a yari's tip is 3.3 m from the hands that hold it, so
 /// it stabs from much further out than a katana. These are where the
 /// finishers in `ember-men-finishers-1.glb` were made to strike
-/// (`design/faction-looks/fight-library/finishers/FINISHERS.md`); a finisher
-/// made at another reach needs its own entry here.
+/// (`design/faction-looks/fight-library/finishers/FINISHERS.md`), and the
+/// Oni-Bound's kanabo in `oni-kanabo-1.glb` (`kanabo-1/NOTES.md`; its
+/// skeleton is the men's, drawn half as big again). These hold for the
+/// Ember men's rig only: a finisher made at another reach, or on another
+/// rig, needs its reach in the pack, as a kill's is.
 fn finish_reach(weapon: Weapon) -> f32 {
     match weapon {
         Weapon::Spear => 3.38,
+        Weapon::AxeMace => 1.0,
         _ => 0.91,
     }
 }
@@ -511,8 +515,10 @@ impl Clips {
     /// Where the chest of a man of `model` lying dead (or knocked down,
     /// which ends the same way) is from his position, in tiles at the
     /// model's size: `y` ahead along the facing he fell with (negative when
-    /// he fell on his back: about 0.7 tiles behind his feet for an Ember man,
-    /// more for a bigger one), `x` to his left. `look` is his, as for
+    /// he fell on his back: about 0.7 tiles behind his feet in an Ember
+    /// man's own death, more for a bigger one, 0.3 in the library's, which
+    /// keep the hips on the spot; positive in its fall onto the face), `x` to
+    /// his left. `look` is his, as for
     /// [`Clips::death`]. A finisher strikes there. `None` for a model with no
     /// death move or not posed from a skeleton.
     pub fn lying_chest(&self, model: usize, look: u8) -> Option<glam::Vec2> {
@@ -562,6 +568,11 @@ impl Clips {
         }
     }
 
+    /// The death a man of `model` with `look` dies, if it has any.
+    fn die(&self, model: usize, look: u32) -> Option<MoveClip> {
+        nth(&self.by_model.get(model)?.dies, by_look(look, DEATH_SALT))
+    }
+
     /// His death move (by `look`) at the frame `frame` picks, held on its
     /// first and last frames, or for a model without one its idle pose,
     /// laid flat when `down`.
@@ -572,7 +583,7 @@ impl Clips {
         frame: impl FnOnce(&MoveClip) -> f32,
         down: bool,
     ) -> Option<(Pose, bool)> {
-        match nth(&self.by_model.get(model)?.dies, by_look(look, DEATH_SALT)) {
+        match self.die(model, look) {
             Some(die) => Some((die.at_frame(frame(&die)), false)),
             None => Some((self.pose(model, Action::Idle, 0.0)?, down)),
         }
@@ -763,14 +774,22 @@ mod tests {
                 }
             }
             let own = &clips.by_model[m];
-            assert_eq!(rows(own.dies.first().copied()), old(m, &[ClipKind::Die]));
+            // A man's own death stays among his deaths, beside the library's
+            // made for any man, unless he holds a weapon that has its own.
+            let die = old(m, &[ClipKind::Die]);
+            if !own.dies.iter().any(|&d| made_for(m, Some(d))) {
+                assert!(
+                    die.is_none_or(|die| own.dies.iter().any(|d| (d.first_row, d.frames) == die)),
+                    "{m}"
+                );
+            }
             if !made_for(m, own.parry) {
                 assert_eq!(rows(own.parry), old(m, old_candidates(Action::Attack)));
             }
-            assert_eq!(
-                rows(own.staggers.first().copied()),
-                old(m, old_candidates(Action::Hit))
-            );
+            let stagger = own.staggers.first().copied();
+            if !made_for(m, stagger) {
+                assert_eq!(rows(stagger), old(m, old_candidates(Action::Hit)));
+            }
         }
     }
 
@@ -788,16 +807,18 @@ mod tests {
         assert_eq!(weapon("Yari Ashigaru", Action::Attack), spear);
         let parry = clips.by_model[by("Yari Ashigaru")].parry.unwrap();
         assert_eq!((parry.act, parry.weapon), (Act::Parry, Weapon::Spear));
-        // Walking is still the model's own clip, and a kanabo, with no moves
-        // made for it, keeps the Oni-Bound's own attack.
+        // Walking is still the model's own clip; the Oni-Bound swings its
+        // kanabo two-handed.
         assert_eq!(
             weapon("Katana Samurai", Action::Walk),
             Some((Act::Walk, Weapon::Any))
         );
         assert_eq!(
             weapon("Oni-Bound", Action::Attack),
-            Some((Act::Attack, Weapon::Any))
+            Some((Act::Attack, Weapon::AxeMace))
         );
+        let parry = clips.by_model[by("Oni-Bound")].parry.unwrap();
+        assert_eq!((parry.act, parry.weapon), (Act::Parry, Weapon::AxeMace));
     }
 
     #[test]
@@ -889,8 +910,11 @@ mod tests {
         // in tiles.
         assert!((0.4..0.7).contains(&katana.reach), "{}", katana.reach);
         assert!(spear.reach > 2.0 * katana.reach, "{}", spear.reach);
-        // None made for a kanabo, nor for the other factions yet.
-        assert_eq!(fin("Oni-Bound", 0), None);
+        // The Oni-Bound pounds his kanabo down from about a man's length,
+        // being half as big again; none are made for the other factions yet.
+        let oni = fin("Oni-Bound", 0).unwrap();
+        assert_eq!(oni.strike.weapon, Weapon::AxeMace);
+        assert!((0.6..1.2).contains(&oni.reach), "{}", oni.reach);
         assert_eq!(fin("Bone Pikes", 0), None);
     }
 
@@ -989,16 +1013,23 @@ mod tests {
                 assert_eq!(p.kill.frames, p.killed.frames);
             }
         }
-        // The two katana kills both come up as the seed varies.
-        let rows: std::collections::BTreeSet<u32> = (0..8)
+        // The five katana kills all come up as the seed varies.
+        let rows: std::collections::BTreeSet<u32> = (0..5)
             .map(|seed| clips.kill_pair(by("Katana Samurai"), by("Yari Ashigaru"), seed))
             .map(|p| p.unwrap().kill.first_row)
             .collect();
-        assert_eq!(rows.len(), 2);
-        // A kanabo has none made for it, and the Oni-Bound, on the men's rig
-        // but half as big again, is too big for a kill made for two men.
-        assert_eq!(kill("Oni-Bound", "Yari Ashigaru"), None);
+        assert_eq!(rows.len(), 5);
+        // The Oni-Bound, on the men's rig but half as big again, kills a man
+        // with its kanabo (made on a man two thirds its size), and is too
+        // big for a kill made for two men.
+        let oni = kill("Oni-Bound", "Yari Ashigaru").unwrap();
+        assert_eq!(
+            (oni.kill.act, oni.kill.weapon),
+            (Act::Kill, Weapon::AxeMace)
+        );
+        assert!(kill("Oni-Bound", "Tuner").is_some());
         assert_eq!(kill("Katana Samurai", "Oni-Bound"), None);
+        assert_eq!(kill("Oni-Bound", "Oni-Bound"), None);
     }
 
     #[test]
@@ -1006,41 +1037,45 @@ mod tests {
         let models = load().unwrap();
         let clips = Clips::new(&models);
         let by = |name| models.by_name(name);
-        // Unit types 0 to 3: a katana man, a spearman, an Oni-Bound, and a
-        // type with no model.
+        // Unit types 0 to 4: a katana man, a spearman, an Oni-Bound, a
+        // type with no model and a Bone Pike.
         let units = [
             by("Katana Samurai"),
             by("Yari Ashigaru"),
             by("Oni-Bound"),
             None,
+            by("Bone Pikes"),
         ];
         let kills = clips.kills_of(&units);
-        // Both katana kills are there to pick, under their indices.
-        let rows: std::collections::BTreeSet<u32> = (0..10)
-            .filter_map(|n| kills.pick(0, 1, n as f32 / 10.0))
+        // All five katana kills are there to pick, under their indices.
+        let rows: std::collections::BTreeSet<u32> = (0..40)
+            .filter_map(|n| kills.pick(0, 1, n as f32 / 40.0))
             .map(|(k, _)| clips.pairs[usize::from(k)].kill.first_row)
             .collect();
-        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(rows.len(), 5, "{rows:?}");
         let seeded = |seed| clips.kill_pair(units[0].unwrap(), units[1].unwrap(), seed);
-        assert!((0..2).all(|seed| rows.contains(&seeded(seed).unwrap().kill.first_row)));
+        assert!((0..5).all(|seed| rows.contains(&seeded(seed).unwrap().kill.first_row)));
         assert!(kills.pick(1, 0, 0.5).is_some());
         assert!(kills.pick(1, 1, 0.5).is_some());
-        // None on or by the Oni-Bound, or a type without a model.
-        for (k, v) in [(0, 2), (2, 1), (3, 1), (0, 3)] {
+        // The Oni-Bound kills a man with its kanabo.
+        assert!(kills.pick(2, 1, 0.5).is_some());
+        // None on the Oni-Bound, or by or on a type without a model.
+        for (k, v) in [(0, 2), (3, 1), (0, 3)] {
             assert_eq!(kills.pick(k, v, 0.5), None, "{k} on {v}");
         }
-        // Katana and spear men finish a man on the ground from their own
-        // finishers' reach; the Oni-Bound has none and bends to strike.
+        // Katana, spear and kanabo men finish a man on the ground from their
+        // own finishers' reach; a Bone Pike has none and bends to strike.
         let reach = |u: usize| clips.finisher(units[u].unwrap(), 0).unwrap().reach;
         assert_eq!(kills.finish_gap(0), reach(0));
         assert_eq!(kills.finish_gap(1), reach(1));
+        assert_eq!(kills.finish_gap(2), reach(2));
         assert!(kills.finish_gap(1) > kills.finish_gap(0));
         // His bent swing keeps his stand-off: he is drawn forward onto his
-        // feet, a big weapon having baked him behind his position.
-        assert!(kills.stand_off(2) > 0.3);
+        // feet, a pike having baked him behind his position.
+        assert!(kills.stand_off(4) > 0.3);
         assert_eq!(
-            kills.finish_gap(2),
-            crate::puppets::FINISH_GAP + kills.stand_off(2)
+            kills.finish_gap(4),
+            crate::puppets::FINISH_GAP + kills.stand_off(4)
         );
     }
 
@@ -1160,9 +1195,9 @@ mod tests {
         let by = |name| models.by_name(name).unwrap();
         let m = by("Katana Samurai");
         let own = &clips.by_model[m];
-        // Three blows made for the katana, and from one to the next he
+        // Nine blows made for the katana, and from one to the next he
         // plays another, whatever his look; a killing blow is his first.
-        assert_eq!(own.swings.len(), 3);
+        assert_eq!(own.swings.len(), 9);
         assert!(own.swings.iter().all(|c| c.weapon == Weapon::TwoHanded));
         let swing = |blow, look| {
             clips
@@ -1178,9 +1213,10 @@ mod tests {
             }
             assert_eq!(swing(None, look), first);
         }
-        // His own hit and the library's two: the men of a regiment stagger
-        // their own ways.
+        // A stagger and two hits made for the katana: the men of a regiment
+        // stagger their own ways.
         assert_eq!(own.staggers.len(), 3);
+        assert!(own.staggers.iter().all(|c| c.weapon == Weapon::TwoHanded));
         let reel = |look| {
             clips
                 .fight(m, Move::Stagger(0.5), 0.0, look)
@@ -1196,15 +1232,14 @@ mod tests {
             let dead = clips.death(m, 100.0, None, look).unwrap().0;
             assert_eq!(down.rows, dead.rows, "{look}");
         }
-        // Every man of the rig reels them, the other factions' too, but not
-        // the Lantern Wraiths or the Hollow Bell, who float.
-        for name in [
-            "The Ronin",
-            "Yari Ashigaru",
-            "Bone Pikes",
-            "Tuner",
-            "The Onmyoji",
-        ] {
+        // A yari man reels his spear's two ways.
+        let spear = &clips.by_model[by("Yari Ashigaru")].staggers;
+        assert_eq!(spear.len(), 2);
+        assert!(spear.iter().all(|c| c.weapon == Weapon::Spear));
+        // Every other man of the rig reels his own hit and the library's
+        // two, the other factions' too, but not the Lantern Wraiths or the
+        // Hollow Bell, who float.
+        for name in ["The Ronin", "Bone Pikes", "Tuner", "The Onmyoji"] {
             assert_eq!(clips.by_model[by(name)].staggers.len(), 3, "{name}");
         }
         for name in ["Lantern Wraiths", "The Hollow Bell"] {
@@ -1250,8 +1285,11 @@ mod tests {
         let models = load().unwrap();
         let clips = Clips::new(&models);
         let by = |name| models.by_name(name).unwrap();
-        // Men on foot of every faction fall on their backs, the chest about
-        // 0.7 tiles behind where the feet stood.
+        // Men on foot of every faction die several ways, each lying where he
+        // stood (his chest within a man's length of his feet), and one at
+        // least falls straight on his back, the chest behind where the feet
+        // stood (about 0.3 tiles for the library's deaths, which keep the
+        // hips on the spot, 0.7 for the models' own).
         for name in [
             "Katana Samurai",
             "Yari Ashigaru",
@@ -1261,11 +1299,19 @@ mod tests {
             "Tuner",
         ] {
             let m = by(name);
-            let (chest, body) = (clips.lying_chest(m, 0).unwrap(), clips.body[m].unwrap());
-            let behind = chest.y - body.feet;
-            assert!((-0.9..-0.5).contains(&behind), "{name}: {behind}");
-            // Lying straight, his chest is in line with his feet.
-            assert!((chest.x - body.side).abs() < 0.05, "{name}: {chest}");
+            let body = clips.body[m].unwrap();
+            let lying: Vec<_> = clips.by_model[m]
+                .lying
+                .iter()
+                .map(|c| c.unwrap() - glam::vec2(body.side, body.feet))
+                .collect();
+            assert!(lying.iter().all(|c| c.length() < 1.0), "{name}: {lying:?}");
+            assert!(
+                lying
+                    .iter()
+                    .any(|c| (-0.9..-0.2).contains(&c.y) && c.x.abs() < 0.05),
+                "{name}: {lying:?}"
+            );
         }
         // Standing, the chest is over the feet.
         let m = by("Yari Ashigaru");
@@ -1287,11 +1333,9 @@ mod tests {
         let clips = Clips::new(&models);
         let m = models.by_name("Bone Pikes").unwrap();
         let clip = |k| *models.clip(m, k).unwrap();
-        let (die, duck, hit) = (
-            clip(ClipKind::Die),
-            clip(ClipKind::Block),
-            clip(ClipKind::Hit),
-        );
+        // His death by his look (his own or the library's).
+        let die = clips.die(m, 0).unwrap();
+        let (duck, hit) = (clip(ClipKind::Block), clip(ClipKind::Hit));
         let rows = |f: Move| clips.fight(m, f, 0.0, 0).unwrap();
         // A knockdown falls, lies on the death clip's last frame, and gets
         // up again; it never lays the model flat when it has a death clip.
@@ -1342,7 +1386,7 @@ mod tests {
         let m = (0..models.models.len())
             .find(|&m| models.clip(m, ClipKind::Die).is_some())
             .unwrap();
-        let die = models.clip(m, ClipKind::Die).unwrap();
+        let die = clips.die(m, 0).unwrap();
         let (end, flat) = clips.death(m, 100.0, None, 0).unwrap();
         assert_eq!(end.rows, [(die.first_row + die.frames - 1) as u16; 2]);
         assert!(!flat);
