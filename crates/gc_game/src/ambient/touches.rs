@@ -308,6 +308,7 @@ mod tests {
             choice: gc_map::GROWN + 1,
             tiles: 64,
             seed: 5,
+            ring: 0,
         }
         .make();
         map.habitat.fill(h as u8);

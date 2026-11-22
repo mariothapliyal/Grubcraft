@@ -6167,11 +6167,7 @@ impl Running {
                         seed: gc_ui::lobby::conquest_map_seed(choice, r.seed),
                     }
                 } else {
-                    MapKey::Field(FieldMap {
-                        choice,
-                        tiles: r.map_tiles,
-                        seed: r.seed,
-                    })
+                    MapKey::Field(FieldMap::new(choice, r.map_tiles, r.seed, r.teams.len()))
                 };
                 Some((key, r.seed))
             }
@@ -6498,7 +6494,7 @@ impl Running {
                 &self.units.stats,
                 &self.units.factions,
                 &self.units.points,
-                terrain_view::field_starts(&self.heightmap),
+                &terrain_view::field_starts(&self.heightmap),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
                 &mut self.minds,
@@ -9847,11 +9843,8 @@ impl From<MapPreviewKey> for MapKey {
                 choice,
                 tiles,
                 seed,
-            } => MapKey::Field(FieldMap {
-                choice,
-                tiles,
-                seed,
-            }),
+                players,
+            } => MapKey::Field(FieldMap::new(choice, tiles, seed, usize::from(players))),
             MapPreviewKey::Conquest {
                 choice,
                 tiles,
@@ -10344,6 +10337,7 @@ mod tests {
             choice: gc_map::MEASURED,
             tiles: 512,
             seed: 0x6772_7562,
+            ring: 0,
         };
         assert_eq!(key, MapKey::Field(wilds));
     }

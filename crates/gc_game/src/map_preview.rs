@@ -43,8 +43,9 @@ fn work(jobs: mpsc::Receiver<MapPreviewKey>, made: mpsc::Sender<Made>) {
         // only a copy.
         let map = make_map(MapKey::from(key));
         let starts = match key {
-            // (Measured land moves the starts off the plateaus.)
-            MapPreviewKey::Field { tiles, .. } if map.starts().len() == gc_map::START_PLATEAUS => {
+            // (Measured land moves the starts off the plateaus, or puts
+            // three or five round a ring.)
+            MapPreviewKey::Field { tiles, .. } if matches!(map.starts().len(), 3 | 5 | 6) => {
                 let side = tiles as f32;
                 map.starts()
                     .iter()
@@ -169,6 +170,7 @@ mod tests {
             choice: gc_map::MEASURED,
             tiles: 512,
             seed,
+            players: 0,
         };
         let first = field(DEFAULT_MAP_SEED);
         assert_eq!(menu.wanted_map_preview(), Some(first));

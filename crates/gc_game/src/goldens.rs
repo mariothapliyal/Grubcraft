@@ -915,6 +915,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         choice: golden.map,
         tiles: golden.map_tiles,
         seed: golden.seed,
+        ring: 0,
     }
     .make();
     let nav = heightmap.sim_nav_costs();
@@ -935,7 +936,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
     let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&heightmap, &nav));
     let mut out = Vec::new();
 
-    let starts = battle_starts(&teams, 0, plateau_positions(golden.map_tiles));
+    let starts = battle_starts(&teams, 0, &plateau_positions(golden.map_tiles));
     let middle = Vec2::splat(golden.map_tiles as f32 * 0.5);
     let mut fielded = Vec::new();
     // As `battle::set_out` sends them: every zone, then the armies, then

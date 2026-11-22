@@ -90,16 +90,36 @@ pub const GROWN: usize = WILDS + 1 + wilds::Wildness::ALL.len();
 pub const MEASURED: usize = GROWN + 1 + wilds::Wildness::ALL.len();
 
 /// A Field Battle map: the lobby's choice (an index into [`FIELD_MAPS`]),
-/// its size and its seed. The same three make the same map on every
-/// machine.
+/// its size and its seed, and for Measured land made for three or five
+/// players that count. The same make the same map on every machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldMap {
     pub choice: usize,
     pub tiles: u32,
     pub seed: u64,
+    /// Three or five on a Measured choice made for that many players,
+    /// whose starts stand round a ring ([`grown::Grown::ring`]); 0
+    /// otherwise.
+    pub ring: u8,
 }
 
 impl FieldMap {
+    /// The map the lobby makes for `players`: its starts round a ring on a
+    /// Measured choice with three or five ([`FieldMap::ring`]).
+    pub fn new(choice: usize, tiles: u32, seed: u64, players: usize) -> FieldMap {
+        let measured = (MEASURED..=MEASURED + wilds::Wildness::ALL.len()).contains(&choice);
+        let ring = match players {
+            3 | 5 if measured => players as u8,
+            _ => 0,
+        };
+        FieldMap {
+            choice,
+            tiles,
+            seed,
+            ring,
+        }
+    }
+
     /// Make the map. A random map whose starts aren't all joined by
     /// walkable ground is made again from the next seed (none of the seeds
     /// the tests sweep need it), so nobody is shown a broken one.
@@ -108,6 +128,7 @@ impl FieldMap {
             choice,
             tiles,
             seed,
+            ring,
         } = self;
         enum Maker {
             Recipe(recipe::Recipe),
@@ -137,7 +158,9 @@ impl FieldMap {
             Map::from_def(&match maker {
                 Maker::Recipe(recipe) => recipe::describe(recipe, tiles as i32, seed),
                 Maker::Wilds(wild) => wilds::describe(tiles as i32, seed, wild),
-                Maker::Grown(wild, fair) => grown::describe(tiles as i32, seed, wild, fair),
+                Maker::Grown(wild, fair) => {
+                    grown::describe(tiles as i32, seed, wild, fair, usize::from(ring))
+                }
             })
         };
         let first = make(0);
@@ -213,7 +236,8 @@ mod tests {
                 FieldMap {
                     choice: 0,
                     tiles: 256,
-                    seed
+                    seed,
+                    ring: 0,
                 }
                 .make()
                 .hash(),
@@ -249,6 +273,7 @@ mod tests {
                         choice,
                         tiles,
                         seed,
+                        ring: 0,
                     }
                     .make();
                     let what = format!("choice {choice}, {tiles} tiles, seed {seed}");
@@ -271,6 +296,7 @@ mod tests {
                 choice,
                 tiles: 256,
                 seed: 7,
+                ring: 0,
             }
             .make();
             if map.levels.is_empty() {
@@ -356,6 +382,7 @@ mod tests {
                 choice,
                 tiles: 256,
                 seed: 7,
+                ring: 0,
             }
             .make()
             .hash()
@@ -370,6 +397,7 @@ mod tests {
                 choice,
                 tiles: 320,
                 seed: 1,
+                ring: 0,
             }
             .make()
             .hash()

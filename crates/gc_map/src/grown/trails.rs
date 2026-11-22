@@ -234,7 +234,7 @@ mod tests {
     use crate::wilds::Wildness;
 
     fn trail_map(fairness: Fairness) -> Map {
-        Map::from_def(&describe(256, 3, Wildness::Mixed, fairness))
+        Map::from_def(&describe(256, 3, Wildness::Mixed, fairness, 0))
     }
 
     /// Every start and every site but the lairs is on the network: a worn

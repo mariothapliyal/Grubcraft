@@ -91,11 +91,13 @@ pub enum SurrenderItem {
 pub enum MapPreviewKey {
     /// A Field Battle map: the choice (an index into
     /// [`MAPS`](crate::lobby::MAPS)), its size in tiles
-    /// ([`field_map_tiles`]) and the map seed.
+    /// ([`field_map_tiles`]), the map seed and how many play (Measured
+    /// land puts three or five round a ring).
     Field {
         choice: usize,
         tiles: u32,
         seed: u64,
+        players: u8,
     },
     /// A Conquest map: the choice (an index into
     /// [`CONQUEST_MAPS`](crate::lobby::CONQUEST_MAPS)), the size a made
@@ -117,6 +119,7 @@ pub fn preview_key(settings: &LobbySettings, players: usize) -> MapPreviewKey {
             choice: settings.map,
             tiles: field_map_tiles(settings.map_size, players),
             seed: settings.map_seed,
+            players: players.min(usize::from(u8::MAX)) as u8,
         },
         GameMode::Conquest => MapPreviewKey::Conquest {
             choice: settings.map,
@@ -1886,6 +1889,7 @@ mod tests {
             choice,
             tiles,
             seed,
+            players: 0,
         }
     }
 

@@ -50,7 +50,7 @@ use crate::def::{
     CoverKind, CoverOp, Kind, Land, MapDef, Mode, Object, Pos, SetPiece, SetPieceKind, Shape,
     SizeClass, Symmetry, TerrainOp,
 };
-use crate::generate::{START_PLATEAUS, plateaus};
+use crate::generate::plateaus;
 use crate::recipe::{BASE, WATER, start_objects};
 use crate::stamp::dist2;
 use crate::wilds::Wildness;
@@ -247,6 +247,25 @@ pub struct Grown {
     /// as each start is (docs/41, step 1).
     #[serde(default)]
     pub heart: bool,
+    /// Three or five on [`Fairness::Measured`] land made for that many
+    /// players: their starts stand evenly round a ring instead of in the
+    /// six slots (docs/27, 3 and 5 players). 0 (or anything else) for the
+    /// six slots.
+    #[serde(default)]
+    pub ring: u8,
+}
+
+impl Grown {
+    /// Where the starts are first put: round a ring for three or five
+    /// players on Measured land, else the six slots.
+    fn slots(&self, n: usize) -> Vec<Pos> {
+        match self.ring {
+            3 | 5 if self.fairness == Fairness::Measured => {
+                starts::ring(n, usize::from(self.ring), self.seed)
+            }
+            _ => plateaus(n as u32).to_vec(),
+        }
+    }
 }
 
 /// Grown land, one value per tile, row by row: what the loader starts a
@@ -273,8 +292,9 @@ pub(crate) struct Raster {
     bodies: levels::Bodies,
     /// The ground kept for the starts, which no water takes.
     keep: Vec<bool>,
-    /// Where the starts stand, in lobby order.
-    pub(crate) starts: [Pos; START_PLATEAUS],
+    /// Where the starts stand, in lobby order (six, or a ring's three or
+    /// five).
+    pub(crate) starts: Vec<Pos>,
     /// Whether the land is its own turned copy (so every change to it must
     /// be made to a tile and its turned copy alike).
     pub(crate) mirrored: bool,
@@ -436,7 +456,7 @@ fn grow_uncached(n: usize, what: Grown) -> (Raster, Option<u32>) {
     let dials = Dials::of(what.wildness);
     let mut seeds = Seeds::new(what.seed);
     let mirrored = what.fairness == Fairness::Mirrored;
-    let slots = plateaus(n as u32);
+    let slots = what.slots(n);
     let near_slot = near_starts(n, &slots);
     let calm = near_slot.map(|d| smoothstep(scaled(n, 95) * ONE, scaled(n, 55) * ONE, d));
     let (raw, parts) = shape::raw_land(n, &mut seeds, &dials, &calm);
@@ -454,12 +474,13 @@ fn grow_uncached(n: usize, what: Grown) -> (Raster, Option<u32>) {
     } else {
         // Every start gets the same clearing, so building room is equal
         // by construction.
-        let starts = starts::place(&h);
+        let starts = starts::place(&h, &slots);
         let shape = clearing_shape(&mut seeds);
         for &s in &starts {
             flatten_clearing(&mut h, s, shape);
         }
-        (starts, near_starts(n, &starts), shape)
+        let near = near_starts(n, &starts);
+        (starts, near, shape)
     };
     // A Conquest map's Heart stands in a clearing of its own, kept open
     // as a start's is.
@@ -588,14 +609,14 @@ const SETTLE_ROUNDS: usize = 2;
 /// stands (`step` from [`standable`]), in thousandths.
 fn true_unfairness(r: &Raster, step: &[u8]) -> u32 {
     let n = r.height.n;
-    let mut walk = [[0u32; START_PLATEAUS]; START_PLATEAUS];
+    let mut walk: starts::Walks = Default::default();
     for (j, &s) in r.starts.iter().enumerate() {
         let d = ways::walk(step, n, tile_index(n, s), &[]);
         for (row, &k) in walk.iter_mut().zip(&r.starts) {
             row[j] = walk_to(&d, n, k).map_or(u32::MAX, |(d, _)| d);
         }
     }
-    starts::unfairness(&walk)
+    starts::unfairness(&walk, r.starts.len())
 }
 
 /// One round of [`refine_starts`]: move the starts up to `reach` tiles by
@@ -620,7 +641,7 @@ fn move_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds, reach: i32) -
                 })
             })
     };
-    let (moved, before) = starts::settle(&step, n as usize, r.starts, reach, &fits);
+    let (moved, before) = starts::settle(&step, n as usize, &r.starts, reach, &fits);
     if moved == r.starts {
         return (before, false);
     }
@@ -824,12 +845,25 @@ impl Seam {
 /// Under [`Fairness::Measured`] nothing is turned for the south: each site
 /// in the north gets a partner of its own in the south, as near the turned
 /// spot as the land has room.
-pub fn describe(tiles: i32, seed: u64, wildness: Wildness, fairness: Fairness) -> MapDef {
+///
+/// `players` is how many play: three or five on Measured land stand
+/// round a ring (see [`Grown::ring`]); anything else gets the six slots.
+pub fn describe(
+    tiles: i32,
+    seed: u64,
+    wildness: Wildness,
+    fairness: Fairness,
+    players: usize,
+) -> MapDef {
     let what = Grown {
         seed,
         wildness,
         fairness,
         heart: false,
+        ring: match players {
+            3 | 5 if fairness == Fairness::Measured => players as u8,
+            _ => 0,
+        },
     };
     lay(tiles, what).expect("a Field Battle map always has room for its starts")
 }
@@ -859,6 +893,7 @@ pub fn describe_conquest(tiles: i32, seed: u64, wildness: Wildness) -> Option<Ma
                 wildness,
                 fairness: Fairness::Mirrored,
                 heart: true,
+                ring: 0,
             };
             lay(tiles, what)
         })
@@ -885,7 +920,7 @@ fn lay(tiles: i32, what: Grown) -> Option<MapDef> {
     // Four starts (the corners) on a small Conquest map, else six.
     let six = !conquest || tiles >= crate::def::BIG_MAP_TILES;
     let starts: Vec<Pos> = if measured {
-        grow(tiles as u32, what).starts.to_vec()
+        grow(tiles as u32, what).starts.clone()
     } else {
         plateaus(tiles as u32)[..if six { 6 } else { 4 }].to_vec()
     };
@@ -1579,6 +1614,7 @@ mod tests {
                 wildness: Wildness::Wild,
                 fairness: Fairness::Mirrored,
                 heart: false,
+                ring: 0,
             },
         );
         let n = 256;
@@ -1617,6 +1653,7 @@ mod high_water {
                     wildness,
                     fairness,
                     heart: false,
+                    ring: 0,
                 },
             );
             let (h, level) = (&r.height.v, &r.level);
@@ -1687,6 +1724,7 @@ mod load_time {
                 wildness: Wildness::Wild,
                 fairness: crate::grown::Fairness::Measured,
                 heart: false,
+                ring: 0,
             },
         );
         let side = 64 * crate::SAMPLES_PER_TILE as usize + 1;
@@ -1711,6 +1749,7 @@ mod load_time {
             3,
             crate::wilds::Wildness::Mixed,
             crate::grown::Fairness::Measured,
+            0,
         );
         let map = crate::Map::from_def(&def);
         assert_eq!(map.tiles, 257);
@@ -1738,6 +1777,7 @@ mod load_time {
                 choice,
                 tiles: 768,
                 seed: 9,
+                ring: 0,
             }
             .make();
             let made = t.elapsed();
@@ -1770,6 +1810,7 @@ mod fairness_probe {
                         wildness: w,
                         fairness: Fairness::Measured,
                         heart: false,
+                        ring: 0,
                     };
                     let r = grow(tiles, what);
                     let spread = true_unfairness(&r, &standable(&r));
@@ -1791,7 +1832,15 @@ mod fairness_probe {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(4);
-        for tiles in [320u32, 512, 768] {
+        // (RING=3 or 5 for land made for three or five players; SIZES=a,b.)
+        let ring = std::env::var("RING")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let sizes: Vec<u32> = std::env::var("SIZES").map_or(vec![320, 512, 768], |v| {
+            v.split(',').filter_map(|s| s.parse().ok()).collect()
+        });
+        for tiles in sizes {
             for w in Wildness::ALL {
                 let mut v = Vec::new();
                 for seed in 0..seeds {
@@ -1803,6 +1852,7 @@ mod fairness_probe {
                             wildness: w,
                             fairness: Fairness::Measured,
                             heart: false,
+                            ring,
                         },
                     );
                     v.push((true_unfairness(&r, &standable(&r)), t.elapsed().as_millis()));
