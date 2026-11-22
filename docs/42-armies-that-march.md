@@ -681,9 +681,11 @@ pace and on the route.
   and only when the step makes no overlap deeper than now
   (`clear_to_step`). The one earlier in the army goes back first; a
   friend at ease in the way is shouldered aside (and steps back in
-  turn). A friend that has settled where it stood, or 12 s since the
-  last friend marched by (`WAY_PATIENCE`, two that were shoved past
-  each other can wedge), ends it: it stands where it is.
+  turn). A friend that has settled where it stood ends it: it stands
+  where it is. Still not back 12 s after the last friend marched by
+  (`WAY_PATIENCE`; two that were shoved past each other can wedge), it
+  marches back as on any order, round friends in the way, drawing up
+  beside the place if one has settled on it.
   Around it: a regiment it shoves while stepping out goes the whole way
   and remembers its own place too (`make_room`); `own_place` counts a
   friend that made way as standing where it stood, so nobody is sent to
@@ -742,10 +744,11 @@ marcher arrives.
 ### What make way does not do yet
 
 - **Stepping back is its own small solver.** It tries a straight step,
-  then squared ones, then shoulders friends, and gives up after 12 s.
-  Sending it back as a short move of its own, settled by the rules that
-  settle any arrival, would be one rule fewer; worth doing before stage 3
-  adds more crossings.
+  then squared ones, then shoulders friends, and only after 12 s
+  marches back as on any order. Marching back that way from the start
+  would be one rule fewer, but measured so it pushed through
+  neighbours still stepping back themselves; worth another look before
+  stage 3 adds more crossings.
 - **Orders given a tick or two apart.** A regiment not yet given its
   order may make way for a moment for a friend ordered just before it
   (a computer player's orders for one army land over a few ticks). It

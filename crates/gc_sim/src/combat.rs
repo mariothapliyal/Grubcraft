@@ -33,7 +33,7 @@ use crate::conquest::Conquest;
 use crate::events::{Event, Shooter, VolleyId};
 use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_PINNED, SHOCK_REAR, WAVERING_DAMAGE_PERCENT};
 use crate::nav::Nav;
-use crate::regiments::{RegimentHandle, Regiments, Strike, hash_handle};
+use crate::regiments::{Order, RegimentHandle, Regiments, Strike, hash_handle};
 use crate::sky::Air;
 use crate::structures::{StructureHandle, TowerShot};
 use crate::terrain::Terrain;
@@ -145,7 +145,8 @@ const WAY_AHEAD: Fx = Fx::from_int(6);
 const WAY_FOE: Fx = Fx::from_int(20);
 /// A regiment still not back where it stood after making way, this many
 /// looks (see [`CROWD_EVERY`]; 12 s) after the last friend marched by,
-/// stands where it is: two that were shoved past each other can wedge.
+/// marches back to it as on any order: two that were shoved past each
+/// other can wedge.
 const WAY_PATIENCE: u8 = 60;
 /// With nothing blocked within this many tiles a marching regiment still
 /// keeps its spacing and goes round friends standing in its way (see
@@ -2276,7 +2277,20 @@ impl Combat {
                 regs.way_wait[i].saturating_add(1)
             };
             if regs.way_wait[i] >= WAY_PATIENCE {
-                regs.home[i] = None;
+                // Wedged (two shoved past each other, say): it marches
+                // back, as on any order, going round friends in the way and
+                // drawing up beside the place if one has settled on it.
+                let facing = Some(regs.facing[i]);
+                let back = Order {
+                    target: home,
+                    facing,
+                    files: 0,
+                    pace: Fx::ZERO,
+                };
+                if regs.order(regs.handle(i), back) {
+                    regs.spot[i] = home;
+                    regs.set_seeks_place(i, true);
+                }
                 return false;
             }
             // A friend that has settled on the ground it stood on since
