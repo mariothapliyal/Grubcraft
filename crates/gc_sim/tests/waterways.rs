@@ -99,6 +99,7 @@ fn world(spells: &'static [Spell], year_ticks: u32) -> World {
             growth: &[],
             footing: &[],
             flow: &[],
+            water_levels: &[],
         },
         champions: false,
         sky: Sky {

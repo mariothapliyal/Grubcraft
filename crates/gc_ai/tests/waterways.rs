@@ -95,6 +95,7 @@ fn world(seed: u64) -> World {
             growth: &[],
             footing: &[],
             flow: &flow,
+            water_levels: &[],
         },
         champions: false,
         sky: Sky {

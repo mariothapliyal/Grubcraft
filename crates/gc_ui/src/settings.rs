@@ -74,6 +74,10 @@ pub struct Settings {
     pub larger_text: bool,
     pub reduced_shake: bool,
     pub hints: bool,
+    /// The address (or join code) of the game this player last joined, for
+    /// the Play screen's Rejoin button after a crash or restart; empty for
+    /// none. The password is never saved.
+    pub last_game: String,
 }
 
 impl Default for Settings {
@@ -99,6 +103,7 @@ impl Default for Settings {
             larger_text: false,
             reduced_shake: false,
             hints: true,
+            last_game: String::new(),
         }
     }
 }
@@ -122,6 +127,10 @@ impl Settings {
             self.player_name = "Player".into();
         }
         self.player_color %= crate::lobby::COLORS;
+        self.last_game = (self.last_game.trim().chars())
+            .filter(|c| (' '..='~').contains(c))
+            .take(64)
+            .collect();
         self.ui_scale = self.ui_scale.clamp(75, 150);
         for v in [
             &mut self.volume_master,

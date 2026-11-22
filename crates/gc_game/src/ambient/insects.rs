@@ -162,15 +162,14 @@ pub(crate) fn habitat_at(map: &Map, p: Vec2) -> Option<Habitat> {
 /// above it (a lake, a river or a pool, not a mountain stream).
 fn near_water(map: &Map, p: Vec2) -> bool {
     let tiles = map.tiles as f32;
-    let low = map.water_level();
     let wet = |q: Vec2| {
         q.x > 1.0
             && q.y > 1.0
             && q.x < tiles - 1.0
             && q.y < tiles - 1.0
-            && map.height_at(q.x, q.y) < low
+            && map.height_at(q.x, q.y) < map.water_at(q.x, q.y)
     };
-    map.height_at(p.x, p.y) < low + HIGH_BANK
+    map.height_at(p.x, p.y) < map.water_at(p.x, p.y) + HIGH_BANK
         && (wet(p)
             || [SHORE * 0.5, SHORE].iter().any(|&r| {
                 (0..8)

@@ -819,20 +819,57 @@ impl<N: Network> Menu<N> {
             Some(g) => (g.address.clone(), self.join_password.as_str()),
             None => (self.address.trim().to_string(), self.join_password.as_str()),
         };
-        // The footer's error box takes this hint's place while it shows.
-        if target.is_empty() && self.message.is_none() {
-            ui.label(
-                join_btn.x,
-                join_btn.bottom() + 8,
-                1,
-                theme::INK_MUTED,
-                "Pick a game above, or type its address.",
-            );
+        // After a crash or a restart: back to the last game joined, without
+        // finding it again (its password, if any, still goes in the box).
+        let last = self.settings.last_game.clone();
+        let (join_btn, rejoin_btn) = if last.is_empty() {
+            (join_btn, None)
+        } else {
+            let half = (join_btn.w - 12) / 2;
+            (
+                Rect::new(join_btn.x, join_btn.y, half, join_btn.h),
+                Some(Rect::new(
+                    join_btn.right() - half,
+                    join_btn.y,
+                    half,
+                    join_btn.h,
+                )),
+            )
+        };
+        // The footer's error box takes these hints' places while it shows.
+        if self.message.is_none() {
+            if target.is_empty() {
+                let hint = "Pick a game above, or type its address.";
+                let chars = (join_btn.w / 8).max(1) as usize;
+                for (i, line) in crate::draw::wrap(hint, chars).iter().take(2).enumerate() {
+                    let y = join_btn.bottom() + 8 + i as i32 * 16;
+                    ui.label(join_btn.x, y, 1, theme::INK_MUTED, line);
+                }
+            }
+            if let Some(r) = rejoin_btn {
+                let to = fit(&last, (r.w / 8).max(1) as usize);
+                ui.label(r.x, r.bottom() + 8, 1, theme::INK_MUTED, &to);
+            }
         }
+        let mut join_to = None;
         if ui.button(join_btn, "Join", ButtonStyle::Normal, !target.is_empty()) {
+            join_to = Some((target, password.to_string()));
+        }
+        if let Some(r) = rejoin_btn
+            && ui.button(r, "Rejoin", ButtonStyle::Normal, true)
+        {
+            join_to = Some((last.clone(), self.join_password.clone()));
+        }
+        if let Some((target, password)) = join_to {
             let me = self.profile();
-            match self.net.join(&me, &target, password) {
-                Ok(()) => self.go(ui, Screen::Lobby),
+            match self.net.join(&me, &target, &password) {
+                Ok(()) => {
+                    if self.settings.last_game != target {
+                        self.settings.last_game = target;
+                        self.save_settings();
+                    }
+                    self.go(ui, Screen::Lobby);
+                }
                 Err(e) => self.message = Some((e.to_string(), true)),
             }
         }
@@ -2954,6 +2991,93 @@ mod tests {
         h.click("not a code");
         type_text(&mut h, "x");
         assert!(!h.has("Not a map code"));
+    }
+
+    /// A network that takes every join and notes where it went.
+    #[derive(Default)]
+    struct Joins(Vec<(String, String)>);
+
+    impl Network for Joins {
+        fn host(&mut self, _: &Profile, _: LobbySettings, _: &str) -> Result<(), NetError> {
+            Ok(())
+        }
+        fn discovered(&mut self) -> &[DiscoveredGame] {
+            &[]
+        }
+        fn join(&mut self, _: &Profile, target: &str, pw: &str) -> Result<(), NetError> {
+            self.0.push((target.into(), pw.into()));
+            Ok(())
+        }
+        fn lobby(&self) -> Option<&LobbyState> {
+            None
+        }
+        fn edit_slot(&mut self, _: usize, _: SlotEdit) {}
+        fn edit_settings(&mut self, _: LobbySettings) {}
+        fn start_match(&mut self) -> Result<MatchStart, NetError> {
+            Err(NetError::Unavailable("joins".into()))
+        }
+        fn leave(&mut self) {}
+        fn poll(&mut self) -> Vec<NetEvent> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn rejoin_goes_back_to_the_last_game_joined() {
+        let frame = |menu: &mut Menu<Joins>, ui: &mut Ui, input: UiInput| {
+            ui.begin_frame(input, (1280, 760));
+            menu.frame(ui);
+            ui.end_frame();
+        };
+        let click = |ui: &Ui, t: &str| {
+            let (x, y) = *find_all(&ui.draw, t).last().unwrap();
+            UiInput {
+                mouse: (x, y),
+                pressed: true,
+                released: true,
+                ..Default::default()
+            }
+        };
+        let mut menu = Menu::new(Joins::default(), Settings::default(), None, "0.1.0");
+        let mut ui = Ui::new();
+        menu.show(Screen::Play);
+        frame(&mut menu, &mut ui, UiInput::default());
+        // Nothing joined yet: no Rejoin.
+        assert!(find_text(&ui.draw, "Rejoin").is_none());
+        let (x, y) = find_text(&ui.draw, "Address or join code").unwrap();
+        frame(
+            &mut menu,
+            &mut ui,
+            UiInput {
+                mouse: (x, y),
+                pressed: true,
+                released: true,
+                ..Default::default()
+            },
+        );
+        frame(
+            &mut menu,
+            &mut ui,
+            UiInput {
+                mouse: (x, y),
+                typed: "K7QD-M2XA".into(),
+                ..Default::default()
+            },
+        );
+        let join = click(&ui, "Join");
+        frame(&mut menu, &mut ui, join);
+        assert_eq!(menu.net.0, [("K7QD-M2XA".to_string(), String::new())]);
+        // Remembered, and offered once back on the Play screen.
+        assert_eq!(menu.settings().last_game, "K7QD-M2XA");
+        menu.show(Screen::Play);
+        menu.address.clear();
+        frame(&mut menu, &mut ui, UiInput::default());
+        // The Rejoin button, with where it goes under it.
+        assert!(find_text(&ui.draw, "K7QD-M2XA").is_some());
+        let rejoin = click(&ui, "Rejoin");
+        frame(&mut menu, &mut ui, rejoin);
+        assert_eq!(menu.net.0.len(), 2);
+        assert_eq!(menu.net.0[1].0, "K7QD-M2XA");
     }
 
     /// A lobby that somebody else hosts.

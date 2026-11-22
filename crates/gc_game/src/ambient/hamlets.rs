@@ -87,7 +87,7 @@ struct Ground<'a> {
 
 impl Ground<'_> {
     fn height(&self, p: Vec2) -> f32 {
-        self.map.height_at(p.x, p.y).max(self.map.water_level())
+        self.map.surface_at(p.x, p.y)
     }
 
     /// Whether something of `reach` radius may stand at `p`: dry, off the
@@ -96,6 +96,7 @@ impl Ground<'_> {
         let r = reach * 0.7;
         let mut low = f32::MAX;
         let mut high = f32::MIN;
+        let mut dry = true;
         let side = self.map.tiles as i32;
         for d in [
             Vec2::ZERO,
@@ -110,6 +111,7 @@ impl Ground<'_> {
         ] {
             let q = p + d * r;
             let h = self.map.height_at(q.x, q.y);
+            dry &= h > self.map.water_at(q.x, q.y) + DRY;
             low = low.min(h);
             high = high.max(h);
             let (tx, ty) = (q.x.floor() as i32, q.y.floor() as i32);
@@ -120,7 +122,7 @@ impl Ground<'_> {
                 return false;
             }
         }
-        low > self.map.water_level() + DRY && high - low <= LEVEL
+        dry && high - low <= LEVEL
     }
 
     /// Whether a tile (row by row) is woods, thicket or not.
@@ -145,7 +147,7 @@ pub(super) fn route_clear(map: &Map, a: Vec2, b: Vec2, ok: impl Fn(Vec2) -> bool
         let p = a.lerp(b, i as f32 / steps as f32);
         let h = map.height_at(p.x, p.y);
         let (tx, ty) = (p.x.floor() as i32, p.y.floor() as i32);
-        if h <= map.water_level() + DRY
+        if h <= map.water_at(p.x, p.y) + DRY
             || (h - last).abs() > ROUTE_CLIMB
             || !(0..side).contains(&tx)
             || !(0..side).contains(&ty)

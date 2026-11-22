@@ -89,6 +89,7 @@ fn world_with(style: ClearStyle, start_grub: u32) -> World {
             growth: &growth,
             footing: &[],
             flow: &flow,
+            water_levels: &[],
         },
         champions: false,
         sky: gc_sim::Sky::STILL,

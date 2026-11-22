@@ -34,8 +34,10 @@ use std::collections::BinaryHeap;
 use gc_fixed::Angle;
 
 use super::field::{
-    Grid, ONE, Seeds, distance, fbm, hypot, lerp, mul, patches, smoothstep, sqrt, warp,
+    self, Grid, ONE, Seeds, distance, fbm, hypot, lerp, mul, nearest, patches, smoothstep, sqrt,
+    warp,
 };
+use super::levels::{Bodies, REACH};
 use super::{Dials, WATER_LINE};
 
 /// What the water layer leaves for the biomes.
@@ -46,6 +48,13 @@ pub(super) struct Water {
     pub(super) river: Vec<bool>,
     /// Lake tiles.
     pub(super) lake: Vec<bool>,
+    /// The body of high water each tile is part of (0: the map's line), and
+    /// the bodies' levels (docs/27 stage 5, [`super::levels`]).
+    pub(super) body: Vec<u16>,
+    pub(super) bodies: Bodies,
+    /// The water's level on each tile as the water left it, before it is
+    /// settled on the finished land ([`super::levels::settle`]).
+    pub(super) level: Vec<i32>,
     /// Which way and how fast the water runs on each tile, one
     /// `gc_sim::Flow` byte a tile (0 still: lakes and dry land).
     pub(super) flow: Vec<u8>,
@@ -75,6 +84,16 @@ const FORD_SPACING: i32 = 140;
 /// A river at least this wide somewhere (fixed point) has fords a third
 /// closer together.
 const WIDE_RIVER: i32 = 6 * ONE;
+/// How far (fixed-point tiles) a river's water runs below the lowest
+/// drained land beside its channel (docs/27 stage 5).
+const INCISE: i32 = ONE;
+/// Banks this many tiles from water are never cut under its level.
+const BANK_GUARD: usize = 2;
+/// A river falling faster than this a tile runs fast.
+const RAPIDS: i32 = ONE / 8;
+/// A ford is laid no nearer than this many points of its line to where
+/// the river falls from one reach to the next.
+const FORD_CLEAR: usize = 6;
 /// The eight neighbours, as the prototype's order (ties go to the first).
 const N8: [(i32, i32); 8] = [
     (-1, -1),
@@ -92,6 +111,11 @@ const N8: [(i32, i32); 8] = [
 struct Line {
     pts: Vec<(i32, i32)>,
     width: Vec<i32>,
+    /// The body of water at each point (0: the map's line), and its level
+    /// (fixed-point tiles): the line on low land, a flat reach's own level
+    /// in the hills (stage 5). It never rises downstream.
+    body: Vec<u16>,
+    level: Vec<i32>,
     /// True if it runs out to the edge or the middle rows (rather than
     /// joining another river).
     outlet: bool,
@@ -120,7 +144,17 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
 
     let phase = fbm(n, seeds.next(), n as i32 * ONE / 6, 3);
     let meander = fbm(n, seeds.next(), n as i32 * ONE / 4, 3);
-    let lines = river_lines(h, &filled.height, &acc, &rec, thresh, &phase, &meander);
+    let mut bodies = Bodies::new();
+    let mut lines = river_lines(
+        h,
+        &filled.height,
+        &acc,
+        &rec,
+        thresh,
+        &phase,
+        &meander,
+        &mut bodies,
+    );
     let mut river = rasterize(&lines, n);
 
     // Lakes: basins the flood filled deeper than half a tile.
@@ -148,12 +182,26 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
             lake[i] = false;
         }
     }
+    // The bodies of high water: the rivers' reaches from their lines, the
+    // lakes from their basins (docs/27 stage 5).
+    let mut body = body_layer(&lines, n);
+    high_lakes(
+        h,
+        &filled.height,
+        &avoid,
+        keep,
+        &mut lake,
+        &mut body,
+        &mut bodies,
+    );
 
     // Rivers that reach the middle rows end in a pond (their turned copies
     // do too), so none stops dead.
     let mut pond = vec![false; nn];
     for line in lines.iter().filter(|l| l.outlet) {
-        let (Some(&(ex, ey)), Some(&w)) = (line.pts.last(), line.width.last()) else {
+        let (Some(&(ex, ey)), Some(&w), Some(&end)) =
+            (line.pts.last(), line.width.last(), line.body.last())
+        else {
             continue;
         };
         if (ey >> 16) as usize != n / 2 - 1 {
@@ -187,7 +235,9 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
                 };
                 let lobes = ONE + wave(2, phase, ONE / 4) + wave(3, phase.rotate_left(5), ONE / 7);
                 if d <= (r * i64::from(lobes)) >> 16 {
-                    pond[(y * n as i64 + x) as usize] = true;
+                    let i = (y * n as i64 + x) as usize;
+                    pond[i] = true;
+                    body[i] = end;
                 }
             }
         }
@@ -199,11 +249,15 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
         let j = last - i;
         river[j] = river[i];
         lake[j] = lake[i];
+        if !pond[j] {
+            body[j] = body[i];
+        }
     }
     for i in 0..nn {
         if pond[i] {
             lake[i] = true;
             lake[last - i] = true;
+            body[last - i] = body[i];
         }
     }
     for i in 0..nn {
@@ -211,7 +265,32 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
             river[i] = false;
             lake[i] = false;
         }
+        if !(river[i] || lake[i]) {
+            body[i] = 0;
+        }
     }
+    // Each river runs through the bodies its line crosses, lakes included,
+    // and never up.
+    // (The north's rivers: the south's water is their turned copy.)
+    // A point counts where its tile is under water: river, lake or pond.
+    let near = |v: i32| ((v + ONE / 2) >> 16).clamp(0, n as i32 - 1) as usize;
+    let tile = |&(x, y): &(i32, i32)| near(y) * n + near(x);
+    let north = |p: &(i32, i32)| tile(p) < nn / 2;
+    for line in lines.iter().filter(|l| l.pts.first().is_some_and(north)) {
+        let wet_points = (line.pts.iter().take_while(|p| north(p)))
+            .map(tile)
+            .filter(|&i| river[i] || lake[i]);
+        bodies.chain(wet_points.map(|i| body[i]));
+    }
+    bodies.order();
+    // The lines' own levels as the bodies have them now (ordering may have
+    // lowered a reach), for the current and the fords.
+    for line in &mut lines {
+        for (l, &b) in line.level.iter_mut().zip(&line.body) {
+            *l = bodies.level(b);
+        }
+    }
+    let level = bodies.per_tile(&body);
     let mut acc = acc;
     for i in 0..nn / 2 {
         acc[last - i] = acc[i];
@@ -233,7 +312,9 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
         }
     }
 
-    let mut fords = carve(h, seeds, keep, &near_keep, &river, &lake, &lines);
+    let mut fords = carve(
+        h, seeds, keep, &near_keep, &river, &lake, &body, &bodies, &lines,
+    );
     // Make the carved land (and the fords) the same turned copy.
     for i in 0..nn / 2 {
         let j = last - i;
@@ -251,8 +332,25 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
         acc,
         river,
         lake,
+        body,
+        bodies,
+        level,
         flow,
         fords,
+    }
+}
+
+impl Water {
+    /// The tiles of high water and the land within [`BANK_GUARD`] of it.
+    pub(super) fn high_banks(&self) -> Vec<bool> {
+        let n = gc_fixed::isqrt_u64(self.level.len() as u64) as usize;
+        let wet: Vec<bool> = (0..self.level.len())
+            .map(|i| self.river[i] || self.lake[i])
+            .collect();
+        highest_near(&wet, &self.level, n, BANK_GUARD)
+            .iter()
+            .map(|&l| l > WATER_LINE)
+            .collect()
     }
 }
 
@@ -363,7 +461,9 @@ fn flow(filled: &[i32], order: &[u32], n: usize, rain: &[bool]) -> (Vec<u32>, Ve
 
 /// Rivers as smooth, meandering lines down the drainage. Each starts at a
 /// source (a river tile nothing river-sized drains into), highest first,
-/// and runs down until it meets a river already traced.
+/// and runs down until it meets a river already traced. Its reaches in
+/// the hills are new `bodies`.
+#[allow(clippy::too_many_arguments)]
 fn river_lines(
     h: &Grid,
     filled: &[i32],
@@ -372,6 +472,7 @@ fn river_lines(
     thresh: u32,
     phase: &Grid,
     meander: &Grid,
+    bodies: &mut Bodies,
 ) -> Vec<Line> {
     let n = h.n;
     let nn = n * n;
@@ -387,6 +488,10 @@ fn river_lines(
 
     const NONE: (i32, i32) = (i32::MIN, 0);
     let mut shifted = vec![NONE; nn];
+    // The water's level and body on each traced tile of the drainage, so a
+    // river joining one already traced meets it there.
+    let mut level_at = vec![WATER_LINE; nn];
+    let mut body_at = vec![0u16; nn];
     let mut lines = Vec::new();
     for hd in heads {
         let mut path = Vec::new();
@@ -498,48 +603,114 @@ fn river_lines(
                 xy[m - 1] = pos[m - 1];
             }
         }
+        // The water's level down the river: the lowest drained land under
+        // and beside the channel, less the channel's depth, never rising
+        // downstream and never ending below the river it joins.
+        let mut lv: Vec<i32> = (0..m)
+            .map(|k| lowest_under(&h.v, filled, n, xy[k], width[k]).max(WATER_LINE))
+            .collect();
+        for k in 1..m {
+            lv[k] = lv[k].min(lv[k - 1]);
+        }
+        if let Some(j) = join {
+            for v in &mut lv {
+                *v = (*v).max(level_at[j]);
+            }
+        }
+        // Flat reaches, each at the level it falls to by its end.
+        let mut bd = vec![0u16; m];
+        for start in (0..m).step_by(REACH) {
+            let end = (start + REACH).min(m);
+            let b = bodies.add(lv[end - 1]);
+            for k in start..end {
+                lv[k] = bodies.level(b);
+                bd[k] = b;
+            }
+        }
         for (k, &c) in path.iter().enumerate() {
             shifted[c] = xy[k];
+            level_at[c] = lv[k];
+            body_at[c] = bd[k];
         }
         let mut ws = width;
         if let Some(j) = join {
             xy.push(shifted[j]);
             ws.push(*ws.last().unwrap_or(&MIN_WIDTH));
+            lv.push(level_at[j]);
+            bd.push(body_at[j]);
         }
         let smooth = chaikin(&xy, 3);
-        // Widths along the smoothed line, by arc position.
+        // Widths and levels along the smoothed line, by arc position.
         let total = smooth.len();
         let last = ws.len() - 1;
-        let width_at = |k: usize| -> i32 {
+        // The path point nearest point `k` of the smoothed line.
+        let nearest_point = |k: usize| -> usize {
+            if total < 2 {
+                return 0;
+            }
+            ((k * last + (total - 1) / 2) / (total - 1)).min(last)
+        };
+        let along = |vs: &[i32], k: usize| -> i32 {
             if total < 2 || last == 0 {
-                return ws[0];
+                return vs[0];
             }
             let num = k * last;
             let (i0, frac) = (num / (total - 1), num % (total - 1));
             if i0 >= last {
-                return ws[last];
+                return vs[last];
             }
             let t = ((frac as i64) << 16) / (total as i64 - 1);
-            lerp(ws[i0], ws[i0 + 1], t as i32)
+            lerp(vs[i0], vs[i0 + 1], t as i32)
         };
         // Keep a point every few: enough to lay the river down.
         let mut pts = Vec::new();
         let mut wid = Vec::new();
-        for k in (0..total).step_by(4) {
+        let (mut lev, mut bod) = (Vec::new(), Vec::new());
+        let keep_point = |k: usize| k.is_multiple_of(4) || k == total - 1;
+        for k in (0..total).filter(|&k| keep_point(k)) {
             pts.push(smooth[k]);
-            wid.push(width_at(k));
-        }
-        if !(total - 1).is_multiple_of(4) {
-            pts.push(smooth[total - 1]);
-            wid.push(width_at(total - 1));
+            wid.push(along(&ws, k));
+            let b = bd[nearest_point(k)];
+            bod.push(b);
+            lev.push(bodies.level(b));
         }
         lines.push(Line {
             pts,
             width: wid,
+            body: bod,
+            level: lev,
             outlet: join.is_none(),
         });
     }
     lines
+}
+
+/// Where a river's water would stand at `p` (fixed-point tiles), as wide
+/// as `width`: [`INCISE`] under the lowest drained land `filled` within its
+/// channel and a tile beside it, and never above the lowest ground `h`
+/// there (so no river is perched over the land it runs through).
+fn lowest_under(h: &[i32], filled: &[i32], n: usize, p: (i32, i32), width: i32) -> i32 {
+    let r = width / 2 + ONE;
+    let reach = (r >> 16) + 1;
+    let (cx, cy) = (p.0 >> 16, p.1 >> 16);
+    let mut low = i32::MAX;
+    for y in (cy - reach).max(0)..(cy + reach + 1).min(n as i32) {
+        for x in (cx - reach).max(0)..(cx + reach + 1).min(n as i32) {
+            let (dx, dy) = (x * ONE - p.0, y * ONE - p.1);
+            if i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy)
+                <= i64::from(r) * i64::from(r)
+            {
+                let i = y as usize * n + x as usize;
+                low = low.min((filled[i] - INCISE).min(h[i]));
+            }
+        }
+    }
+    if low == i32::MAX {
+        let i = (cy.clamp(0, n as i32 - 1) as usize) * n + cx.clamp(0, n as i32 - 1) as usize;
+        (filled[i] - INCISE).min(h[i])
+    } else {
+        low
+    }
 }
 
 /// Round off a line's corners: each round replaces every corner with two
@@ -628,7 +799,11 @@ fn flow_layer(lines: &[Line], n: usize) -> Vec<u8> {
             return;
         }
         let w = line.width[k];
-        let speed = if w < 3 * ONE {
+        // Falling fast (rapids, the lip of a fall): fast whatever its width.
+        let fall = (line.level.get(k + 1)).map_or(0, |&next| line.level[k] - next);
+        let run = hypot(b.0 - a.0, b.1 - a.1).max(1);
+        let rapids = i64::from(fall) * i64::from(ONE) > i64::from(RAPIDS) * i64::from(run);
+        let speed = if w < 3 * ONE || rapids {
             3
         } else if w < 6 * ONE {
             2
@@ -637,6 +812,20 @@ fn flow_layer(lines: &[Line], n: usize) -> Vec<u8> {
         };
         best[i] = d2;
         out[i] = gc_sim::Flow::byte(Angle::of_vec(way), speed);
+    });
+    out
+}
+
+/// The body of water on each tile the river lines cover: the nearest
+/// point's of its line (0, the map's line, elsewhere).
+fn body_layer(lines: &[Line], n: usize) -> Vec<u16> {
+    let mut out = vec![0; n * n];
+    let mut best = vec![i64::MAX; n * n];
+    each_disc(lines, n, |i, d2, line, k| {
+        if d2 < best[i] {
+            best[i] = d2;
+            out[i] = line.body[k];
+        }
     });
     out
 }
@@ -701,9 +890,68 @@ fn trim_lakes(m: &mut [bool], depth: &[i32], n: usize, max: usize) {
     }
 }
 
+/// Give each lake its level: a basin whose water would stand at least
+/// [`HIGH`] over the map's line is a high lake at its own level, as deep as
+/// the land lets it be: [`INCISE`] under the basin's brim, and no higher
+/// than the highest ground the lake covers (a big basin keeps only its
+/// deepest part). Its water fills the basin under that level, and a basin
+/// too shallow or small for that is no lake. Other lakes stay at the line.
+fn high_lakes(
+    h: &Grid,
+    filled: &[i32],
+    avoid: &[bool],
+    keep: &[bool],
+    lake: &mut [bool],
+    body: &mut [u16],
+    bodies: &mut Bodies,
+) {
+    let n = h.n;
+    for patch in patches(lake, n) {
+        let brim = patch.iter().map(|&i| filled[i]).min().unwrap_or(0);
+        let top = patch.iter().map(|&i| h.v[i]).max().unwrap_or(0);
+        let lv = (brim - INCISE).min(top);
+        if lv < WATER_LINE + super::levels::HIGH {
+            for &i in &patch {
+                body[i] = 0;
+            }
+            continue;
+        }
+        for &i in &patch {
+            lake[i] = false;
+        }
+        // The basin under the level, from the patch's tiles that are under
+        // it, four ways round.
+        let mut basin: Vec<usize> = patch.iter().copied().filter(|&i| h.v[i] < lv).collect();
+        let mut seen = vec![false; n * n];
+        for &i in &basin {
+            seen[i] = true;
+        }
+        let mut head = 0;
+        while let Some(&i) = basin.get(head) {
+            head += 1;
+            for k in field::n4(i, n) {
+                if !seen[k] && !keep[k] && !avoid[k] && h.v[k] < lv {
+                    seen[k] = true;
+                    basin.push(k);
+                }
+            }
+        }
+        if basin.len() < MIN_LAKE {
+            continue;
+        }
+        let b = bodies.add(lv);
+        for i in basin {
+            lake[i] = true;
+            body[i] = b;
+        }
+    }
+}
+
 /// Cut the valleys, channels and lake floors into `h`, then lay shallows
-/// across the long rivers. Tiles in `keep` are never touched. Returns the
-/// middle of each ford.
+/// across the long rivers. Each eases down to its own water's `level`
+/// (the nearest water's, off it). Tiles in `keep` are never touched.
+/// Returns the middle of each ford.
+#[allow(clippy::too_many_arguments)]
 fn carve(
     h: &mut Grid,
     seeds: &mut Seeds,
@@ -711,12 +959,24 @@ fn carve(
     off_keep: &Grid,
     river: &[bool],
     lake: &[bool],
+    body: &[u16],
+    bodies: &Bodies,
     lines: &[Line],
 ) -> Vec<(i32, i32)> {
     let n = h.n;
     let nn = n * n;
     let wet: Vec<bool> = (0..nn).map(|i| river[i] || lake[i]).collect();
-    let dist = distance(&wet, n, 42);
+    let level = bodies.per_tile(body);
+    let (dist, near) = nearest(&wet, &level, n, 42, WATER_LINE);
+    // Low water's own valleys reach in among the high water's, and a
+    // lower reach's among a higher one's, but neither cuts a bank under
+    // the level of any water beside it.
+    let high = level.iter().any(|&l| l > WATER_LINE);
+    let guard = high.then(|| highest_near(&wet, &level, n, BANK_GUARD));
+    let low_dist = high.then(|| {
+        let low: Vec<bool> = (0..nn).map(|i| wet[i] && level[i] == WATER_LINE).collect();
+        distance(&low, n, 42)
+    });
     let dry: Vec<bool> = wet.iter().map(|&w| !w).collect();
     let inner = distance(&dry, n, 4);
     // How far the valley reaches varies from place to place: 8 to 42 tiles.
@@ -733,31 +993,81 @@ fn carve(
         if keep[i] {
             continue;
         }
-        let d = dist.v[i];
         let z = h.v[i];
-        let s = smoothstep(reach.v[i], 0, d);
-        let valley = mul(mul(s, sqrt(s)), smoothstep(0, AVOID * ONE, off_keep.v[i]));
-        if valley > 0 {
-            // A gentle bank a little above the water, steeper right at
-            // the shore so the bank never makes a cliff of the channel's
-            // edge.
-            let rise =
-                (ONE / 2 + mul(d, ONE * 6 / 100)).min(ONE * 12 / 100 + mul(d, ONE * 30 / 100));
-            let target = z.min(WATER_LINE + rise);
-            h.v[i] = lerp(z, target, valley);
+        let keep_fade = smoothstep(0, AVOID * ONE, off_keep.v[i]);
+        let valley = |d: i32| {
+            let s = smoothstep(reach.v[i], 0, d);
+            mul(mul(s, sqrt(s)), keep_fade)
+        };
+        // A gentle bank a little above the water, steeper right at the
+        // shore so the bank never makes a cliff of the channel's edge.
+        let rise =
+            |d: i32| (ONE / 2 + mul(d, ONE * 6 / 100)).min(ONE * 12 / 100 + mul(d, ONE * 30 / 100));
+        // The least the bank may be cut to: the highest water beside it.
+        let floor = guard.as_ref().map_or(i32::MIN, |g| z.min(g[i] + ONE / 16));
+        let d = dist.v[i];
+        let v = valley(d);
+        if v > 0 {
+            h.v[i] = lerp(z, z.min(near[i] + rise(d)), v).max(floor);
+        }
+        if let Some(low) = &low_dist
+            && near[i] > WATER_LINE
+        {
+            let d = low.v[i];
+            let v = valley(d);
+            if v > 0 {
+                let cut = lerp(z, z.min(WATER_LINE + rise(d)), v);
+                h.v[i] = h.v[i].min(cut.max(floor));
+            }
         }
         if wet[i] {
-            let bed = WATER_LINE - ONE * 45 / 100 - mul(inner.v[i].min(4 * ONE), ONE * 2 / 10);
+            let bed = level[i] - ONE * 45 / 100 - mul(inner.v[i].min(4 * ONE), ONE * 2 / 10);
             h.v[i] = h.v[i].min(bed);
         }
     }
-    fords(h, seeds, keep, lines)
+    fords(h, seeds, keep, body, lines)
+}
+
+/// The highest level of the water within `r` tiles (eight ways) of each
+/// tile ([`WATER_LINE`] with none): what a bank there must stand over.
+fn highest_near(wet: &[bool], level: &[i32], n: usize, r: usize) -> Vec<i32> {
+    let mut rows = vec![WATER_LINE; n * n];
+    for y in 0..n {
+        for x in 0..n {
+            let mut best = WATER_LINE;
+            for xx in x.saturating_sub(r)..(x + r + 1).min(n) {
+                let k = y * n + xx;
+                if wet[k] {
+                    best = best.max(level[k]);
+                }
+            }
+            rows[y * n + x] = best;
+        }
+    }
+    let mut out = vec![WATER_LINE; n * n];
+    for y in 0..n {
+        for x in 0..n {
+            out[y * n + x] = (y.saturating_sub(r)..(y + r + 1).min(n))
+                .map(|yy| rows[yy * n + x])
+                .max()
+                .unwrap_or(WATER_LINE);
+        }
+    }
+    out
 }
 
 /// Shallows where each long river is narrowest: the bed is raised to just
-/// under the water line, in a disc as wide as the river, fading out into
-/// the deep. Returns the middle of each.
-fn fords(h: &mut Grid, seeds: &mut Seeds, keep: &[bool], lines: &[Line]) -> Vec<(i32, i32)> {
+/// under its water's level, in a disc as wide as the river, fading out into
+/// the deep. Never where the river falls from one reach to the next, and on
+/// high water only its own body's tiles are raised. Returns the middle of
+/// each.
+fn fords(
+    h: &mut Grid,
+    seeds: &mut Seeds,
+    keep: &[bool],
+    body: &[u16],
+    lines: &[Line],
+) -> Vec<(i32, i32)> {
     let n = h.n as i32;
     let mut out = Vec::new();
     for line in lines {
@@ -801,6 +1111,11 @@ fn fords(h: &mut Grid, seeds: &mut Seeds, keep: &[bool], lines: &[Line]) -> Vec<
                 if x < 8 || y < 8 || x >= n - 8 || y >= n / 2 - 14 {
                     continue;
                 }
+                // (on one flat reach, clear of a fall)
+                let around = k.saturating_sub(FORD_CLEAR)..(k + FORD_CLEAR + 1).min(m);
+                if line.body[around].iter().any(|&b| b != line.body[k]) {
+                    continue;
+                }
                 let score = line.width[k] + 2 * seeds.unit();
                 if best.is_none_or(|(s, _)| score < s) {
                     best = Some((score, k));
@@ -808,6 +1123,7 @@ fn fords(h: &mut Grid, seeds: &mut Seeds, keep: &[bool], lines: &[Line]) -> Vec<
             }
             let Some((_, k)) = best else { continue };
             let (fx, fy) = line.pts[k];
+            let b = line.body[k];
             // Wide enough to cross the whole river, fading out beyond.
             let inner = (3 * ONE).max(line.width[k] / 2 + ONE);
             let outer = inner + 3 * ONE;
@@ -816,13 +1132,13 @@ fn fords(h: &mut Grid, seeds: &mut Seeds, keep: &[bool], lines: &[Line]) -> Vec<
             for y in (cy - reach).max(0)..(cy + reach + 2).min(n) {
                 for x in (cx - reach).max(0)..(cx + reach + 2).min(n) {
                     let i = (y * n + x) as usize;
-                    if keep[i] {
+                    if keep[i] || (b != 0 && body[i] != b) {
                         continue;
                     }
                     let d = hypot(x * ONE - fx, y * ONE - fy);
                     let f = smoothstep(outer, inner, d);
                     if f > 0 {
-                        let shallow = WATER_LINE - ONE / 5;
+                        let shallow = line.level[k] - ONE / 5;
                         h.v[i] = h.v[i].max(lerp(h.v[i], shallow, f));
                     }
                 }

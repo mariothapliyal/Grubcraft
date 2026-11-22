@@ -66,6 +66,7 @@ fn the_minds_see_cleared_ground() {
             growth: &growth,
             footing: &[],
             flow: &[],
+            water_levels: &[],
         },
         champions: false,
         sky: gc_sim::Sky::STILL,

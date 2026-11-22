@@ -103,6 +103,7 @@ fn world(seed: u64, spells: &'static [Spell], running: bool) -> World {
             growth: &[],
             footing: &[],
             flow: &flow,
+            water_levels: &[],
         },
         champions: false,
         sky: Sky {

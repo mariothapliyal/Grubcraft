@@ -51,6 +51,7 @@ fn world_on(map: u32, seed: u64, units: &[UnitStats], cover: &[u8], teams: &[u8]
             growth: &[],
             footing: &[],
             flow: &[],
+            water_levels: &[],
         },
         champions: false,
         sky: gc_sim::Sky::STILL,

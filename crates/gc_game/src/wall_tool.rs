@@ -794,7 +794,7 @@ impl Running {
         self.hud.drag_preview = self.drag_preview(id, old);
         let colour = color_of(&self.parties, self.sandbox.side);
         let hm = &self.heightmap;
-        let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
+        let ground = |x, z| hm.surface_at(x, z);
         let blueprint = self.hud.wall_mode.blueprint;
         let open = if blueprint { Fit::Blueprint } else { Fit::Open };
         let look = self.buildings.wall_look(id, false);
@@ -882,7 +882,7 @@ impl Running {
         let side = self.sandbox.side;
         let colour = color_of(&self.parties, side);
         let hm = &self.heightmap;
-        let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
+        let ground = |x, z| hm.surface_at(x, z);
         for p in self.world.plans().iter().filter(|p| p.owner == side) {
             buildings::push_wall_ghost(
                 p.line.map(i32::from),
@@ -904,7 +904,7 @@ impl Running {
         let plans = || self.world.plans().iter().filter(move |p| p.owner == side);
         if let Some((origin, dir)) = self.cursor_ray() {
             let hm = &self.heightmap;
-            let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
+            let ground = |x, z| hm.surface_at(x, z);
             let hit = plans()
                 .filter_map(|p| {
                     let (x, z) = (p.tile.0 as f32, p.tile.1 as f32);

@@ -327,7 +327,7 @@ const SHOOTING_TICKS: u32 = 24;
 /// Ground height for the cameras: the terrain, or the water's surface where
 /// it is deeper than the bed.
 fn ground_of(map: &Map, p: Vec2) -> f32 {
-    map.height_at(p.x, p.y).max(map.water_level())
+    map.surface_at(p.x, p.y)
 }
 
 /// While riding, a ray picks a block of soldiers this far outside its edges,
@@ -2887,20 +2887,14 @@ impl Running {
         let mut prev_t = 0.0;
         for _ in 0..4000 {
             let p = origin + dir * t;
-            let ground = self
-                .heightmap
-                .height_at(p.x, p.z)
-                .max(self.heightmap.water_level());
+            let ground = self.heightmap.surface_at(p.x, p.z);
             if p.y <= ground {
                 // Refine between the last point above ground and this one.
                 let (mut lo, mut hi) = (prev_t, t);
                 for _ in 0..16 {
                     let mid = (lo + hi) * 0.5;
                     let q = origin + dir * mid;
-                    let g = self
-                        .heightmap
-                        .height_at(q.x, q.z)
-                        .max(self.heightmap.water_level());
+                    let g = self.heightmap.surface_at(q.x, q.z);
                     if q.y <= g { hi = mid } else { lo = mid }
                 }
                 return Some(hi);
@@ -3065,7 +3059,7 @@ impl Running {
         buildings::pick(
             &self.world,
             &self.buildings,
-            |x, z| hm.height_at(x, z).max(hm.water_level()),
+            |x, z| hm.surface_at(x, z),
             ray,
             |s| shown(s) && accept(s),
             &self.decks,
@@ -5185,7 +5179,6 @@ impl Running {
             } else {
                 1.0
             };
-            let water = heightmap.water_level();
             let wind = self.atmosphere.wind();
             // The flash lights the whole sky, but the bolt itself is left
             // out under Clarity (a bright line that blinks in an instant).
@@ -5216,11 +5209,12 @@ impl Running {
                     density,
                     (self.atmosphere.mist(), MIST_TINT, wind),
                     (view_focus, view_distance, Vec2::new(eye.x, eye.z)),
-                    |p| heightmap.height_at(p.x, p.y).max(water),
+                    |p| heightmap.surface_at(p.x, p.y),
                     |p| {
                         p.cmpge(Vec2::splat(MIST_EDGE)).all()
                             && p.cmplt(Vec2::splat(side - MIST_EDGE)).all()
-                            && heightmap.height_at(p.x, p.y) < water + MIST_BANK
+                            && heightmap.height_at(p.x, p.y)
+                                < heightmap.water_at(p.x, p.y) + MIST_BANK
                             && (reveal || fog.sees_tile((p.x.floor() as i32, p.y.floor() as i32)))
                     },
                 );
@@ -5232,7 +5226,7 @@ impl Running {
                     (weather, amount, wind),
                     view_focus,
                     view_distance,
-                    |p| heightmap.height_at(p.x, p.y).max(water),
+                    |p| heightmap.surface_at(p.x, p.y),
                 );
             }
         }
@@ -5679,9 +5673,22 @@ impl Running {
                 },
             )
         });
-        for change in changes {
-            let text = gc_match::cover::notice(change, &party_name(&self.parties, change.player()));
-            self.menu.net().announce(text);
+        // The person's own name, as their friends know it, not the side's
+        // colour that `party_name` puts in front.
+        let names: Vec<String> = changes
+            .iter()
+            .map(|c| {
+                let p = usize::from(c.player());
+                o.start
+                    .players
+                    .get(p)
+                    .map_or_else(|| party_name(&self.parties, c.player()), |s| s.name.clone())
+            })
+            .collect();
+        for (change, name) in changes.into_iter().zip(names) {
+            self.menu
+                .net()
+                .announce(gc_match::cover::notice(change, &name));
         }
     }
 
@@ -6194,6 +6201,7 @@ impl Running {
                 || stored.water_level != shown.water_level
                 || stored.cover != shown.cover
                 || (!stored.growth.is_empty() && stored.growth != shown.growth)
+                || stored.water_levels != shown.water_levels
             {
                 map_note = Some(
                     "This replay's map was made by another build: the ground may look different from where the soldiers walk.",
@@ -7004,7 +7012,7 @@ impl Running {
     fn leave_marks(&mut self) {
         let terrain = self.world.terrain();
         let in_wood = |p| terrain.cover(p) == gc_sim::Cover::Wood;
-        let (heightmap, water) = (&self.heightmap, self.heightmap.water_level());
+        let heightmap = &self.heightmap;
         // Arrows that come down in the water are lost, and so are those that
         // land on a building (the picture has no roof or wall to stick them
         // in, and a shaft showing through a wall would look wrong).
@@ -7014,7 +7022,8 @@ impl Running {
         let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
         let dry = |p: Vec2| {
             let ground = heightmap.height_at(p.x, p.y);
-            (ground >= water && !buildings::covers(world, shown, p)).then_some(ground)
+            (ground >= heightmap.water_at(p.x, p.y) && !buildings::covers(world, shown, p))
+                .then_some(ground)
         };
         // Where each volley came from, as the arrows in the air are drawn, so
         // they come down where they were seen to. One pass over the volleys
@@ -7930,7 +7939,7 @@ impl Running {
             fit,
             colour,
             modelled,
-            |x, z| hm.height_at(x, z).max(hm.water_level()),
+            |x, z| hm.surface_at(x, z),
             &mut self.instances,
         );
     }
@@ -8016,7 +8025,7 @@ impl Running {
         self.decks = bridge_deck::Decks::new(
             tiles,
             |p| hm.drawn_height(p.x, p.y),
-            |p| hm.height_at(p.x, p.y) >= hm.water_level(),
+            |p| hm.height_at(p.x, p.y) >= hm.water_at(p.x, p.y),
         );
         self.decks_key = key;
     }
@@ -8048,7 +8057,7 @@ impl Running {
         let across = Vec2::new(look.x, look.z).normalize_or(Vec2::NEG_Y);
         let (hm, parties, art) = (&self.heightmap, &self.parties, &self.art);
         let siege = &self.siege;
-        let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
+        let ground = |x, z| hm.surface_at(x, z);
         buildings::push(
             &self.world,
             &self.buildings,
@@ -8249,10 +8258,9 @@ impl Running {
             }
         }
         let hm = &self.heightmap;
-        let dry = hm.water_level() + ambient::walkers::SHORE;
         let free = |p: Vec2| {
             let tile = (p.x.floor() as i32, p.y.floor() as i32);
-            hm.height_at(p.x, p.y) > dry
+            hm.height_at(p.x, p.y) > hm.water_at(p.x, p.y) + ambient::walkers::SHORE
                 && (reveal || fog.sees_tile(tile))
                 && !looks.iter().any(|(l, _)| l.gap(p) < ambient::piles::CLEAR)
         };
@@ -8486,7 +8494,8 @@ impl Running {
             0 => {
                 let hm = &self.heightmap;
                 let wet = |x: i32, y: i32| {
-                    hm.height_at(x as f32 + 0.5, y as f32 + 0.5) < hm.water_level()
+                    let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+                    hm.height_at(x, y) < hm.water_at(x, y)
                 };
                 let fits = |x: i32, y: i32| self.world.can_build(bridge, (x, y), 0).is_ok();
                 // The crossing nearest the start: a dry tile, 3 to 12 wet
@@ -9962,6 +9971,7 @@ fn set_terrain(renderer: &mut gc_render::Renderer, map: &Map) {
         samples_per_tile: gc_map::SAMPLES_PER_TILE,
         max_height: map.max_height(),
         water_level: map.water_level(),
+        water_levels: &map.tile_water_levels(),
         heights: &map.samples,
         cliff: &map.cliff_cells(),
         tint: &tint,

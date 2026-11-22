@@ -220,6 +220,7 @@ mod tests {
             growth: &[],
             footing: &[],
             flow: &[],
+            water_levels: &[],
         };
         let base = map_hash(&a, &ground(&heights, 2));
         assert_ne!(base, map_hash(&a, &ground(&raised, 2)));

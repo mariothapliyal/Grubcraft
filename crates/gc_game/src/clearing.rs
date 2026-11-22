@@ -125,7 +125,7 @@ impl Running {
             return;
         }
         let (hm, world) = (&self.heightmap, &self.world);
-        let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
+        let ground = |x, z| hm.surface_at(x, z);
         let side = self.sandbox.side;
         let out = &mut self.instances;
         if self.watching.is_none() {

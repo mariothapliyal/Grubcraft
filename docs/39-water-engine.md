@@ -377,7 +377,7 @@ Each stage updates the Guide, Quick Start, tooltips and docs/quick-reference.md 
 
 ## 8. Decisions (Mario's rule: pick the recommended option, with an Opus check)
 
-- **Per stretch, not per tile.** Water per tile (a real fluid grid) would look clever but costs memory and time all match and is hard to keep deterministic and readable. Stretches of 16 tiles give water that travels, backs up and differs along a river, at a cost of a few dozen numbers a second. Lakes stay one level.
+- **Per stretch, not per tile.** Water per tile (a real fluid grid) would look clever but costs memory and time all match and is hard to keep deterministic and readable. Stretches of 16 tiles give water that travels, backs up and differs along a river, at a cost of a few dozen numbers a second. Lakes stay one level. (Since Living Land stage 5, 2026-11-22, each tile's still water has its own level: a highland lake or river reach stands at its own height, and the stretches raise their water over each tile's own level. That is fixed by the map, not a moving fluid, so this decision holds; see [27](27-living-land.md#stage-5-water-that-runs-downhill).)
 - **Floods are emergent, with a heavy-tailed storm burst on top.** Floods come from what fell on what ground in what season, so they vary naturally; the burst roll gives the rare catastrophe without a random stream.
 - **Debris is a small pool, not scenery.** 48 pieces at most, owned shares capped. That keeps the tick cost tiny and stops spam, while still letting one well-timed raft bring down a bridge.
 - **Dumping costs Grub and needs workers at the bank.** It is a deliberate act with a cost and a body at risk, not a click from across the map.
