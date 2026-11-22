@@ -660,7 +660,8 @@ pace and on the route.
   attack and no target keeps facing the way it faces and sidesteps or
   backs into its place (`drilled_pace`: full pace within 45 degrees of
   ahead, three quarters sideways, half backing), instead of turning
-  round, walking and turning back. Single bodies (heroes, workers, big
+  round, walking and turning back. The last steps into place at the end of any other march keep
+  half pace (`Regiments::drill`). Single bodies (heroes, workers, big
   beasts) walk as before: drilled pace made workers faster to their
   fields, which moved the economy.
 - **Make way** (change 10, `Combat::make_way`). A regiment at ease (no
@@ -709,16 +710,23 @@ disorder):
 
 | | stage 6 | stage 2 |
 |---|---|---|
-| Six regiments, apart | 49.7 s / 14.7 s / 10% | 47.9 s / 14.5 s / 10% |
-| Six, as a brigade | 49.5 s / 10.9 s / 7% | 47.6 s / 10.7 s / 6% |
-| Twelve, apart | 62.1 s / 26.9 s / 24% | 58.7 s / 25.1 s / 22% |
-| Twelve, as a brigade | 59.7 s / 19.6 s / 16% | 56.8 s / 18.3 s / 15% |
+| Six regiments, apart | 49.7 s / 14.7 s / 10% | 49.5 s / 14.5 s / 10% |
+| Six, as a brigade | 49.5 s / 10.9 s / 7% | 49.3 s / 10.9 s / 6% |
+| Twelve, apart | 62.1 s / 26.9 s / 24% | 60.6 s / 25.4 s / 22% |
+| Twelve, as a brigade | 59.7 s / 19.6 s / 16% | 58.8 s / 18.7 s / 15% |
 
-Armies arrive 2 to 3.5 s sooner, with about the same spread: regiments
-that arrive first and stand at ease no longer hold up those still coming
-in past them. (A measuring slip on the way showed spreads 2 to 3 s
-tighter: regiments stepping aside after they had arrived were counted as
-not arrived yet. These are the honest numbers.) A column of three marching through a line
+Twelve regiments arrive a second or so sooner and a little less
+disordered: those that arrive first and stand at ease no longer hold up
+those still coming in past them. Six barely change; they seldom march
+through each other. Two things on the way were not kept:
+
+- Drilled pace for every regiment's last steps into place (full pace
+  ahead instead of half) made all four rows about 2 s quicker, but the
+  computer held a ford in 33 of 64 battles instead of 56 (its line came
+  forward into the ford faster); drilled pace is now for small moves
+  only (53 of 64).
+- A measuring slip showed spreads 2 to 3 s tighter: regiments stepping
+  aside after they had arrived were counted as not arrived yet. A column of three marching through a line
 of six at ease (`crates/gc_sim/tests/make_way.rs`) spent about 700
 regiment-ticks in disorder before and none now; the line stands where
 it stood within a twentieth of a tile.
