@@ -5,6 +5,10 @@
 //! ```text
 //! AI_MAP=0 AI_SEED=7 AI_MINUTES=30 cargo test -p gc_game --release wall_survey -- --ignored --nocapture
 //! ```
+//!
+//! With `AI_RECORD=FILE.gcr` the match is also recorded, to watch in the
+//! game (`grubcraft --watch FILE.gcr`, with `GC_WATCH_FROM=SECONDS` to
+//! start late in it).
 
 use gc_ai::Difficulty;
 use gc_data::Faction;
@@ -365,7 +369,18 @@ fn print_bases(world: &World, real: &Real, factions: &[Faction], choice: usize, 
         if let Some(m) = base_map(world, real, p, 22) {
             println!("{m}");
         }
+        let (curved, all) = drawn_walls(world, p);
+        println!("walls drawn: {all}, as curves: {curved}");
     }
+}
+
+/// How many of `player`'s walls were drawn as curves (through more than
+/// two points), and how many were drawn in all.
+pub(crate) fn drawn_walls(world: &World, player: PlayerId) -> (usize, usize) {
+    let drawings = (0..).map_while(|id| world.drawing(id));
+    let mine: Vec<_> = (drawings.filter(|d| d.owner == player && d.width <= 1)).collect();
+    let curved = mine.iter().filter(|d| d.path.points().len() > 2).count();
+    (curved, mine.len())
 }
 
 #[test]
@@ -392,7 +407,15 @@ fn wall_survey() {
         let temper = crate::conquest_ai::temper(seed, i);
         minds.add(game.mind(i, Difficulty::General, temper, None));
     }
-    game.open(&mut world, World::tick);
+    let record = std::env::var("AI_RECORD").ok();
+    let mut rec = record.as_ref().map(|_| {
+        gc_replay::Recorder::new(&game.setup(), &world, String::new()).conquest(plan.clone())
+    });
+    let mut tick = |w: &mut World, c: &[gc_sim::PlayerCommand]| match rec.as_mut() {
+        Some(r) => r.tick(w, c),
+        None => w.tick(c),
+    };
+    game.open(&mut world, &mut tick);
     let end = minutes * 60 * TICKS_PER_SECOND;
     let mut cmds = Vec::new();
     let mut marches = Marches::default();
@@ -400,7 +423,7 @@ fn wall_survey() {
     while world.verdict().is_none() && world.tick_count() < end {
         cmds.clear();
         minds.tick(&world, &mut cmds);
-        world.tick(&cmds);
+        tick(&mut world, &cmds);
         let t = world.tick_count();
         if t.is_multiple_of(TICKS_PER_SECOND) {
             marches.second(&world, &real);
@@ -463,6 +486,14 @@ fn wall_survey() {
     }
     if walls {
         print_bases(&world, &real, &factions, choice, seed);
+    }
+    drop(tick);
+    if let (Some(path), Some(rec)) = (record, rec) {
+        let mut replay = rec.finish();
+        replay.header.map = Some(choice as u8);
+        replay.note = format!("wall survey: map {choice}, seed {seed}, Generals {picked}");
+        replay.save(&path).expect("the replay is saved");
+        println!("recorded {path}");
     }
     marches.report(env_number("AI_STUCK", 12) as usize);
     println!(
