@@ -36,13 +36,13 @@ pub const TURN: Duration = Duration::from_millis(1000 / gc_sim::TICKS_PER_SECOND
 
 /// Turns between a command reaching the host and being simulated
 /// everywhere (docs/11-networking.md, "Input delay") when a match starts:
-/// 100 ms, right for home Wi-Fi. From then on it follows the measured
-/// round trips, between [`MIN_DELAY`] and [`MAX_DELAY`].
+/// 100 ms. From then on it follows how much the measured round trips
+/// vary, between [`MIN_DELAY`] and [`MAX_DELAY`].
 pub const INPUT_DELAY: u32 = 2;
 pub const MIN_DELAY: u32 = 1;
 pub const MAX_DELAY: u32 = 8;
-/// Added to the slowest player's half round trip and jitter when choosing
-/// the delay, for the host's own frame and the receiver's.
+/// Added to the most uneven link's jitter when choosing the delay, for the
+/// host's own frame and the receiver's.
 const DELAY_MARGIN: Duration = Duration::from_millis(10);
 /// The delay is looked at again every this many turns (a second).
 const DELAY_EVERY: u32 = 20;
@@ -105,6 +105,15 @@ const CATCH_UP_BURST: usize = 24;
 /// side's acknowledgement (sent at least every [`MATCH_KEEPALIVE`]) comes
 /// back before the next.
 const BURST_GAP: Duration = Duration::from_millis(60);
+
+/// A joiner catches up as fast as it can once this many turns more than
+/// the input delay are waiting (a rejoin, or a stall).
+const CATCH_UP_AFTER: u32 = 8;
+/// Every this many turns (two seconds) a joiner looks at the fewest turns
+/// it had waiting meanwhile, and plays all but [`SPARE_KEPT`] of them
+/// ahead of its clock.
+const SPARE_EVERY: u32 = 40;
+const SPARE_KEPT: u32 = 1;
 
 /// What this machine runs, for the version gate and the map check.
 #[derive(Clone, Debug)]
@@ -316,6 +325,14 @@ struct ClientGame {
     next_turn: u32,
     /// When the next turn is due on this machine's clock.
     due: Option<Instant>,
+    /// A turn was due and hadn't come: the clock moves to when it does.
+    starved: bool,
+    /// The fewest turns waiting after one was played, over the last
+    /// `looked` turns played on time.
+    spare: Option<u32>,
+    looked: u32,
+    /// Turns to play ahead of the clock, moving it earlier.
+    rush: u32,
     outbox: Vec<PlayerCommand>,
     /// Joined a match already under way (a rejoin after a restart), and
     /// still replaying it: set until this machine has kept up for
@@ -548,9 +565,18 @@ impl Lan {
                             .into_iter()
                             .map(|c| PlayerCommand { player: me, ..c }),
                     );
+                    if g.outbox.is_empty() {
+                        return;
+                    }
                 }
             }
             Role::Idle => {}
+        }
+        // A joiner's orders go to the host now, not with the next frame's
+        // pump.
+        if matches!(self.role, Role::Client(_)) {
+            let now = self.net.now();
+            self.flush(now, false);
         }
     }
 
@@ -1176,6 +1202,10 @@ impl Lan {
                     ready: VecDeque::new(),
                     next_turn: 0,
                     due: None,
+                    starved: false,
+                    spare: None,
+                    looked: 0,
+                    rush: 0,
                     outbox: Vec::new(),
                     // A rejoiner gets the start without a lobby place
                     // first (no Welcome): the match is already under way.
@@ -2251,14 +2281,18 @@ fn close_turn(h: &mut Host, turn: u32) {
 }
 
 /// Look at the round trips again and move the input delay a turn toward
-/// what the slowest player needs (docs/11-networking.md, "Input delay").
+/// what the most uneven link needs (docs/11-networking.md, "Input delay").
 fn adapt_delay(h: &mut Host, length: Duration) {
     let Some(g) = &mut h.game else { return };
     let worst = h
         .peers
         .iter()
         .filter(|p| p.player.is_some() && p.active())
-        .filter_map(|p| Some(p.link.rtt()? / 2 + p.link.jitter() * 2))
+        // Only how uneven the trips are: a joiner's clock starts when the
+        // first turns arrive, so the trip itself is behind it already, and
+        // only a turn slower than those eats into its buffer.
+        .filter(|p| p.link.rtt().is_some())
+        .map(|p| p.link.jitter() * 2)
         .max();
     let Some(worst) = worst else { return };
     let wanted = ((worst + DELAY_MARGIN)
@@ -2373,26 +2407,56 @@ fn due_packets(link: &mut Link, now: Instant, all: bool, keepalive: Duration) ->
 }
 
 impl ClientGame {
-    /// More turns waiting than the input delay accounts for.
+    /// Far more turns waiting than a slow or uneven network accounts for
+    /// (a rejoin, or this machine stalled): catch up as fast as it can.
     fn behind(&self) -> bool {
-        self.ready.len() as u32 > self.delay + 1
+        self.ready.len() as u32 > self.delay + CATCH_UP_AFTER
     }
 }
 
+/// The next turn on a joiner, by its own clock: one every `length` while
+/// turns are waiting. The clock is a jitter buffer. It starts when the
+/// first turns arrive, moves later when a turn comes late (so the next
+/// ones, as slow, come in time), and earlier when turns have been waiting
+/// longer than needed for [`SPARE_EVERY`] turns (so a network that got
+/// faster, or a stall caught up, doesn't keep this machine further behind
+/// the host than it needs to be: docs/11-networking.md, "Order lag").
 fn client_turn(g: &mut ClientGame, now: Instant, length: Duration) -> Option<Vec<PlayerCommand>> {
     if g.ready.is_empty() {
+        // A turn due and none here: it is late.
+        g.starved |= g.due.is_some_and(|due| now >= due);
         return None;
     }
     let due = *g.due.get_or_insert(now);
-    // Behind: catch up a turn at a time.
-    if now < due && !g.behind() {
+    let early = now < due;
+    if early && !g.behind() && g.rush == 0 {
         return None;
     }
-    // After a stall, don't rush the turns that piled up on the clock.
-    let base = if now > due + length * 2 { now } else { due };
-    g.due = Some(base + length);
+    let late = std::mem::take(&mut g.starved) || now > due + length * 2;
+    if early {
+        // Catching up or draining spare turns: the clock stays, so it
+        // moves a turn earlier.
+        g.rush = g.rush.saturating_sub(1);
+    } else {
+        // Late (or after a stall, which mustn't rush the turns that piled
+        // up on the clock): the clock follows the turn that came.
+        g.due = Some(if late { now } else { due } + length);
+    }
     g.next_turn += 1;
     let turn = g.ready.pop_front();
+    let spare = g.ready.len() as u32;
+    if late {
+        g.spare = None;
+        g.looked = 0;
+    } else {
+        g.spare = Some(g.spare.map_or(spare, |s| s.min(spare)));
+        g.looked += 1;
+        if g.looked >= SPARE_EVERY {
+            g.rush = g.spare.unwrap_or(0).saturating_sub(SPARE_KEPT);
+            g.spare = None;
+            g.looked = 0;
+        }
+    }
     if g.rejoining {
         g.kept_up = if g.behind() { 0 } else { g.kept_up + 1 };
         g.rejoining = g.kept_up < CAUGHT_UP_TURNS;

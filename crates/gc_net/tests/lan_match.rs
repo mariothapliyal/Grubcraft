@@ -428,10 +428,8 @@ fn three_machines_play_in_lockstep_through_lost_late_and_doubled_packets() {
     m.every_army_raised();
     assert!(TURNS.is_multiple_of(HASH_EVERY));
     assert_eq!(m.desyncs(), []);
-    // Round trips longer than a turn: the delay rose from where it
-    // started, and everyone heard.
+    // Everyone heard what the delay came to.
     let delay = m.lans[0].input_delay().unwrap();
-    assert!(delay > INPUT_DELAY, "{delay}");
     for l in &m.lans {
         assert_eq!(l.input_delay(), Some(delay));
     }
@@ -459,14 +457,30 @@ fn the_delay_drops_on_a_fast_network() {
 }
 
 #[test]
-fn the_delay_follows_a_slow_spell_up_and_back_down() {
+fn a_long_but_steady_round_trip_needs_no_more_delay() {
+    // A quarter of a second there and back (a far Tailscale relay): the
+    // joiner's clock starts when the first turns arrive, so the trip is
+    // behind it already, and the delay stays as short as it goes.
+    let net = MemoryNet::new(SEED);
+    net.set_latency(Duration::from_millis(120), Duration::from_millis(130));
+    let mut m = Match::on(&net, &["Alex"], &[], OnDrop::Wait);
+    m.run(&[], 300, Match::turns(300));
+    assert_eq!(m.ticks(), [300, 300]);
+    assert_eq!(m.lans[0].input_delay(), Some(MIN_DELAY));
+    m.settle();
+    assert!(m.same_worlds());
+    assert_eq!(m.desyncs(), []);
+}
+
+#[test]
+fn the_delay_follows_an_uneven_spell_up_and_back_down() {
     let mut m = Match::start(&["Alex"], &[], OnDrop::Wait);
     m.run(&[], 100, Match::turns(100));
     assert_eq!(m.lans[0].input_delay(), Some(MIN_DELAY));
 
-    // Round trips of a quarter of a second: a few turns of delay.
+    // Packets taking anything from 20 to 250 ms: a few turns of delay.
     m.net
-        .set_latency(Duration::from_millis(120), Duration::from_millis(130));
+        .set_latency(Duration::from_millis(20), Duration::from_millis(250));
     m.run(&[], 300, Match::turns(200));
     let slow = m.lans[0].input_delay().unwrap();
     assert!(slow >= 3, "{slow}");
