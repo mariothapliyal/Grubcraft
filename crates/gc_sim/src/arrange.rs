@@ -146,6 +146,13 @@ impl Shape {
     /// average facing, with the front-most regiment's centre on the line
     /// the order marks. `None` for fewer than two regiments.
     pub fn capture(members: &[GroupMember]) -> Option<Shape> {
+        Shape::stand(members).map(|(shape, _, _)| shape)
+    }
+
+    /// [`Shape::capture`], with the order that puts `members` where they
+    /// stand now in that shape: its target (the middle of the front line)
+    /// and facing.
+    pub fn stand(members: &[GroupMember]) -> Option<(Shape, FxVec2, Angle)> {
         if members.len() < 2 {
             return None;
         }
@@ -179,7 +186,7 @@ impl Shape {
         for s in &mut slots {
             s.back -= front;
         }
-        Some(Shape { slots })
+        Some((Shape { slots }, centre - frame.ahead * front, facing))
     }
 }
 
@@ -1026,6 +1033,49 @@ mod tests {
                 "{p:?}"
             );
             assert!((p.back - f64::from(y - 54)).abs() < 0.01, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn an_army_ordered_to_where_it_stands_in_its_own_shape_stays_put() {
+        // The order `Shape::stand` gives back sends each where it is now
+        // (what a regiment joining an army is placed by).
+        let mut members = army(&[Melee, Melee, Ranged, Horse]);
+        let at = [(40, 60), (50, 61), (50, 68), (30, 54)];
+        for (m, (x, y)) in members.iter_mut().zip(at) {
+            m.position = FxVec2::from_ints(x, y);
+        }
+        members[3].facing = Angle(0x1000);
+        let (shape, target, facing) = Shape::stand(&members).unwrap();
+        let mut ms = members.clone();
+        let mut out = Vec::new();
+        let order = GroupOrder {
+            target,
+            facing: Some(facing),
+            width: None,
+            brigade: 0,
+        };
+        arranged_move(&mut ms, order, Arrangement::Saved(&shape), &mut out);
+        for c in &out {
+            let Command::MoveTo {
+                regiment,
+                target,
+                facing,
+                ..
+            } = *c
+            else {
+                unreachable!()
+            };
+            let m = members.iter().find(|m| m.handle == regiment).unwrap();
+            let off = target - m.position;
+            assert!(
+                off.x.abs() < Fx::from_ratio(1, 8) && off.y.abs() < Fx::from_ratio(1, 8),
+                "{c:?}"
+            );
+            assert!(
+                (facing.unwrap().0.wrapping_sub(m.facing.0) as i16).unsigned_abs() < 64,
+                "{c:?}"
+            );
         }
     }
 
