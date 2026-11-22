@@ -422,6 +422,18 @@ fn fall(regs: &mut Regiments, stats: &[UnitStats], units: &[ConquestUnit], h: &H
     }
 }
 
+/// Whether no enemy regiment's middle is within [`CLEAR_TILES`] of hero
+/// regiment `i`.
+fn clear_of_foes(regs: &Regiments, stances: &Stances, i: usize) -> bool {
+    let near = Fx::from_int(CLEAR_TILES);
+    let (at, owner) = (regs.position[i], regs.owner[i]);
+    !(0..regs.alive.len()).any(|j| {
+        regs.alive[j]
+            && stances.hostile(owner, regs.owner[j])
+            && (regs.position[j] - at).length() <= near
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,16 +459,4 @@ mod tests {
         assert_eq!(revive_price(&u, 1), (130, 32, 520));
         assert_eq!(revive_price(&u, 10), (400, 100, 1600));
     }
-}
-
-/// Whether no enemy regiment's middle is within [`CLEAR_TILES`] of hero
-/// regiment `i`.
-fn clear_of_foes(regs: &Regiments, stances: &Stances, i: usize) -> bool {
-    let near = Fx::from_int(CLEAR_TILES);
-    let (at, owner) = (regs.position[i], regs.owner[i]);
-    !(0..regs.alive.len()).any(|j| {
-        regs.alive[j]
-            && stances.hostile(owner, regs.owner[j])
-            && (regs.position[j] - at).length() <= near
-    })
 }
