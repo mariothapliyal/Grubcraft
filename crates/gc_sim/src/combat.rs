@@ -3032,7 +3032,8 @@ impl Combat {
                 owner: regs.owner[i],
                 from: regs.position[i],
                 shots: regs.models[i],
-                damage: (u64::from(stats.missile_damage) * veterancy::damage_percent(regs, i) / 100)
+                damage: (u64::from(stats.missile_damage) * veterancy::missile_percent(regs, i)
+                    / 100)
                     .min(u64::from(u16::MAX)) as u16,
                 accuracy: (u64::from(stats.accuracy) * heart_percent(regs.morale_state[i]) / 100)
                     as u8,

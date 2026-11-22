@@ -40,6 +40,9 @@ pub mod formation;
 pub mod gates;
 pub mod generals;
 mod hash;
+#[cfg(test)]
+mod hero_tests;
+pub mod heroes;
 pub mod honor;
 pub mod larvae;
 pub mod manning;
@@ -137,7 +140,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 93;
+pub const SIM_VERSION: u32 = 94;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -2216,6 +2219,7 @@ impl World {
             if let Some(c) = &mut self.conquest {
                 c.tithe
                     .collect(&c.meters, &c.structures, &self.regiments, self.tick);
+                (c.heroes).earn(&mut self.regiments, &self.units, &c.units, &self.stances);
             }
             self.raise_trained();
         }
@@ -2223,6 +2227,8 @@ impl World {
         // one for a forecast too.
         self.regiments.wear_powers();
         self.regiments.wear_orders();
+        // Generals and heroes mark the regiments they lead afresh.
+        self.regiments.led.fill(false);
         if let Some(generals) = &mut self.generals {
             generals.update(
                 &mut self.regiments,
@@ -2231,6 +2237,15 @@ impl World {
                 &self.stances,
                 &self.vision,
                 self.tick,
+            );
+        }
+        if let Some(c) = &mut self.conquest {
+            (c.heroes).update(
+                &mut self.regiments,
+                &self.combat,
+                &self.units,
+                &c.units,
+                &self.stances,
             );
         }
         morale::update(
@@ -3194,12 +3209,14 @@ impl World {
                 .and_then(|stats| self.regiments.spawn(t.owner, t.unit, t.at, t.facing, stats));
             let Some(h) = spawned else {
                 // No room for it: what it cost comes back.
-                let u = conquest.unit(t.unit);
-                conquest
-                    .economy
-                    .refund(t.owner, u32::from(u.cost_grub), u32::from(u.cost_marrow));
+                let (grub, marrow) = conquest.price(t.owner, t.unit);
+                conquest.economy.refund(t.owner, grub, marrow);
                 continue;
             };
+            if let Some(growth) = conquest.unit(t.unit).hero {
+                let stats = &self.units[usize::from(t.unit)];
+                (conquest.heroes).raised(&mut self.regiments, stats, growth, t.owner, t.unit, h);
+            }
             self.vision.start(
                 &self.regiments,
                 &self.units,
@@ -4175,6 +4192,37 @@ impl World {
     /// Conquest.
     pub fn generals(&self) -> impl Iterator<Item = &General> {
         self.generals.iter().flat_map(Generals::iter)
+    }
+
+    /// Every player's hired heroes, standing or fallen (see [`heroes`]):
+    /// none outside Conquest.
+    pub fn heroes(&self) -> impl Iterator<Item = &heroes::Hero> {
+        self.conquest.iter().flat_map(|c| c.heroes.iter())
+    }
+
+    /// Regiment `h`'s hit points left and at full strength (a hero's
+    /// with its level's).
+    pub fn health_of(&self, h: RegimentHandle) -> Option<(u32, u32)> {
+        let i = self.regiments.resolve(h)?;
+        let stats = self.units.get(usize::from(self.regiments.unit[i]))?;
+        let left = self
+            .regiments
+            .model_hp(h)?
+            .iter()
+            .map(|&hp| u32::from(hp))
+            .sum();
+        Some((left, self.regiments.full_hp(i, stats)))
+    }
+
+    /// The hero regiment `h` is, if it is one.
+    pub fn hero_of(&self, h: RegimentHandle) -> Option<&heroes::Hero> {
+        self.conquest.as_ref()?.heroes.of_regiment(h)
+    }
+
+    /// What `player` would pay now for a regiment of type `unit` (Grub,
+    /// Marrow): a fallen hero's revive is priced by its level.
+    pub fn price_of(&self, player: PlayerId, unit: UnitId) -> Option<(u32, u32)> {
+        Some(self.conquest.as_ref()?.price(player, unit))
     }
 }
 

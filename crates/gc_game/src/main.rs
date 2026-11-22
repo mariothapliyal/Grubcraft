@@ -48,7 +48,7 @@
 //! regiment already has, up to four; an order without Shift replaces them.
 //! Badges on the screen edge point at your regiments and buildings under attack,
 //! ambushes and routs that are out of view; click one or press Space to look there.
-//! Shift+H previews the hero panel (there are no heroes yet).
+//! Shift+H previews the hero panel with a made-up hero (abilities and all).
 //! Orders: left-click one of your regiments to select it, or left-drag a box around
 //! several; Shift adds or removes. Right-click the ground to march the
 //! selection there side by side, facing the way they travel; right-drag to

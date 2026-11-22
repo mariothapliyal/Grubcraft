@@ -561,7 +561,7 @@ impl Running {
         let (mut unit, mut same, mut icon, mut same_icon) = (None, true, Icon::Sword, true);
         let mut color = crate::color_of(&self.parties, side);
         let mut ground = "";
-        let mut general = false;
+        let (mut general, mut first) = (false, None);
         let (mut orders, mut why, mut queued) = (Orders::None, 0u16, 0u8);
         let led = self
             .world
@@ -575,7 +575,7 @@ impl Running {
             let stats = &self.units.stats[r.unit as usize];
             let this = troop_icon(stats);
             if n == 0 {
-                (unit, icon) = (Some(r.unit), this);
+                (unit, icon, first) = (Some(r.unit), this, Some(h));
                 color = crate::color_of(&self.parties, r.owner);
                 ground = standing_word(&self.world, &r);
             } else {
@@ -632,6 +632,10 @@ impl Running {
             queued: if n == 1 { queued } else { 0 },
             why,
             shapes: &[],
+            // A hero alone: its hit points.
+            hero_hp: first
+                .filter(|&h| n == 1 && self.world.hero_of(h).is_some())
+                .and_then(|h| self.world.health_of(h)),
         };
         Some((name, selection))
     }
@@ -1026,9 +1030,16 @@ impl Running {
         // The minimap's outline is the ground the camera in use shows.
         hud.view.extend(view_outline(view_proj, plane, map));
 
-        let hero = hud
-            .hero_preview
-            .then(|| preview_hero(crate::color_of(&self.parties, side)));
+        let hero = if hud.hero_preview {
+            Some(preview_hero(crate::color_of(&self.parties, side)))
+        } else {
+            match self.selected[..] {
+                [h] => hero_panel(&self.world, h, &self.units.names, |p| {
+                    crate::color_of(&self.parties, p)
+                }),
+                _ => None,
+            }
+        };
         let ability_status: [String; 4] = match &hero {
             Some(h) => h.abilities.map(|a| a.status()),
             None => Default::default(),
@@ -1079,8 +1090,12 @@ impl Running {
         if has_orders && !burnable {
             grid[SLOT_BURN].tip = "Too wet to burn: the ground must dry first.";
         }
-        // A hero's abilities take the A, S, D and F slots.
-        if let Some(h) = &hero {
+        // A hero's abilities take the A, S, D and F slots (the made-up one's;
+        // the real ones have none yet, docs/43 stage H2).
+        if let Some(h) = hero
+            .as_ref()
+            .filter(|h| h.abilities.iter().any(|a| !a.short.is_empty()))
+        {
             for (i, a) in h.abilities.iter().enumerate() {
                 let slot = &mut grid[HERO_SLOT_FIRST + i];
                 slot.label = a.short;
@@ -2375,6 +2390,36 @@ fn draw_hint(draw: &mut DrawList, screen: (i32, i32), text: &str) {
         gc_ui::ui::theme::INK,
         text,
     );
+}
+
+/// The panel for regiment `h`, if it is a hero.
+fn hero_panel<'a>(
+    world: &gc_sim::World,
+    h: gc_sim::RegimentHandle,
+    names: &'a [String],
+    color: impl Fn(gc_sim::PlayerId) -> [u8; 3],
+) -> Option<HeroPanel<'a>> {
+    let hero = world.hero_of(h)?;
+    let (hp, max_hp) = world.health_of(h)?;
+    let xp = match hero.next_level_xp() {
+        Some(next) => {
+            let from = hero.level_start_xp();
+            (hero.xp.saturating_sub(from)) as f32 / (next - from).max(1) as f32
+        }
+        None => 1.0,
+    };
+    Some(HeroPanel {
+        name: names.get(usize::from(hero.unit))?,
+        role: "hero",
+        color: color(hero.owner),
+        level: hero.level,
+        hp,
+        max_hp,
+        xp,
+        abilities: Default::default(),
+        items: [None; 3],
+        revive_secs: None,
+    })
 }
 
 /// A made-up Daimyo for looking at the panel and the grid it feeds: level 3,

@@ -31,9 +31,16 @@ pub const MAX_TIP: usize = 100;
 #[cfg_attr(not(test), allow(dead_code))]
 pub const MAX_BLURB: usize = 120;
 
-/// What the roster files say about hiring a hero (docs/17 "Shared rules").
-/// They have no field for it yet, so the Guide labels it a design value.
-const HERO_RULES: &str = "Design values: 200 Grub and 50 Marrow, 40 s to hire, 5 supply";
+/// Hiring a hero (docs/43-heroes.md): the baker's price for every hero.
+const HERO_RULES: &str = "200 Grub and 50 Marrow, 40 s, 5 supply; one hero a tier";
+/// How a hero grows, leads and comes back (docs/43-heroes.md).
+const HERO_LEVELS: &str = "Levels 1 to 10 from enemies dying within 24 tiles";
+const HERO_LEADS: &str =
+    "Your regiments within 16 tiles gain morale and hold longer; its fall shakes them";
+const HERO_REVIVE: &str =
+    "At its building, at its level: 65% of the hire price and time at level 1, 15% more a level";
+/// Until stage H2 (docs/43) the abilities are listed but do nothing.
+const HERO_ABILITIES: &str = "Abilities are coming: listed below, they do nothing in play yet";
 
 // ---- the roster files, as much of them as the Guide reads ----------------
 
@@ -1271,6 +1278,10 @@ impl Ctx<'_> {
             per.push_str(&format!(", +{} missile damage", g.missile_damage));
         }
         fact(&mut facts, "Per level", per);
+        fact(&mut facts, "Levels", HERO_LEVELS);
+        fact(&mut facts, "Leads", HERO_LEADS);
+        fact(&mut facts, "Revive", HERO_REVIVE);
+        fact(&mut facts, "Abilities", HERO_ABILITIES);
 
         let mut links = Facts::new();
         fact(&mut links, "Hired at", h.hired_at.clone());
@@ -1304,6 +1315,18 @@ impl Ctx<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hero_facts_give_the_sims_numbers() {
+        use gc_sim::heroes::*;
+        assert!(HERO_LEVELS.contains(&format!("1 to {MAX_LEVEL} ")));
+        assert!(HERO_LEVELS.contains(&format!("within {XP_TILES} tiles")));
+        assert!(HERO_LEADS.contains(&format!("within {LEAD_TILES} tiles")));
+        assert_eq!(LEAD_TILES, FALL_TILES, "one radius in the text");
+        let first = REVIVE_PERCENT + REVIVE_LEVEL_PERCENT;
+        assert!(HERO_REVIVE.contains(&format!("{first}% of the hire")));
+        assert!(HERO_REVIVE.contains(&format!("{REVIVE_LEVEL_PERCENT}% more a level")));
+    }
 
     fn rosters() -> Vec<Roster> {
         EMBEDDED

@@ -3165,6 +3165,8 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::NoChamber => "Evolutions need a finished Chrysalis Chamber.",
         Refusal::NoCorpses => "Too few corpses lie there to raise.",
         Refusal::NoHamlet => "No hamlet near there will hire out: none, or an enemy holds it.",
+        Refusal::HeroTaken => "You already have that hero.",
+        Refusal::HeroLimit => "One hero a tier: raise your tier for another.",
     }
 }
 

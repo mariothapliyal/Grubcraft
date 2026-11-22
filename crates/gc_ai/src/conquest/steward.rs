@@ -13,6 +13,7 @@
 
 mod bridgework;
 mod engineer;
+mod heroes;
 mod meters;
 mod ringwork;
 
@@ -283,6 +284,8 @@ impl Steward {
         self.ledger.tier = look.tier;
 
         self.arming = self.must_arm(s, &look);
+        // Heroes before the army, which would spend all there is.
+        self.hire_heroes(s, clicks, &look);
         self.put_to_work(s, clicks, &look);
         self.rebalance(s, clicks, &look);
         self.finish_buildings(s, clicks, &look);
@@ -1064,6 +1067,7 @@ impl Steward {
             .or_else(works)
             .or_else(hatch)
             .or_else(|| self.chamber(s, look))
+            .or_else(|| self.hero_hall(s, look))
             .or_else(|| self.reliquary(s, look, rally, front))
             .or_else(expand)
             .or_else(more);

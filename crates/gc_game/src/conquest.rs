@@ -177,6 +177,11 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
         evolves_from: (u.evolves_from != NONE).then_some(u.evolves_from),
         unlocked_at: (u.unlocked_at != NONE).then_some(u.unlocked_at),
         undead: u.flags & UNIT_UNDEAD != 0,
+        hero: u.hero().then_some(gc_sim::heroes::HeroGrowth {
+            hp: u.level_hp,
+            melee: u.level_melee,
+            missile: u.level_missile,
+        }),
     }
 }
 

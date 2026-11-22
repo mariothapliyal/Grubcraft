@@ -106,7 +106,7 @@ pub const WHY_LOSSES: u16 = 1 << 4;
 pub const WHY_BLOODIED: u16 = 1 << 5;
 /// A friend nearby broke and ran.
 pub const WHY_ALLY_BROKE: u16 = 1 << 6;
-/// Its side's general fell.
+/// Its side's general, or its player's hero, fell nearby.
 pub const WHY_GENERAL: u16 = 1 << 7;
 /// Ambushed, or caught by a hidden volley.
 pub const WHY_AMBUSH: u16 = 1 << 8;
