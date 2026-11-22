@@ -164,13 +164,13 @@ fn passes(r: &mut Raster, standable: &[u8]) -> bool {
             })
             .collect()
     };
-    // (On land that isn't its own turned copy, walks from all six.)
-    let from: &[usize] = if r.mirrored {
+    // (On land that isn't its own turned copy, walks from every start.)
+    let from: Vec<usize> = if r.mirrored {
         debug_assert_eq!(twin, [3, 2, 1, 0, 5, 4]);
-        &[0, 1, 4]
+        vec![0, 1, 4]
     } else {
-        // (Pairs are walked from their lower start, so never from 5.)
-        &[0, 1, 2, 3, 4]
+        // (Pairs are walked from their lower start, so never from the last.)
+        (0..starts.len() - 1).collect()
     };
     let walks: Vec<Vec<u32>> = from
         .iter()
@@ -535,6 +535,7 @@ mod tests {
                         wildness,
                         fairness,
                         heart: false,
+                        ring: 0,
                     },
                 );
                 let standable = super::super::standable(&r);
@@ -590,7 +591,7 @@ mod tests {
             body: vec![0; n * n],
             bodies: super::super::levels::Bodies::new(),
             keep: vec![false; n * n],
-            starts: crate::generate::plateaus(n as u32),
+            starts: crate::generate::plateaus(n as u32).to_vec(),
             mirrored: true,
         };
         let mid = 24 * n;

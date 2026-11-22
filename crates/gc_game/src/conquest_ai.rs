@@ -187,7 +187,7 @@ pub(crate) fn mind_for(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use gc_ai::conquest::opening;
     use gc_sim::economy::Bank;
@@ -220,6 +220,15 @@ mod tests {
         pub works: Works,
         /// Its economy and army over the match (see [`Ledger`]).
         pub ledger: Ledger,
+        /// Worth of enemy fighters its regiments killed, by unit id, as
+        /// [`play_map`] estimates it (a loss is shared among the side's
+        /// fighters in melee near it or in shooting range of it); kills
+        /// nothing of its own was near, by towers, powers or fire, are
+        /// in `kills_other`. One-on-one games only.
+        pub kills_by_unit: Vec<u32>,
+        pub kills_other: u32,
+        /// Its fighting army's worth at the end, by unit id.
+        pub army_by_unit: Vec<u32>,
     }
 
     /// A first proper army: fighters worth this much (four or five tier 1
@@ -241,6 +250,9 @@ mod tests {
         pub army: [u32; MARKS.len()],
         pub soldiers: [u32; MARKS.len()],
         pub first_loss: Option<u32>,
+        /// When its fighters first killed an enemy fighter: its first
+        /// attack landing (one-on-one games only).
+        pub first_kill: Option<u32>,
         /// When its fighting army was first worth [`ARMY_READY`].
         pub army_ready: Option<u32>,
         /// The marks the match lasted to.
@@ -380,6 +392,10 @@ mod tests {
     /// How near two sides' regiments in melee count as having met.
     const CONTACT_TILES: i32 = 6;
 
+    /// How near a regiment in melee must be to one losing soldiers to be
+    /// credited with them (centre to centre: about a regiment's width).
+    const CREDIT_MELEE_TILES: i32 = 5;
+
     /// Whether regiments of two sides are fighting each other now.
     fn sides_met(world: &World, players: usize) -> bool {
         let near = gc_fixed::Fx::from_int(CONTACT_TILES);
@@ -474,6 +490,9 @@ mod tests {
             raid_kills: mind.realm().map_or(0, |r| r.marshal.raider.kills()),
             works: Works::of(world, p),
             ledger: Ledger::default(),
+            kills_by_unit: Vec::new(),
+            kills_other: 0,
+            army_by_unit: Vec::new(),
         }
     }
 
@@ -579,8 +598,38 @@ mod tests {
             let u = usize::from(unit);
             worth[u] * u32::from(models) / per_model[u]
         };
-        let mut alive: std::collections::HashMap<gc_sim::RegimentHandle, (PlayerId, u16, u16)> =
+        // A fighter regiment as sampled: owner, unit, soldiers, where, in melee.
+        type Alive = (PlayerId, gc_sim::UnitId, u16, gc_fixed::FxVec2, bool);
+        let mut alive: std::collections::HashMap<gc_sim::RegimentHandle, Alive> =
             Default::default();
+        // Kills credited by unit id, and those no fighter was near, a side.
+        let mut kills_by_unit = vec![vec![0u32; worth.len()]; factions.len()];
+        let mut kills_other = vec![0u32; factions.len()];
+        // Who struck a regiment's soldiers down: the other side's fighter
+        // regiments (each one a share), as they stood at the last sample or
+        // stand now (so a killer that fell in the same second still counts),
+        // in melee within [`CREDIT_MELEE_TILES`] of it, or shooting units
+        // within their range and a tile of it, whether or not they loosed
+        // just then.
+        type Sample = std::collections::HashMap<gc_sim::RegimentHandle, Alive>;
+        let strikers = |samples: [&Sample; 2], side: PlayerId, at: gc_fixed::FxVec2| {
+            let near = gc_fixed::Fx::from_int(CREDIT_MELEE_TILES);
+            let mut by: Vec<(gc_sim::RegimentHandle, usize)> = samples
+                .iter()
+                .flat_map(|s| s.iter())
+                .filter(|&(_, &(owner, unit, _, pos, engaged))| {
+                    let d = (pos - at).length();
+                    let range = units[usize::from(unit)].range;
+                    owner == side
+                        && ((engaged && d <= near)
+                            || (range > gc_fixed::Fx::ZERO && d <= range + gc_fixed::Fx::ONE))
+                })
+                .map(|(&h, &(_, unit, ..))| (h, usize::from(unit)))
+                .collect();
+            by.sort_unstable_by_key(|&(h, _)| (h.index, h.generation));
+            by.dedup_by_key(|&mut (h, _)| h);
+            by.into_iter().map(|(_, u)| u).collect::<Vec<usize>>()
+        };
         while world.verdict().is_none() && world.tick_count() < end {
             cmds.clear();
             minds.tick(&world, &mut cmds);
@@ -654,17 +703,17 @@ mod tests {
                         }
                     }
                 }
-                let now: std::collections::HashMap<_, _> = world
+                let now: Sample = world
                     .regiments
                     .iter()
                     // Players' fighters only, not neutrals.
                     .filter(|r| usize::from(r.owner) < ledgers.len())
                     .filter(|r| worth[usize::from(r.unit)] > 0)
-                    .map(|r| (r.handle, (r.owner, r.unit, r.models)))
+                    .map(|r| (r.handle, (r.owner, r.unit, r.models, r.position, r.engaged)))
                     .collect();
-                for (h, &(owner, unit, m)) in &alive {
+                for (h, &(owner, unit, m, at, _)) in &alive {
                     let left = match now.get(h) {
-                        Some(&(_, u, n)) if u == unit => n,
+                        Some(&(_, u, n, ..)) if u == unit => n,
                         Some(_) => continue,
                         None => 0,
                     };
@@ -674,7 +723,21 @@ mod tests {
                         l.lost += w;
                         l.first_loss.get_or_insert(t);
                         if ledgers.len() == 2 {
-                            ledgers[1 - usize::from(owner)].killed += w;
+                            let other = 1 - usize::from(owner);
+                            let l = &mut ledgers[other];
+                            l.killed += w;
+                            let by = strikers([&alive, &now], other as PlayerId, at);
+                            if by.is_empty() {
+                                kills_other[other] += w;
+                            } else {
+                                l.first_kill.get_or_insert(t);
+                            }
+                            // Shared out whole, the remainder to the first.
+                            let share = w / by.len().max(1) as u32;
+                            for (k, u) in by.iter().enumerate() {
+                                let extra = if k == 0 { w % by.len() as u32 } else { 0 };
+                                kills_by_unit[other][*u] += share + extra;
+                            }
                         }
                     }
                 }
@@ -738,6 +801,12 @@ mod tests {
                     let mut s = standing(&world, &minds, p as PlayerId, f);
                     s.works = s.works.most(works[p]);
                     s.ledger = ledgers[p];
+                    s.kills_by_unit = std::mem::take(&mut kills_by_unit[p]);
+                    s.kills_other = kills_other[p];
+                    s.army_by_unit = vec![0; worth.len()];
+                    for r in world.regiments.iter().filter(|r| r.owner == p as PlayerId) {
+                        s.army_by_unit[usize::from(r.unit)] += value(r.unit, r.models);
+                    }
                     s
                 })
                 .collect(),
@@ -873,7 +942,7 @@ mod tests {
     }
 
     /// A level by its name or its number.
-    fn level_named(v: &str) -> Option<Difficulty> {
+    pub(crate) fn level_named(v: &str) -> Option<Difficulty> {
         let v = v.trim();
         Difficulty::ALL
             .into_iter()
@@ -881,7 +950,7 @@ mod tests {
             .or_else(|| v.parse().ok().map(Difficulty::from_index))
     }
 
-    fn env_number(name: &str, default: u64) -> u64 {
+    pub(crate) fn env_number(name: &str, default: u64) -> u64 {
         std::env::var(name)
             .ok()
             .and_then(|v| v.parse().ok())
@@ -1034,6 +1103,50 @@ mod tests {
         );
     }
 
+    /// Every pair in `pairs` (indices into `Faction::ALL`) one-on-one on
+    /// map `(choice, tiles)` (see [`play_with`]), each seed played twice
+    /// with the starts swapped, spread over every core. Each result is the
+    /// factions as they stood (start 0 first), the seed and the game.
+    pub(crate) fn play_pairs(
+        pairs: &[(usize, usize)],
+        seeds: &[u64],
+        map: (usize, u32),
+        levels: &[Difficulty],
+        minutes: u32,
+    ) -> Vec<([usize; 2], u64, Played)> {
+        let jobs: Vec<(usize, usize, u64, bool)> = pairs
+            .iter()
+            .flat_map(|&(a, b)| {
+                seeds
+                    .iter()
+                    .flat_map(move |&s| [(a, b, s, false), (a, b, s, true)])
+            })
+            .collect();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let results = std::sync::Mutex::new(Vec::new());
+        let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
+        std::thread::scope(|sc| {
+            for _ in 0..threads {
+                sc.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(&(a, b, seed, swap)) = jobs.get(i) else {
+                            break;
+                        };
+                        let f = if swap { [b, a] } else { [a, b] };
+                        let factions = [Faction::ALL[f[0]], Faction::ALL[f[1]]];
+                        let played = play_with(map, &factions, levels, seed, minutes, None, &[]);
+                        results.lock().unwrap().push((f, seed, played));
+                    }
+                });
+            }
+        });
+        let mut results = results.into_inner().unwrap();
+        // The same order whichever thread finished first: by seed, then seats.
+        results.sort_by_key(|(f, seed, _)| (*seed, f[0], f[1]));
+        results
+    }
+
     /// The Conquest balance table: every pair of factions one-on-one on
     /// Ribcage Pass (`AI_MAP`), each on both starts, over `AI_GAMES` seeds
     /// from `AI_FROM`, at `AI_LEVEL` (Veteran), up to `AI_MINUTES` (40).
@@ -1060,33 +1173,8 @@ mod tests {
                 }
             }
         }
-        let jobs: Vec<(usize, usize, u64, bool)> = pairs
-            .iter()
-            .flat_map(|&(a, b)| {
-                (from..from + games).flat_map(move |s| [(a, b, s, false), (a, b, s, true)])
-            })
-            .collect();
-        let next = std::sync::atomic::AtomicUsize::new(0);
-        let results = std::sync::Mutex::new(Vec::new());
-        let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
-        std::thread::scope(|sc| {
-            for _ in 0..threads {
-                sc.spawn(|| {
-                    loop {
-                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(&(a, b, seed, swap)) = jobs.get(i) else {
-                            break;
-                        };
-                        let f = if swap { [b, a] } else { [a, b] };
-                        let factions = [Faction::ALL[f[0]], Faction::ALL[f[1]]];
-                        let played =
-                            play_with((choice, 0), &factions, &levels, seed, minutes, None, &[]);
-                        results.lock().unwrap().push((f, seed, played));
-                    }
-                });
-            }
-        });
-        let results = results.into_inner().unwrap();
+        let seeds: Vec<u64> = (from..from + games).collect();
+        let results = play_pairs(&pairs, &seeds, (choice, 0), &levels, minutes);
         let clock = gc_ai::lens::clock;
         for &(a, b) in &pairs {
             let (mut wa, mut wb, mut open, mut length) = (0, 0, 0, Vec::new());
@@ -1503,12 +1591,13 @@ mod tests {
             [Faction::Brood, Faction::Choir],
         ];
         let (mut top, mut heroes) = (0, 0);
-        for (factions, seeds) in pairs.iter().zip([[7, 9, 11], [8, 10, 12]]) {
+        for (factions, seeds) in pairs.iter().zip([[7, 9, 11, 13, 15], [8, 10, 12, 14, 16]]) {
             // The side that wins has had time for a hero (a side overrun
             // early may never get its hero building up). Not always: one
             // can win at the first tier, before it may build the hero hall,
             // and which match does goes with any change to how battles play
-            // out, so up to three are played.
+            // out, so up to five are played. An undecided game counts if
+            // either side hired one.
             let mut reports = String::new();
             for seed in seeds {
                 let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 40);
@@ -1521,8 +1610,12 @@ mod tests {
                     top = top.max(w.top_level);
                     heroes += w.heroes;
                 }
-                let winner = played.winner().unwrap_or(0);
-                if played.sides[usize::from(winner)].works.heroes >= 1 {
+                let hired = |p: usize| played.sides[p].works.heroes >= 1;
+                let ok = match played.winner() {
+                    Some(w) => hired(usize::from(w)),
+                    None => hired(0) || hired(1),
+                };
+                if ok {
                     reports.clear();
                     break;
                 }

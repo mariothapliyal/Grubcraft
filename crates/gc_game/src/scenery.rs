@@ -2065,6 +2065,7 @@ mod tests {
             3,
             gc_map::wilds::Wildness::Wild,
             gc_map::grown::Fairness::Mirrored,
+            0,
         );
         let map = Map::from_def(&def);
         assert_eq!(map.habitat.len(), 768 * 768);

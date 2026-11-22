@@ -13,7 +13,8 @@
 // on the duel's beat, as a tagged attack's is. `weapon` names what a model posed
 // from a shared skeleton holds, so the move picker prefers the skeleton's
 // tagged `moves` made for it; `moves_from` keeps a model's tagged moves in a
-// separate glTF on its rig (a fight library). An attack's or finisher's
+// separate glTF on its rig (a fight library), and a move may name several
+// `weapons` it is made for alike in place of one. An attack's or finisher's
 // `contact` is the second its blow lands; both halves of a matched kill (acts Kill, Killed)
 // have one and name their `pair`, and the killer's half its `reach`, the
 // distance between the two men in the glTF's units, and its `victim_size`
@@ -53,7 +54,7 @@
             // Ember Clans roster art: made in Blender on the Farmer body and
             // rig like the Yari Ashigaru; the katana rides the right wrist.
             source: "shared:grubcraft/ember/katana-samurai/katana-samurai.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Ember finishers"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Ember finishers", "Ember reactions", "Library deaths", "Ember katana 3", "Ember spear 3"],
             height: 1.6,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash",
@@ -78,7 +79,6 @@
                 (anim: "F_Katana_Attack", act: "Attack", weapon: "TwoHanded", contact: Some(0.467)),
                 (anim: "F_Katana_Block", act: "Block", weapon: "TwoHanded"),
                 (anim: "F_Katana_Block", act: "Parry", weapon: "TwoHanded"),
-                (anim: "F_Spear_Guard", act: "Idle", weapon: "Spear"),
                 (anim: "F_Spear_Thrust", act: "Attack", weapon: "Spear", contact: Some(0.333)),
                 (anim: "F_Spear_Parry", act: "Parry", weapon: "Spear"),
                 // A single cut joined with its recovery, guard to guard: a
@@ -162,6 +162,23 @@
                 emissive: Some("shared:grubcraft/ember/oni-bound/emissive.png"),
             )),
             weapon: Some("AxeMace"),
+            // Its kanabo's moves (docs/33, stage 5), made two-handed in
+            // Blender on the men's rig it shares; its kills were made on a
+            // man two thirds its size, as it is drawn half as big again
+            // (design/faction-looks/fight-library/kanabo-1/NOTES.md).
+            moves_from: Some("shared:grubcraft/fight-library/ember-men/oni-kanabo-1.glb"),
+            moves: [
+                (anim: "F_Kanabo_Guard", act: "Idle", weapon: "AxeMace"),
+                (anim: "F_Kanabo_Smash", act: "Attack", weapon: "AxeMace", contact: Some(0.633)),
+                (anim: "F_Kanabo_Sweep", act: "Attack", weapon: "AxeMace", contact: Some(0.6)),
+                (anim: "F_Kanabo_Rising", act: "Attack", weapon: "AxeMace", contact: Some(0.567)),
+                (anim: "F_Kanabo_Ram", act: "Attack", weapon: "AxeMace", contact: Some(0.5)),
+                (anim: "F_Kanabo_Block", act: "Block", weapon: "AxeMace"),
+                (anim: "F_Kanabo_Parry", act: "Parry", weapon: "AxeMace"),
+                (anim: "F_Kanabo_Finish", act: "Finish", weapon: "AxeMace", contact: Some(0.567)),
+                (anim: "K_Kanabo_Smash_Kill", act: "Kill", weapon: "AxeMace", contact: Some(0.467), pair: Some("Kanabo_Smash"), reach: Some(1.04), victim_size: Some(0.6667)),
+                (anim: "K_Kanabo_Sweep_Kill", act: "Kill", weapon: "AxeMace", contact: Some(0.467), pair: Some("Kanabo_Sweep"), reach: Some(0.92), victim_size: Some(0.6667)),
+            ],
         ),
         (
             name: "Battering Ram",
@@ -268,7 +285,7 @@
             // tall eboshi and a gohei wand. Casting clips come from
             // Quaternius's Wizard; a 63rd bone turns the talisman wheel.
             source: "shared:grubcraft/ember/onmyoji/onmyoji.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             height: 1.25,
             clips: {
                 "Idle": "Idle_Staff", "Walk": "Walk_Staff", "Run": "Run_Staff", "Attack": "Staff_Strike",
@@ -364,7 +381,7 @@
             // clips come from Quaternius's Ranger, mirrored onto this rig;
             // a 63rd bone draws the string and shows the nocked arrow.
             source: "shared:grubcraft/ember/yumi-ashigaru/yumi-ashigaru.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             height: 1.09,
             clips: {
                 "Idle": "Idle_Bow", "Walk": "Walk_Bow", "Run": "Run_Bow", "Attack": "Bash",
@@ -384,7 +401,7 @@
             name: "Tuner",
             // Choir roster art (worker: a slight crystal builder with a tuning hammer and a floating resonator crystal).
             source: "shared:grubcraft/choir/tuner/tuner.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             height: 1.27,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
@@ -402,7 +419,7 @@
             name: "Shardlings",
             // Choir roster art (line infantry: a crystal blade grown from the right forearm, a faceted buckler).
             source: "shared:grubcraft/choir/shardlings/shardlings.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             // Its own kill of an Ember man (docs/33, stage 5), made in Blender on this rig.
             moves_from: Some("shared:grubcraft/fight-library/foes/shardlings-kills.glb"),
             moves: [
@@ -425,7 +442,7 @@
             name: "Prism Lancers",
             // Choir roster art (violet prism head and a beam lance with a fork-held emitter).
             source: "shared:grubcraft/choir/prism-lancers/prism-lancers.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             height: 1.282,
             clips: {
                 "Idle": "Idle_Gun", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave", "Shoot": "Gun_Shoot",
@@ -503,7 +520,7 @@
             name: "Conductor",
             // Choir roster art (tall crystal priest with a tuning-fork staff, a robe of hanging shards and a ring of circling crystals).
             source: "shared:grubcraft/choir/conductor/conductor.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             height: 1.342,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
@@ -539,7 +556,7 @@
             name: "The Maestro",
             // Choir roster art (hero: violet tailcoat of shards, a turning crown of tuning forks, a crystal baton).
             source: "shared:grubcraft/choir/the-maestro/the-maestro.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             height: 1.303,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
@@ -557,7 +574,7 @@
             name: "The Refractor",
             // Choir roster art (hero: prism head, three floating lens discs and a heavy prism lance).
             source: "shared:grubcraft/choir/the-refractor/the-refractor.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             height: 1.294,
             clips: {
                 "Idle": "Idle_Gun", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave", "Shoot": "Gun_Shoot",
@@ -575,7 +592,7 @@
             name: "The Hollow Bell",
             // Choir roster art (hero: a great hollow glass bell for a lower body, floating on motes, with a clapper mace).
             source: "shared:grubcraft/choir/the-hollow-bell/the-hollow-bell.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3"],
             height: 1.318,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
@@ -593,7 +610,7 @@
         (
             name: "Ledger Clerk",
             source: "shared:grubcraft/concord/ledger-clerk/ledger-clerk.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             held_by: {"Weapon": "Wrist.R"},
             height: 1.294,
             clips: {
@@ -627,7 +644,7 @@
         (
             name: "Bone Pikes",
             source: "shared:grubcraft/concord/bone-pikes/bone-pikes.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             // Its own kill of an Ember man (docs/33, stage 5), made in Blender on this rig.
             moves_from: Some("shared:grubcraft/fight-library/foes/bone-pikes-kills.glb"),
             moves: [
@@ -650,7 +667,7 @@
         (
             name: "Crossbow Auditors",
             source: "shared:grubcraft/concord/crossbow-auditors/crossbow-auditors.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             held_by: {"Weapon": "Wrist.R"},
             height: 1.243,
             clips: {
@@ -668,7 +685,7 @@
         (
             name: "Gravewardens",
             source: "shared:grubcraft/concord/gravewardens/gravewardens.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             // Its own kill of an Ember man (docs/33, stage 5), made in Blender on this rig.
             moves_from: Some("shared:grubcraft/fight-library/foes/gravewardens-kills.glb"),
             moves: [
@@ -711,7 +728,7 @@
         (
             name: "Lantern Wraiths",
             source: "shared:grubcraft/concord/lantern-wraiths/lantern-wraiths.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3"],
             held_by: {"Weapon": "Wrist.R"},
             height: 1.192,
             clips: {
@@ -745,7 +762,7 @@
         (
             name: "The Insolvent",
             source: "shared:grubcraft/concord/the-insolvent/the-insolvent.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             height: 1.232,
             clips: {
                 "Idle": "Insolvent_Idle", "Walk": "Insolvent_Walk", "Run": "Insolvent_Run", "Attack": "Insolvent_Attack", "Attack2": "Insolvent_Attack2", "Hit": "Insolvent_Hit", "Die": "Insolvent_Die", "Cheer": "Insolvent_Cheer",
@@ -762,7 +779,7 @@
         (
             name: "Bound Dead",
             source: "shared:grubcraft/concord/bound-dead/bound-dead.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             height: 1.1,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
@@ -779,7 +796,7 @@
         (
             name: "Grubfolk Militia",
             source: "shared:grubcraft/concord/grubfolk-militia/grubfolk-militia.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             // Its own kill of an Ember man (docs/33, stage 5), made in Blender on this rig.
             moves_from: Some("shared:grubcraft/fight-library/foes/grubfolk-militia-kills.glb"),
             moves: [
@@ -802,7 +819,7 @@
         (
             name: "The Magnate",
             source: "shared:grubcraft/concord/the-magnate/the-magnate.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             held_by: {"Weapon": "Wrist.R"},
             height: 1.199,
             clips: {
@@ -820,7 +837,7 @@
         (
             name: "The Undertaker",
             source: "shared:grubcraft/concord/the-undertaker/the-undertaker.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             held_by: {"Weapon": "Wrist.R"},
             height: 1.273,
             clips: {
@@ -838,7 +855,7 @@
         (
             name: "The Usurer",
             source: "shared:grubcraft/concord/the-usurer/the-usurer.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Library hits"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Library hits", "Library deaths"],
             held_by: {"Weapon": "Wrist.R", "Shield": "Wrist.L"},
             height: 1.275,
             clips: {
@@ -1234,6 +1251,103 @@
             moves: [
                 (anim: "F_Hit_Chest", act: "Hit"),
                 (anim: "F_Hit_Head", act: "Hit"),
+            ],
+        ),
+        // The victims' halves of the Oni-Bound's kanabo kills of a man two
+        // thirds its size (docs/33, stage 5).
+        "Kanabo victims": (
+            from: "shared:grubcraft/fight-library/ember-men/oni-kanabo-1.glb",
+            moves: [
+                (anim: "K_Kanabo_Smash_Killed", act: "Killed", contact: Some(0.467), pair: Some("Kanabo_Smash")),
+                (anim: "K_Kanabo_Sweep_Killed", act: "Killed", contact: Some(0.467), pair: Some("Kanabo_Sweep")),
+            ],
+        ),
+        // Hits, a stagger and deaths made for the Ember men's rig (docs/33,
+        // stage 5; design/faction-looks/fight-library/reactions-1/): a katana
+        // man reels and dies with both hands on the hilt.
+        "Ember reactions": (
+            from: "shared:grubcraft/fight-library/ember-men/ember-men-reactions-1.glb",
+            moves: [
+                (anim: "F_Katana_Hit_A", act: "Hit", weapon: "TwoHanded"),
+                (anim: "F_Katana_Hit_B", act: "Hit", weapon: "TwoHanded"),
+                (anim: "F_Katana_Stagger", act: "Stagger", weapon: "TwoHanded"),
+                // Its hits are its lighter reels too, so the men of a
+                // regiment reel three ways (the duel's staggers take the
+                // stagger moves before the hits).
+                (anim: "F_Katana_Hit_A", act: "Stagger", weapon: "TwoHanded"),
+                (anim: "F_Katana_Hit_B", act: "Stagger", weapon: "TwoHanded"),
+                (anim: "F_Katana_Death_A", act: "Death", weapon: "TwoHanded"),
+                (anim: "F_Katana_Death_B", act: "Death", weapon: "TwoHanded"),
+            ],
+        ),
+        // Six more two-handed katana blows, cut from the library's combos
+        // guard to guard, and three more kills of a man (a kesa cut, a
+        // rising cut, a parry and cut), made in Blender on the men's rig
+        // (docs/33, stage 5; design/faction-looks/fight-library/katana-3/).
+        "Ember katana 3": (
+            from: "shared:grubcraft/fight-library/ember-men/ember-men-katana-3.glb",
+            moves: [
+                (anim: "F_Katana_Blow_1", act: "Attack", weapon: "TwoHanded", contact: Some(0.4)),
+                (anim: "F_Katana_Blow_2", act: "Attack", weapon: "TwoHanded", contact: Some(0.433)),
+                (anim: "F_Katana_Blow_3", act: "Attack", weapon: "TwoHanded", contact: Some(0.433)),
+                (anim: "F_Katana_Blow_4", act: "Attack", weapon: "TwoHanded", contact: Some(0.433)),
+                (anim: "F_Katana_Blow_5", act: "Attack", weapon: "TwoHanded", contact: Some(0.433)),
+                (anim: "F_Katana_Blow_6", act: "Attack", weapon: "TwoHanded", contact: Some(0.433)),
+                (anim: "K_Katana_Kesa_Kill", act: "Kill", weapon: "TwoHanded", contact: Some(0.4), pair: Some("Katana_Kesa"), reach: Some(1.285)),
+                (anim: "K_Katana_Rising_Kill", act: "Kill", weapon: "TwoHanded", contact: Some(0.433), pair: Some("Katana_Rising"), reach: Some(1.415)),
+                (anim: "K_Katana_Parry_Cut_Kill", act: "Kill", weapon: "TwoHanded", contact: Some(0.5), pair: Some("Katana_Parry_Cut"), reach: Some(1.59)),
+            ],
+        ),
+        "Katana victims 3": (
+            from: "shared:grubcraft/fight-library/ember-men/ember-men-katana-3.glb",
+            moves: [
+                (anim: "K_Katana_Kesa_Killed", act: "Killed", contact: Some(0.4), pair: Some("Katana_Kesa")),
+                (anim: "K_Katana_Rising_Killed", act: "Killed", contact: Some(0.433), pair: Some("Katana_Rising")),
+                (anim: "K_Katana_Parry_Cut_Killed", act: "Killed", contact: Some(0.5), pair: Some("Katana_Parry_Cut")),
+            ],
+        ),
+        // The yari's guard with its feet on the legs (the old one's foot
+        // bones stood off them), five more blows (high, low, a feint and
+        // thrust, a sweep with the blade, a beat down), a block, hits,
+        // deaths and two more kills of a man (a thrust to the chest, a beat
+        // and thrust to the belly), made in Blender on the men's rig
+        // (design/faction-looks/fight-library/spear-3/).
+        "Ember spear 3": (
+            from: "shared:grubcraft/fight-library/ember-men/ember-men-spear-3.glb",
+            moves: [
+                (anim: "F_Spear_Guard_B", act: "Idle", weapon: "Spear"),
+                (anim: "F_Spear_Blow_1", act: "Attack", weapon: "Spear", contact: Some(0.4)),
+                (anim: "F_Spear_Blow_2", act: "Attack", weapon: "Spear", contact: Some(0.4)),
+                (anim: "F_Spear_Blow_3", act: "Attack", weapon: "Spear", contact: Some(0.567)),
+                (anim: "F_Spear_Blow_4", act: "Attack", weapon: "Spear", contact: Some(0.467)),
+                (anim: "F_Spear_Blow_5", act: "Attack", weapon: "Spear", contact: Some(0.5)),
+                (anim: "F_Spear_Block", act: "Block", weapon: "Spear"),
+                (anim: "F_Spear_Hit_A", act: "Hit", weapon: "Spear"),
+                (anim: "F_Spear_Hit_B", act: "Hit", weapon: "Spear"),
+                (anim: "F_Spear_Death_A", act: "Death", weapon: "Spear"),
+                (anim: "F_Spear_Death_B", act: "Death", weapon: "Spear"),
+                (anim: "K_Spear_High_Kill", act: "Kill", weapon: "Spear", contact: Some(0.4), pair: Some("Spear_High"), reach: Some(3.641)),
+                (anim: "K_Spear_Beat_Kill", act: "Kill", weapon: "Spear", contact: Some(0.467), pair: Some("Spear_Beat"), reach: Some(3.609)),
+            ],
+        ),
+        "Spear victims 3": (
+            from: "shared:grubcraft/fight-library/ember-men/ember-men-spear-3.glb",
+            moves: [
+                (anim: "K_Spear_High_Killed", act: "Killed", contact: Some(0.4), pair: Some("Spear_High")),
+                (anim: "K_Spear_Beat_Killed", act: "Killed", contact: Some(0.467), pair: Some("Spear_Beat")),
+            ],
+        ),
+        // Three plain deaths for any man on foot of the Ember men's joints,
+        // beside his own, each lying where he stood (the library's F_Death01
+        // re-centred, a fall to the knees and onto the face, a crumple onto
+        // the side); katana and yari men play them beside the deaths made
+        // for their weapons.
+        "Library deaths": (
+            from: "shared:grubcraft/fight-library/ember-men/ember-men-reactions-1.glb",
+            moves: [
+                (anim: "F_Death_Back", act: "Death", weapons: ["Any", "TwoHanded", "Spear"]),
+                (anim: "F_Death_Knees", act: "Death", weapons: ["Any", "TwoHanded", "Spear"]),
+                (anim: "F_Death_Crumple", act: "Death", weapons: ["Any", "TwoHanded", "Spear"]),
             ],
         ),
         // Blows struck down at a man already lying on his back (docs/33,

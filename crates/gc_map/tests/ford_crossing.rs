@@ -45,6 +45,7 @@ impl Field {
             choice: 2,
             tiles: 192,
             seed,
+            ring: 0,
         }
         .make();
         let nav = map.sim_nav_costs();

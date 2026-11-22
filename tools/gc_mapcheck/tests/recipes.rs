@@ -89,7 +89,7 @@ fn every_grown_map_passes_the_checker() {
     let rerolls = AtomicUsize::new(0);
     let failed = failures(&jobs, |&(wild, tiles, seed, fairness)| {
         let Some(def) = (0..8)
-            .map(|k| gc_map::grown::describe(tiles, seed + k, wild, fairness))
+            .map(|k| gc_map::grown::describe(tiles, seed + k, wild, fairness, 0))
             .find(|d| {
                 let joined = gc_map::Map::from_def(d).starts_joined();
                 if !joined {
@@ -172,6 +172,7 @@ fn every_lobby_map_joins_its_starts_at_the_big_sizes() {
             choice,
             tiles,
             seed: 1,
+            ring: 0,
         }
         .make();
         (!map.starts_joined() || map.tiles != tiles)

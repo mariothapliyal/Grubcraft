@@ -46,7 +46,7 @@
         abilities: [],
     ),
     starting_buildings: ["Hive"],
-    starting_units: [("Gnawer", 4)],
+    starting_units: [("Gnawer", 6)],
     buildings: [
         (
             name: "Hive",

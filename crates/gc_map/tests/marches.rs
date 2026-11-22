@@ -69,6 +69,7 @@ impl Field {
             choice: gc_map::GROWN + 1 + kind,
             tiles: TILES,
             seed,
+            ring: 0,
         }
         .make();
         let nav = map.nav_costs();

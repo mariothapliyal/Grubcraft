@@ -160,6 +160,10 @@ round a corner. Both need a place that is never laid on ground the block
 cannot stand on (so a flank comes in to the file along the wall instead
 of through it) and a turn at the passage for each row.
 
+Stage 3 was measured and set aside (Mario, 2026-11-22): turn-taking
+measured slower than crowding through. See "Stage 3: what was measured"
+below.
+
 **Stage 4. Organisation the player can use** (controls, simulation, AI)
 
 16. **Advance in line.** An attack-move by a brigade goes forward dressed
@@ -167,10 +171,12 @@ of through it) and a turn at the passage for each row.
     all converging on the nearest. (Stage 1 brings the first half: a
     brigade on an attack-move halts as a body when one of its regiments
     turns to fight.)
+    Built, `SIM_VERSION` 98: see "Advance in line in full" below.
 17. **Standing armies.** A control group can be locked as an army: it
     keeps its arrangement between orders, shows one banner and one
     route, and regiments raised later can be sent to join it (this is
     where the reinforcements work meets this one).
+    Built (no change to the rules): see "Standing armies in full" below.
 18. **Draw the road.** Hold a key and draw the way the army should go;
     the brigade follows the drawn line instead of the shortest one.
 19. **Column of march.** A brigade can be told to go in road column the
@@ -802,3 +808,163 @@ move sidesteps or backs into place; a longer one still turns and
 walks), the stress scenario `make-way`, and
 `crates/gc_game/src/footprints.rs`.
 
+## Stage 3: what was measured
+
+Stage 3 was measured before anything was built, and set aside (Mario,
+2026-11-22: "Move on to stage 4"). Nothing of it is in the game. What
+the measuring found, so a later look starts from here:
+
+- **Gates already run near their physical limit.** The stress Gate is 3
+  tiles wide. Regiments sent apart narrow to about 1.6 tiles and pile in
+  two or three at once, overlapping, in disorder 98% of the time they are
+  at the gate: one regiment through every 0.86 s. A brigade in ranks
+  passes one every 1.7 to 1.9 s, which is about all a 3-tile file can
+  carry: a narrower block only gets deeper. Letting a block narrow to one
+  file, and sampling the room finer, did not help.
+- **A big brigade jams at the gate's mouth when its let-go rules are
+  off** (24 regiments in rows of 8: one never arrived, 77.7 s). The
+  places of the outer regiments of a row stayed wide until the narrows.
+  Measuring each row's room from its hindmost member's place along the
+  way fixes it (70 s, disorder 333 regiment-seconds against 468), but it
+  was neutral to slightly worse on the 42 marches with the let-go rules
+  on, so it was not kept.
+- **Taking turns at a passage measured slower.** In bridge-flood-armies
+  (two armies of one player crossing a 3-tile bridge opposite ways) a
+  regiment in tight ground that saw a friend coming the other way in the
+  passage ahead waited for it. The crossing went from 34 s to 54 to 56 s,
+  disorder from 530 to 776 regiment-seconds, and the longest stuck from
+  under 10 s to 22 to 31 s: the waiters clump at the mouth in the lane
+  the others come out by, and the armies change sides, so those coming
+  out have to cross the waiters anyway.
+- **The lesson** is the same at gates and bridges: in this simulation
+  pushing through friends (overlapping, in disorder) carries more than
+  any orderly file, so one-way rules cost time. The real lever is how
+  much pushing through costs, which is a balance call, not a movement
+  one.
+- **Route search** is about 4% of a drill tick, so item 15 has little to
+  win until something else makes searches dearer.
+
+## Advance in line in full
+
+### What was wrong
+
+Measured first, in a new stress scenario (`advance-in-line`): six
+regiments in line ordered as one group to attack-move north through six
+of the enemy's standing in line.
+
+- **Straight opposite**, nearest is opposite: each took the one in front
+  of it, all six fighting at 13.8 s. Nothing to fix.
+- **A line with its middle two 8 tiles forward**, or **slanting back 3
+  tiles a regiment**: the nearest of ours turned to fight, the group
+  halted for them (stage 1), and the rest stood waiting with nothing in
+  the 12 tiles an attack-move looks. Two of the enemy's six were fought;
+  in 60 s the enemy lost 32 and 20 soldiers of 132.
+- **Shifted 15 tiles east**: once five of ours had turned to fight, the
+  group was down to one regiment and broke up, and the last of the line
+  walked on past the fight to where it was sent. Two of ours never
+  fought.
+- **A line of four**: the ends of ours waited 26 s before they joined.
+
+### What was built
+
+`SIM_VERSION` 98.
+
+1. **Each takes the enemy opposite it.** A regiment on an attack-move
+   with a group scores the enemies it can see by how far along the
+   group's way they are plus twice how far across it, not by straight
+   distance. One a friend already goes for counts as 12 tiles (an
+   attack-move's reach) further for each friend fighting it or going for
+   it, so a line takes on a line before two pile on one. One behind (the
+   line has passed it) counts its distance back double too.
+2. **No one stands by.** While friends of its group fight within 25
+   tiles (the same test the group halts by, now one function,
+   `brigades::fights_near`), one with nothing in its own reach looks
+   as far as that for a foe with open ground straight to it, so a wing the enemy's line does not reach wheels
+   in on its flank, and one left behind when the group broke up joins
+   the fight instead of walking past it.
+
+An attack-move without a group, and every other order, picks its foe as
+before.
+
+### What it measured
+
+| Enemy line | Taken on first, of theirs | All six of ours in melee | Soldiers lost in 60 s, theirs / ours |
+|---|---|---|---|
+| Straight opposite | 6 (was 6) | 16.5 s (was 16.5 s) | 76 / 51 (was 75 / 52) |
+| Middle two 8 tiles forward | 6 (was 2) | 16.6 s (was never) | 80 / 62 (was 32 / 26) |
+| Slanting back 3 a regiment | 5 (was 2) | 22.2 s (was never) | 70 / 48 (was 20 / 16) |
+| Shifted 15 tiles east | 4 (was 4) | 22.5 s (was never) | 51 / 29 (was 64 / 32) |
+| A line of 4 | 4 (was 4) | 18.6 s (was 28.8 s) | 60 of 88 / 39 (was 60 / 40) |
+
+Of 132 soldiers a side (the line of 4 has 88). Where main left most of
+the line standing, now all of it fights, and both sides lose more.
+
+### What it does not do yet
+
+- Against the slanting line the regiment at the far end, whose
+  opposite stands 26 tiles off when the group halts, goes for the next
+  one in instead (10 tiles across): the halted body does not walk it on
+  toward its own.
+- The wider look takes only a foe with open ground straight to it (not
+  over a wall or across deep water), so it misses one round a corner.
+  The 12-tile look is as before: sight and distance only.
+- Computer players give every order to one group the same brigade
+  number, so friends still fighting from that group's last order count
+  as fighting with its new one.
+- Shifted 15 tiles (half the 10 tiles between regiments out of step)
+  the pairing is a coin toss: three of ours went for the end of the
+  enemy's line and its far end, which no one of ours could reach, was
+  left alone. Pairing the whole line at once (sorting both lines along the way) would settle it, at the cost
+  of a per-group plan the simulation's memory budget has no room for
+  today.
+
+## Standing armies in full
+
+### What the player does
+
+- **Lock.** `Ctrl+Shift+number` saves the selection as that control group
+  and locks it as an army (two or more regiments). The shape it stands in
+  then is kept (`arrange::Shape::capture`, the same capture as
+  `Shift+O`'s saved shapes): every group order to the whole army, and
+  nothing else, puts each regiment back in its place in that shape about
+  the order's point and facing, whatever shape `O` has chosen. `Alt` on
+  a drag still draws it deep. `Ctrl+number` saves a plain group again and
+  says the army is no more.
+- **Join.** `Alt+number` sends the selected regiments that are not in
+  army `number` to join it. An army remembers which regiment holds each
+  place in its shape (`arrange::Army`: each holds its own when locked,
+  and each order to the army hands out the places afresh, left to right
+  by kind; one ordered any other way leaves its place). Where the army
+  stands now is fitted from where the holders stand, or are marching to
+  (`Army::standing`), so it is found again after the army has moved,
+  turned or lost regiments, and an army on the march is joined where it
+  is going. An army whose regiments all left their places (an `Alt` drag,
+  say) says so, and is joined again once ordered as a whole. The holders keep their places and are
+  not ordered; each newcomer takes a free place of its kind (one left by
+  a regiment lost), else any free place, else stands behind
+  (`Army::join`), sent as one brigade if there are several. They join the
+  group, and the next order to the army takes them with it. This is where
+  reinforcements meet armies: a refilled or newly raised regiment is
+  selected and sent with `Alt+number`.
+- **One standard.** Each army of the side you command shows one tall pole
+  over its middle with a wide flag in your colour and as many pale bars
+  across it as its group's number (ten for key 0, the HUD's group 10),
+  growing as the Commander View
+  pulls back. Each regiment keeps its own morale banner.
+- **One route.** Regiments marching in one brigade show their shared way
+  once (from the first of them), with a short leg from its end to each
+  one's own place, instead of a dotted line from every regiment along the
+  same road.
+
+All of it is on the ordering player's machine: armies are kept with the
+control groups, and orders reach the simulation as plain moves, so no
+rules number, replay or network message changed.
+
+### What it does not do yet
+
+- An army is forgotten with its control group at the end of a match, and
+  is not saved with a game.
+- Computer players do not lock armies (they already order their groups
+  as brigades).
+- The standard has no number drawn on it, only bars, and stands at the
+  plain middle of the army even when that is between two halves of it.

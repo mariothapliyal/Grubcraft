@@ -72,6 +72,7 @@ fn the_minds_ground_follows_the_mud_the_rain_soaks() {
         choice: GROWN,
         tiles: 192,
         seed: 1,
+        ring: 0,
     }
     .make();
     let nav = map.sim_nav_costs();
