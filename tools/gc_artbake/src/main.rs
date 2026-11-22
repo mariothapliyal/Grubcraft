@@ -1260,7 +1260,7 @@ fn bake_model(
                         carry(frame, &carried, &rig.parent);
                     }
                     for &tags in &tag_sets {
-                        posed.push(posed_move(m, tags, globals.clone(), &pose_frames)?);
+                        posed.push(posed_move(m, tags, globals.clone(), pose_frames)?);
                     }
                 }
             }
