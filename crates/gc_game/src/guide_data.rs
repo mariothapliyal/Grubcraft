@@ -38,7 +38,9 @@ const HERO_LEVELS: &str = "Levels 1 to 10 from enemies dying within 24 tiles";
 const HERO_LEADS: &str =
     "Your regiments within 16 tiles gain morale and hold longer; its fall shakes them";
 const HERO_SHOCK_TEXT: &str =
-    "Each soldier it kills in melee costs the regiment it struck 6 morale";
+    "Each soldier it kills in melee costs the regiment it struck 4 morale";
+const HERO_BREAK_OUT: &str =
+    "Ordered away mid-fight, it cuts its way out: nobody can pin it for 8 s";
 const HERO_REVIVE: &str =
     "At its building, at its level: 65% of the hire price and time at level 1, 15% more a level";
 /// Until stage H2 (docs/43) the abilities are listed but do nothing.
@@ -1283,6 +1285,7 @@ impl Ctx<'_> {
         fact(&mut facts, "Levels", HERO_LEVELS);
         fact(&mut facts, "Leads", HERO_LEADS);
         fact(&mut facts, "Shock", HERO_SHOCK_TEXT);
+        fact(&mut facts, "Break out", HERO_BREAK_OUT);
         fact(&mut facts, "Revive", HERO_REVIVE);
         fact(&mut facts, "Abilities", HERO_ABILITIES);
 
@@ -1326,6 +1329,8 @@ mod tests {
         assert!(HERO_LEVELS.contains(&format!("within {XP_TILES} tiles")));
         assert!(HERO_LEADS.contains(&format!("within {LEAD_TILES} tiles")));
         assert!(HERO_SHOCK_TEXT.contains(&format!("struck {HERO_SHOCK} morale")));
+        let pinned = gc_sim::combat::FALL_BACK_TICKS / gc_sim::TICKS_PER_SECOND as u16;
+        assert!(HERO_BREAK_OUT.contains(&format!("for {pinned} s")));
         assert_eq!(LEAD_TILES, FALL_TILES, "one radius in the text");
         let first = REVIVE_PERCENT + REVIVE_LEVEL_PERCENT;
         assert!(HERO_REVIVE.contains(&format!("{first}% of the hire")));

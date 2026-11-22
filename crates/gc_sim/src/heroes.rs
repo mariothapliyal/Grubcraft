@@ -29,7 +29,7 @@
 
 use alloc::vec::Vec;
 
-use gc_fixed::FxVec2;
+use gc_fixed::{Fx, FxVec2};
 
 use crate::combat::Combat;
 use crate::conquest::ConquestUnit;
@@ -63,7 +63,14 @@ pub const REVIVE_LEVEL_PERCENT: u32 = 15;
 /// Morale a regiment loses for each soldier a hero kills in melee
 /// (`morale::WHY_HERO`): a hero is a shock weapon, breaking lines it cuts
 /// into, though it can be pulled down.
-pub const HERO_SHOCK: i16 = 6;
+pub const HERO_SHOCK: i16 = 4;
+/// Melee blows on a hero land this many percent as hard: only a few men of
+/// a line reach a one-man block, so without it a hero shrugs off whole
+/// regiments.
+pub const HERO_EXPOSED_PERCENT: u64 = 230;
+/// How far a hero cutting its way out must get from every enemy regiment's
+/// middle before it marches on as usual, in tiles.
+pub const CLEAR_TILES: i32 = 6;
 
 /// How a hero grows each level past the first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -320,6 +327,14 @@ impl Heroes {
                 continue;
             };
             h.at = regs.position[i];
+            // Clear of the fight it cut its way out of: on to where it
+            // was sent, as a march.
+            if regs.falling_back[i] > 0
+                && regs.target[i].is_some()
+                && clear_of_foes(regs, stances, i)
+            {
+                regs.falling_back[i] = 0;
+            }
             if regs.morale_state[i].broken() || regs.cocoon_left[i] > 0 {
                 continue;
             }
@@ -432,4 +447,16 @@ mod tests {
         assert_eq!(revive_price(&u, 1), (130, 32, 520));
         assert_eq!(revive_price(&u, 10), (400, 100, 1600));
     }
+}
+
+/// Whether no enemy regiment's middle is within [`CLEAR_TILES`] of hero
+/// regiment `i`.
+fn clear_of_foes(regs: &Regiments, stances: &Stances, i: usize) -> bool {
+    let near = Fx::from_int(CLEAR_TILES);
+    let (at, owner) = (regs.position[i], regs.owner[i]);
+    !(0..regs.alive.len()).any(|j| {
+        regs.alive[j]
+            && stances.hostile(owner, regs.owner[j])
+            && (regs.position[j] - at).length() <= near
+    })
 }

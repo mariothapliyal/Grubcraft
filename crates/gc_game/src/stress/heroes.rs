@@ -6,9 +6,15 @@
 //! - **Head-on.** The Daimyo, beside a Yari regiment of his own, fights a
 //!   Skitterlings regiment of the Brood's head-on: how long it takes, what
 //!   it costs him, and the levels he gains from the dead.
-//! - **Surrounded.** He is then sent alone into three Chitin Guard regiments
-//!   standing round him: he falls, his Yari near him lose heart, and he is
-//!   revived at the Shrine at his level, for its price.
+//! - **Surrounded.** He is then sent alone into six regiments (three Chitin
+//!   Guard, three Mantid Reapers) standing round him: he falls, his Yari
+//!   near him lose heart, and he is revived at the Shrine at his level, for
+//!   its price.
+//! - **Three regiments.** Alone on open ground, two Chitin Guard and a
+//!   Mantid Reapers regiment attack him: they take at least 70% of his hit
+//!   points in 30 s (Mario: three regiments kill a hero in about 30 s).
+//! - **Breaking out.** Revived, he is ringed by the same three, fights for
+//!   3 s, and is ordered 30 tiles off: he cuts his way clear within 15 s.
 
 use gc_data::Faction;
 use gc_sim::{Command, RegimentHandle, TICKS_PER_SECOND, World};
@@ -18,7 +24,7 @@ use super::{Report, Scenario};
 
 pub(super) const SCENARIO: Scenario = Scenario {
     name: "heroes",
-    about: "the Daimyo hired at a Shrine, fighting head-on and surrounded, falling and revived",
+    about: "the Daimyo hired, fighting head-on, surrounded, against three regiments and breaking out",
     budget_ms: 30_000,
     run,
 };
@@ -155,9 +161,16 @@ fn run(real: &Real, report: &mut Report) {
         world.hero_of(hero).is_some_and(|h| h.xp > 0),
     );
 
-    // Surrounded: alone into three Chitin Guard regiments round him.
+    // Surrounded: alone into six regiments round him, his Yari standing
+    // off 13 tiles, out of the fight but near enough to feel his fall.
     let at = world.regiments.get(hero).unwrap().position;
     let (x, y) = (at.x.floor_int(), at.y.floor_int());
+    if world.regiments.get(ours).is_some() {
+        report.tick(&mut world, &[move_to(0, ours, centre(x, y - 13))]);
+        for _ in 0..15 * SECOND {
+            report.tick(&mut world, &[]);
+        }
+    }
     let around = spawn(
         &mut world,
         1,
@@ -239,4 +252,157 @@ fn run(real: &Real, report: &mut Report) {
         "he comes back at the level he fell at",
         revived.is_some_and(|h| !h.dead() && h.level == fallen.level),
     );
+
+    // Three regiments against him alone, at full health, on open ground:
+    // Mario's mark is that they kill a hero in about 30 s.
+    let revive = |world: &mut World, report: &mut Report| {
+        report.tick(world, &[hire(daimyo)]);
+        for _ in 0..120 * SECOND {
+            report.tick(world, &[]);
+            if let Some(h) = hero_handle(world) {
+                report.tick(world, &[move_to(0, h, centre(64, 64))]);
+                for _ in 0..30 * SECOND {
+                    report.tick(world, &[]);
+                }
+                return Some(h);
+            }
+        }
+        None
+    };
+    let Some(hero) = hero_handle(&world) else {
+        return;
+    };
+    report.tick(&mut world, &[move_to(0, hero, centre(64, 64))]);
+    for _ in 0..30 * SECOND {
+        report.tick(&mut world, &[]);
+    }
+    let held = ring_fight(&mut world, report, hero, [guard, reapers], None);
+    report.metric(
+        "three regiments: his hit points going in, and 30 s after the first blow",
+        format!("{} -> {:?}", held.hp_in, held.at_30),
+    );
+    report.metric("three regiments killed him in", super::seconds(held.fell));
+    report.check(
+        "three regiments take at least 70% of a whole Daimyo's hit points in 30 s",
+        held.at_30.is_some_and(|left| left * 10 <= held.hp_in * 3),
+    );
+
+    // Breaking out: the same ring, 3 s of fighting, then out of it to open
+    // ground 30 tiles off.
+    let Some(hero) = revive(&mut world, report) else {
+        report.check("revived for the break-out", false);
+        return;
+    };
+    let out = ring_fight(&mut world, report, hero, [guard, reapers], Some(3 * SECOND));
+    report.metric(
+        "broke out of a ring of three after",
+        super::seconds(out.out),
+    );
+    report.metric(
+        "hit points going in and coming out",
+        format!("{} -> {}", out.hp_in, out.hp_out),
+    );
+    report.check(
+        "ordered out of a ring of three, the Daimyo fights his way clear within 15 s",
+        out.out.is_some_and(|t| t <= 15 * SECOND),
+    );
+}
+
+/// How a ring fight went: when he fell or got clear (ticks from the first
+/// blow that landed on him, or from the order to leave), and his hit points.
+struct RingFight {
+    fell: Option<u32>,
+    /// His hit points 30 s after the first blow (0 if he fell by then).
+    at_30: Option<u32>,
+    out: Option<u32>,
+    hp_in: u32,
+    hp_out: u32,
+}
+
+/// Two regiments of `units[0]` and one of `units[1]` round `hero`, 6 tiles
+/// off, attack him. With `leave`, he is ordered 30 tiles away that long
+/// after the first blow lands; without, he stands.
+fn ring_fight(
+    world: &mut World,
+    report: &mut Report,
+    hero: RegimentHandle,
+    [guard, reapers]: [gc_sim::UnitId; 2],
+    leave: Option<u32>,
+) -> RingFight {
+    let at = world.regiments.get(hero).unwrap().position;
+    let (x, y) = (at.x.floor_int(), at.y.floor_int());
+    let ring = spawn(
+        world,
+        1,
+        &[
+            (guard, centre(x + 6, y)),
+            (guard, centre(x - 6, y)),
+            (reapers, centre(x, y + 6)),
+        ],
+        WEST,
+    );
+    let hp_in = hp(world, hero);
+    let mut fight = RingFight {
+        fell: None,
+        at_30: None,
+        out: None,
+        hp_in,
+        hp_out: hp_in,
+    };
+    let mut first = None;
+    let mut told = None;
+    for t in 0..120 * SECOND {
+        let mut orders: Vec<_> = Vec::new();
+        if t % SECOND == 0 {
+            orders.extend(
+                ring.iter()
+                    .filter(|&&r| world.regiments.get(r).is_some_and(|v| !v.engaged))
+                    .map(|&r| {
+                        order(
+                            1,
+                            Command::Attack {
+                                regiment: r,
+                                target: hero,
+                            },
+                        )
+                    }),
+            );
+        }
+        if first.is_none() && hp(world, hero) < hp_in {
+            first = Some(t);
+        }
+        if first.is_some_and(|t0| t == t0 + 30 * SECOND) {
+            fight.at_30 = Some(hp(world, hero));
+        }
+        if let (Some(t0), Some(wait), None) = (first, leave, told)
+            && t == t0 + wait
+        {
+            orders.push(move_to(0, hero, centre(x, y - 30)));
+            told = Some(t);
+        }
+        report.tick(world, &orders);
+        let Some(v) = world.regiments.get(hero) else {
+            fight.fell = first.map(|t0| t - t0);
+            fight.at_30 = fight.at_30.or(Some(0));
+            fight.hp_out = 0;
+            break;
+        };
+        fight.hp_out = hp(world, hero);
+        let clear = (ring.iter().filter_map(|&r| world.regiments.get(r)))
+            .all(|r| (r.position - v.position).length() > gc_fixed::Fx::from_int(10));
+        if let Some(t1) = told
+            && t > t1
+            && !v.engaged
+            && clear
+        {
+            fight.out = Some(t - t1);
+            break;
+        }
+    }
+    for r in ring {
+        if world.regiments.get(r).is_some() {
+            report.tick(world, &[order(1, Command::RemoveRegiment { regiment: r })]);
+        }
+    }
+    fight
 }

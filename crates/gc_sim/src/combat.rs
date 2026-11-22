@@ -343,8 +343,10 @@ fn ground_ends(
 /// would lock onto, only gets away after the tick it was ordered to fall
 /// back: on that tick its foes still hold it, for their parting blow.
 fn parted(regs: &Regiments, blocks: &[Block], i: usize, j: usize) -> bool {
-    let backs_away =
-        |k: usize, from: usize| blocks[k].side_facing(blocks[from].centre) == Side::Front;
+    // A hero cutting its way out gets away whichever side its foes are on.
+    let backs_away = |k: usize, from: usize| {
+        regs.hero_level[k] > 0 || blocks[k].side_facing(blocks[from].centre) == Side::Front
+    };
     (regs.falling_back[i] > 0 && backs_away(i, j))
         || ((1..FALL_BACK_TICKS).contains(&regs.falling_back[j]) && backs_away(j, i))
 }
@@ -2593,6 +2595,11 @@ impl Combat {
                 landed = landed * crate::manning::REACH_VS_LADDER_PERCENT / 100;
             }
             landed = landed * BATTLE_PACE_PERCENT / 100;
+            // A hero stands out in the press: more blows find it than its
+            // one-man frontage lets through.
+            if regs.hero_level[j] > 0 {
+                landed = landed * crate::heroes::HERO_EXPOSED_PERCENT / 100;
+            }
             // Even a blow that can't wound shoves, by the weight of all the
             // blows the regiment strikes.
             let expected = landed * fighters * u64::from(hit) / (100 * 100);

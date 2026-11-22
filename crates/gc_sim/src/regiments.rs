@@ -1335,6 +1335,22 @@ impl Regiments {
         true
     }
 
+    /// A hero cuts its way out of its fight towards `to` (see
+    /// [`crate::heroes`]): as [`Regiments::fall_back`], each foe gets its
+    /// parting blow and nobody can lock it in melee for a while, from any
+    /// side, but it turns and goes at its full pace. `false` for one that
+    /// isn't fighting, or is routing or already pulling out.
+    pub(crate) fn break_out(&mut self, h: RegimentHandle, to: FxVec2) -> bool {
+        let Some(i) = self.resolve(h) else {
+            return false;
+        };
+        if self.engaged[i].is_none() || !self.fall_back(h, to) {
+            return false;
+        }
+        self.target_facing[i] = None;
+        true
+    }
+
     /// Light (or put out) a regiment's torches; returns whether that
     /// changed anything.
     pub(crate) fn light(&mut self, h: RegimentHandle, lit: bool) -> bool {
