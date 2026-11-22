@@ -524,6 +524,9 @@ regiment_fields! {
     hp_bonus: u16 = 0,
     melee_bonus: u16 = 0,
     missile_bonus: u16 = 0,
+    /// A hero cutting its way out of a fight (see [`Regiments::break_out`]),
+    /// while it falls back.
+    breaking_out: bool = false,
 }
 
 impl Regiments {
@@ -1340,15 +1343,41 @@ impl Regiments {
     /// parting blow and nobody can lock it in melee for a while, from any
     /// side, but it turns and goes at its full pace. `false` for one that
     /// isn't fighting, or is routing or already pulling out.
-    pub(crate) fn break_out(&mut self, h: RegimentHandle, to: FxVec2) -> bool {
+    ///
+    /// Called after the move order is given, it keeps the way and pace that
+    /// order set (a settled point, a brigade's slot); only the hold of the
+    /// fight is undone. A second move while breaking out breaks out again.
+    pub(crate) fn break_out(&mut self, h: RegimentHandle) -> bool {
         let Some(i) = self.resolve(h) else {
             return false;
         };
-        if self.engaged[i].is_none() || !self.fall_back(h, to) {
+        let (target, pace) = (self.target[i], self.pace[i]);
+        let Some(to) = target else {
+            return false;
+        };
+        let again = self.breaking_out[i];
+        if (self.engaged[i].is_none() && !again) || !self.fall_back(h, to) {
             return false;
         }
+        (self.target[i], self.pace[i]) = (target, pace);
         self.target_facing[i] = None;
+        self.breaking_out[i] = true;
         true
+    }
+
+    /// Whether slot `i` is a hero cutting its way out (see
+    /// [`Regiments::break_out`]).
+    pub(crate) fn breaking_out(&self, i: usize) -> bool {
+        self.breaking_out[i] && self.falling_back[i] > 0
+    }
+
+    /// Slot `i`'s break-out is over: it marches on to where it was sent as
+    /// any march does, and can be caught in melee again.
+    pub(crate) fn end_break_out(&mut self, i: usize) {
+        if self.breaking_out[i] && self.falling_back[i] > 0 {
+            self.falling_back[i] = 0;
+        }
+        self.breaking_out[i] = false;
     }
 
     /// Light (or put out) a regiment's torches; returns whether that

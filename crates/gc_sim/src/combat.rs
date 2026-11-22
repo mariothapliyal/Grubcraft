@@ -345,7 +345,7 @@ fn ground_ends(
 fn parted(regs: &Regiments, blocks: &[Block], i: usize, j: usize) -> bool {
     // A hero cutting its way out gets away whichever side its foes are on.
     let backs_away = |k: usize, from: usize| {
-        regs.hero_level[k] > 0 || blocks[k].side_facing(blocks[from].centre) == Side::Front
+        regs.breaking_out(k) || blocks[k].side_facing(blocks[from].centre) == Side::Front
     };
     (regs.falling_back[i] > 0 && backs_away(i, j))
         || ((1..FALL_BACK_TICKS).contains(&regs.falling_back[j]) && backs_away(j, i))
@@ -2595,11 +2595,6 @@ impl Combat {
                 landed = landed * crate::manning::REACH_VS_LADDER_PERCENT / 100;
             }
             landed = landed * BATTLE_PACE_PERCENT / 100;
-            // A hero stands out in the press: more blows find it than its
-            // one-man frontage lets through.
-            if regs.hero_level[j] > 0 {
-                landed = landed * crate::heroes::HERO_EXPOSED_PERCENT / 100;
-            }
             // Even a blow that can't wound shoves, by the weight of all the
             // blows the regiment strikes.
             let expected = landed * fighters * u64::from(hit) / (100 * 100);
@@ -2611,7 +2606,12 @@ impl Combat {
             regs.pressed[j] = regs.pressed[j].saturating_add(shove);
             // A veteran's blows cut deeper (see [`veterancy`]); they push
             // no harder.
-            let landed = landed * veterancy::damage_percent(regs, i) / 100;
+            let mut landed = landed * veterancy::damage_percent(regs, i) / 100;
+            // A hero stands out in the press: more blows find it than its
+            // one-man frontage lets through (they push it no harder).
+            if regs.hero_level[j] > 0 {
+                landed = landed * crate::heroes::HERO_EXPOSED_PERCENT / 100;
+            }
             let blows = (self.tell).then_some(&mut self.blows);
             duel(
                 regs,

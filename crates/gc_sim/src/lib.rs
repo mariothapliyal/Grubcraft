@@ -2422,14 +2422,13 @@ impl World {
                 // A hero told to go elsewhere while it fights cuts its way
                 // out (see `heroes`); anyone else marches on once free.
                 let hero = self.hero_of(regiment).is_some();
-                let engaged = self
-                    .regiments
-                    .resolve(regiment)
-                    .is_some_and(|i| self.regiments.engaged[i].is_some());
+                let held = self.regiments.resolve(regiment).is_some_and(|i| {
+                    self.regiments.engaged[i].is_some() || self.regiments.breaking_out(i)
+                });
                 let done = self.march(regiment, step);
                 if done {
-                    if hero && engaged && !hunt {
-                        self.regiments.break_out(regiment, target);
+                    if hero && held && !hunt {
+                        self.regiments.break_out(regiment);
                     }
                     self.regiments.fresh(regiment, hunt.then_some(step));
                 }

@@ -40,7 +40,7 @@ const HERO_LEADS: &str =
 const HERO_SHOCK_TEXT: &str =
     "Each soldier it kills in melee costs the regiment it struck 4 morale";
 const HERO_BREAK_OUT: &str =
-    "Ordered away mid-fight, it cuts its way out: nobody can pin it for 8 s";
+    "Ordered away mid-fight, it cuts its way out: nobody can pin it for up to 8 s";
 const HERO_REVIVE: &str =
     "At its building, at its level: 65% of the hire price and time at level 1, 15% more a level";
 /// Until stage H2 (docs/43) the abilities are listed but do nothing.
@@ -1330,7 +1330,7 @@ mod tests {
         assert!(HERO_LEADS.contains(&format!("within {LEAD_TILES} tiles")));
         assert!(HERO_SHOCK_TEXT.contains(&format!("struck {HERO_SHOCK} morale")));
         let pinned = gc_sim::combat::FALL_BACK_TICKS / gc_sim::TICKS_PER_SECOND as u16;
-        assert!(HERO_BREAK_OUT.contains(&format!("for {pinned} s")));
+        assert!(HERO_BREAK_OUT.contains(&format!("up to {pinned} s")));
         assert_eq!(LEAD_TILES, FALL_TILES, "one radius in the text");
         let first = REVIVE_PERCENT + REVIVE_LEVEL_PERCENT;
         assert!(HERO_REVIVE.contains(&format!("{first}% of the hire")));

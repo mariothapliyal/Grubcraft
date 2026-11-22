@@ -17,6 +17,7 @@
 //!   3 s, and is ordered 30 tiles off: he cuts his way clear within 15 s.
 
 use gc_data::Faction;
+use gc_fixed::FxVec2;
 use gc_sim::{Command, RegimentHandle, TICKS_PER_SECOND, World};
 
 use super::arena::{Arena, EAST, Real, WEST, centre, hp, move_to, order, put_up, spawn};
@@ -254,13 +255,21 @@ fn run(real: &Real, report: &mut Report) {
     );
 
     // Three regiments against him alone, at full health, on open ground:
-    // Mario's mark is that they kill a hero in about 30 s.
-    let revive = |world: &mut World, report: &mut Report| {
+    // Mario's mark is that they kill a hero in about 30 s. Who reaches him
+    // first and who breaks first swing one fight a lot, so it is fought four
+    // times, in four places, and judged on the whole.
+    let revive = |world: &mut World, report: &mut Report, spot: FxVec2| {
+        // Still standing from the last fight: taken off, so he comes back
+        // whole.
+        if let Some(h) = hero_handle(world) {
+            report.tick(world, &[order(0, Command::RemoveRegiment { regiment: h })]);
+            report.tick(world, &[]);
+        }
         report.tick(world, &[hire(daimyo)]);
         for _ in 0..120 * SECOND {
             report.tick(world, &[]);
             if let Some(h) = hero_handle(world) {
-                report.tick(world, &[move_to(0, h, centre(64, 64))]);
+                report.tick(world, &[move_to(0, h, spot)]);
                 for _ in 0..30 * SECOND {
                     report.tick(world, &[]);
                 }
@@ -269,27 +278,39 @@ fn run(real: &Real, report: &mut Report) {
         }
         None
     };
-    let Some(hero) = hero_handle(&world) else {
-        return;
-    };
-    report.tick(&mut world, &[move_to(0, hero, centre(64, 64))]);
-    for _ in 0..30 * SECOND {
-        report.tick(&mut world, &[]);
+    let (mut taken, mut whole, mut kills) = (0, 0, Vec::new());
+    for k in 0..4 {
+        // A fresh match each time, so every fight is against a level-1
+        // Daimyo (a fight's dead level him up for the next).
+        let Some((mut w, h)) = fresh_daimyo(real, report, 100 + k) else {
+            report.check("hired for the three-regiment fights", false);
+            return;
+        };
+        report.tick(&mut w, &[move_to(0, h, centre(40 + 16 * k as i32, 64))]);
+        for _ in 0..30 * SECOND {
+            report.tick(&mut w, &[]);
+        }
+        let fight = ring_fight(&mut w, report, h, [guard, reapers], None);
+        whole += fight.hp_in;
+        taken += fight.hp_in - fight.at_30.unwrap_or(fight.hp_out).min(fight.hp_in);
+        kills.push(fight.fell.map(|t| t / SECOND));
     }
-    let held = ring_fight(&mut world, report, hero, [guard, reapers], None);
     report.metric(
-        "three regiments: his hit points going in, and 30 s after the first blow",
-        format!("{} -> {:?}", held.hp_in, held.at_30),
+        "three regiments, four fights: share of his hit points taken in 30 s",
+        format!("{}%", taken * 100 / whole.max(1)),
     );
-    report.metric("three regiments killed him in", super::seconds(held.fell));
+    report.metric(
+        "three regiments killed him in (s, each fight)",
+        format!("{kills:?}"),
+    );
     report.check(
-        "three regiments take at least 70% of a whole Daimyo's hit points in 30 s",
-        held.at_30.is_some_and(|left| left * 10 <= held.hp_in * 3),
+        "three regiments take at least 70% of a whole Daimyo's hit points in 30 s, over four fights",
+        taken * 10 >= whole * 7,
     );
 
     // Breaking out: the same ring, 3 s of fighting, then out of it to open
     // ground 30 tiles off.
-    let Some(hero) = revive(&mut world, report) else {
+    let Some(hero) = revive(&mut world, report, centre(64, 64)) else {
         report.check("revived for the break-out", false);
         return;
     };
@@ -306,6 +327,32 @@ fn run(real: &Real, report: &mut Report) {
         "ordered out of a ring of three, the Daimyo fights his way clear within 15 s",
         out.out.is_some_and(|t| t <= 15 * SECOND),
     );
+}
+
+/// A new match on the arena (seed `seed`) with a Clan Hall and an Ancestor
+/// Shrine, and a level-1 Daimyo just hired out of it.
+fn fresh_daimyo(real: &Real, report: &mut Report, seed: u64) -> Option<(World, RegimentHandle)> {
+    let factions = [Some(Faction::EmberClans), Some(Faction::Brood)];
+    let mut world = Arena::new(TILES).world_for(real, seed, 3000, &factions, &[]);
+    let built = put_up(
+        &mut world,
+        0,
+        &[
+            (real.building("Clan Hall"), (10, 10), 0),
+            (real.building("Ancestor Shrine"), (20, 10), 0),
+        ],
+    );
+    put_up(&mut world, 1, &[(real.building("Hive"), (110, 110), 0)]);
+    let structure = built[1];
+    let unit = real.unit("The Daimyo");
+    report.tick(&mut world, &[order(0, Command::Train { structure, unit })]);
+    for _ in 0..60 * SECOND {
+        report.tick(&mut world, &[]);
+        if let Some(h) = hero_handle(&world) {
+            return Some((world, h));
+        }
+    }
+    None
 }
 
 /// How a ring fight went: when he fell or got clear (ticks from the first
