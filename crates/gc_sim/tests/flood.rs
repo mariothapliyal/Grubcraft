@@ -95,6 +95,7 @@ fn world(spells: &'static [Spell]) -> World {
             growth: &[],
             footing: &[],
             flow: &[],
+            water_levels: &[],
         },
         champions: false,
         sky: Sky {

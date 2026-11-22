@@ -40,6 +40,9 @@ pub struct Terrain {
     /// Ground lower than this is under water: deep water is blocked, the
     /// rest is a ford.
     water_level: f32,
+    /// The water's own level on each tile, in tiles, where the map has
+    /// highland water (docs/27 stage 5); empty: `water_level` everywhere.
+    water_levels: Vec<f32>,
     /// Woods and tall grass per tile, row by row, as `gc_sim::Ground::cover`;
     /// empty when the map has none.
     cover: Vec<u8>,
@@ -134,6 +137,7 @@ impl Terrain {
             clear: Vec::new(),
             height: Vec::new(),
             water_level: f32::MIN,
+            water_levels: Vec::new(),
             cover: Vec::new(),
             growth: Vec::new(),
             under: Vec::new(),
@@ -160,6 +164,7 @@ impl Terrain {
             clear: vec![0; nav.len()],
             height: Vec::new(),
             water_level: f32::MIN,
+            water_levels: Vec::new(),
             cover: Vec::new(),
             growth: Vec::new(),
             under: Vec::new(),
@@ -185,6 +190,27 @@ impl Terrain {
             self.water_level = water_level;
         }
         self
+    }
+
+    /// Add the water's own level on each tile, in tiles, row by row (see
+    /// `gc_sim::Ground::water_levels`): ground below a tile's level is
+    /// water. Ignored if there isn't one per tile.
+    pub fn with_water_levels(mut self, levels: Vec<f32>) -> Terrain {
+        let n = self.map_tiles as usize;
+        if levels.len() == n * n && n > 0 {
+            self.water_levels = levels;
+        }
+        self
+    }
+
+    /// The water's level at `p`, in tiles: its tile's own, or the map's.
+    pub fn water_level_at(&self, p: Vec2) -> f32 {
+        let n = self.map_tiles as i32;
+        let (x, y) = (p.x.floor() as i32, p.y.floor() as i32);
+        if self.water_levels.is_empty() || !(0..n).contains(&x) || !(0..n).contains(&y) {
+            return self.water_level;
+        }
+        self.water_levels[(y * n + x) as usize]
     }
 
     /// Add the map's woods and tall grass, one byte per tile as the
@@ -522,7 +548,7 @@ impl Terrain {
     /// water counts (the ice on the fords is walked as dry ground).
     pub fn water(&self, p: Vec2) -> bool {
         !self.height.is_empty()
-            && self.height(p) < self.water_level
+            && self.height(p) < self.water_level_at(p)
             && !(self.frozen && !self.blocked(p))
     }
 

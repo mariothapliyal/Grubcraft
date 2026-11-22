@@ -80,6 +80,7 @@ fn world_full(
             growth: &[],
             footing,
             flow: &[],
+            water_levels: &[],
         },
         champions: false,
         sky: gc_sim::Sky::STILL,

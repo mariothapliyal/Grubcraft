@@ -132,21 +132,20 @@ fn ghost_shade(clip: vec4<f32>, n: vec3<f32>, world: vec3<f32>, tint: vec3<f32>)
 // How each tile's ground looks (Terrain::look), one texel a tile: rgb multiplies
 // the grass (128 leaves it), a is the `GROUND_*` pattern drawn over it.
 @group(0) @binding(18) var ground_look: texture_2d<f32>;
-// How far the rivers raise their water over the water line
-// (Renderer::set_river_water), one texel a tile: r times RIVER_RISE_FULL
-// tiles. Read without a sampler, so every stage can (soldiers are stood
-// in a compute pass).
+// How far the water stands over the water line, one texel a tile, in tiles:
+// the tile's own level on highland lakes and rivers (Terrain::water_levels)
+// and how far the rivers raise it (Renderer::set_river_water). Read without a
+// sampler, so every stage can (soldiers are stood in a compute pass).
 @group(0) @binding(19) var river_map: texture_2d<f32>;
-// 255 half height units of a 256-unit tile.
-const RIVER_RISE_FULL: f32 = 510.0 / 256.0;
 
 fn river_texel(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(river_map));
     return textureLoad(river_map, clamp(p, vec2<i32>(0, 0), size - vec2<i32>(1, 1)), 0).r;
 }
 
-// The water's surface at `xz`: the water line, raised where a river is up
-// (eased between tile centres).
+// The water's surface at `xz`: the water line, raised to the tile's own
+// level and where a river is up (eased between tile centres, so it steps
+// down where a highland river falls).
 fn water_surface(xz: vec2<f32>) -> f32 {
     let s = xz - vec2<f32>(0.5);
     let i = vec2<i32>(floor(s));
@@ -156,7 +155,7 @@ fn water_surface(xz: vec2<f32>) -> f32 {
         mix(river_texel(i + vec2<i32>(0, 1)), river_texel(i + vec2<i32>(1, 1)), f.x),
         f.y,
     );
-    return g.misc.x + r * RIVER_RISE_FULL;
+    return g.misc.x + r;
 }
 
 fn sample_height(p: vec2<i32>) -> f32 {
@@ -389,6 +388,8 @@ const WET_DARK: f32 = 0.24;
 const SNOW_ALBEDO = vec3<f32>(0.74, 0.78, 0.86);
 // Ice on frozen water (linear).
 const ICE_ALBEDO = vec3<f32>(0.485, 0.647, 0.754);
+// White water at a fall: churned, a little blue.
+const FOAM_ALBEDO = vec3<f32>(0.78, 0.84, 0.86);
 
 // How much of the ground at `xz` lying snow covers (`lying` 0 bare to 1 a
 // blanket): patches that grow into a blanket as more lies.
@@ -1366,6 +1367,20 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let glint = g.sun_color.rgb * pow(max(dot(r, g.sun_dir.xyz), 0.0), 500.0) * 10.0 * sun;
         var wc = finish(mix(lit, sky * 0.8, mirror) + glint, wp);
         var cover = clamp(0.5 + depth * 1.5, 0.0, 0.92);
+        // White water where a highland river falls to the reach below: the
+        // surface drops steeply there (docs/27 stage 5). Churned streaks
+        // that run with the time, over most of the water.
+        let fall = abs(water_surface(xz + vec2<f32>(0.5, 0.0)) - water_surface(xz - vec2<f32>(0.5, 0.0)))
+            + abs(water_surface(xz + vec2<f32>(0.0, 0.5)) - water_surface(xz - vec2<f32>(0.0, 0.5)));
+        let churn = smoothstep(0.08, 0.3, fall);
+        if churn > 0.0 {
+            let streak = vnoise(wp.xz * 2.3 + vec2<f32>(g.misc.y * 1.7, g.misc.y * 1.1));
+            let froth = churn * (0.55 + 0.45 * smoothstep(0.35, 0.7, streak));
+            let up = vec3<f32>(0.0, 1.0, 0.0);
+            let lit_foam = FOAM_ALBEDO * (g.sun_color.rgb * max(g.sun_dir.y, 0.0) * sun + ambient_light(up));
+            wc = mix(wc, finish(lit_foam, wp), froth);
+            cover = mix(cover, 1.0, froth);
+        }
         // Frozen water: a pale sheet of ice, cracked and cloudy, with snow
         // lying on it as on the bank. It hides the bed and the ripples, and
         // is lit flat under the water's own shadow. Only the shallows and

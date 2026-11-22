@@ -49,6 +49,7 @@ fn setup<'a>(cover: &'a [u8], sky: Sky<'static>) -> MatchSetup<'a> {
             growth: &[],
             footing: &[],
             flow: &[],
+            water_levels: &[],
         },
         champions: false,
         sky,

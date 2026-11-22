@@ -98,6 +98,7 @@ fn world_with(style: ClearStyle, seed: u64, spells: &'static [Spell], wooded: bo
             growth: &growth,
             footing: &[],
             flow: &flow,
+            water_levels: &[],
         },
         champions: false,
         sky: gc_sim::Sky {

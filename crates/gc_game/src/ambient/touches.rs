@@ -155,8 +155,8 @@ impl Touches {
             (wanted(touches_of(h)) && visible((x, y))).then_some(h)
         };
         // Spawn on the ground (not under water), a little above it.
-        let ground = |p: Vec2| map.height_at(p.x, p.y).max(map.water_level());
-        let wet_ok = |p: Vec2| map.height_at(p.x, p.y) >= map.water_level();
+        let ground = |p: Vec2| map.surface_at(p.x, p.y);
+        let wet_ok = |p: Vec2| map.height_at(p.x, p.y) >= map.water_at(p.x, p.y);
         for (rate, want) in [
             (POLLEN_RATE * day * near, 0u8),
             (FIREFLY_RATE * dusk * near, 1),
@@ -217,12 +217,13 @@ impl Touches {
         let near = 1.0 - ((distance - FADE_NEAR) / (FADE_FAR - FADE_NEAR)).clamp(0.0, 1.0);
         let rate = RISE_RATE * (1.0 + dusk_of(sun)) * near;
         let area = std::f32::consts::PI * reach * reach;
-        let (low, tiles) = (map.water_level(), map.tiles as f32);
+        let tiles = map.tiles as f32;
         for _ in 0..self.count(rate * area * dt) {
             let p = self.near(focus, reach);
             if p.x < 1.0 || p.y < 1.0 || p.x > tiles - 1.0 || p.y > tiles - 1.0 {
                 continue;
             }
+            let low = map.water_at(p.x, p.y);
             if map.height_at(p.x, p.y) < low - RISE_DEPTH
                 && visible((p.x.floor() as i32, p.y.floor() as i32))
             {

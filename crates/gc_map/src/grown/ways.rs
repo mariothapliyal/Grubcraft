@@ -29,10 +29,11 @@ const RAMP_RISE: i32 = ONE * 3 / 10;
 /// into the land beside it, in fixed-point tiles.
 const HALF_WIDTH: i32 = 3 * ONE;
 const EDGE: i32 = 2 * ONE;
-/// Water a ramp crosses is raised to a ford this far under the line.
+/// Water a ramp crosses is raised to a ford this far under its level.
 const FORD: i32 = ONE / 5;
-/// Water deeper than this costs more to cross when choosing where to cut.
-const DEEP: i32 = WATER_LINE - ONE * 35 / 100;
+/// Water deeper than this under its level costs more to cross when
+/// choosing where to cut.
+const DEEP: i32 = ONE * 35 / 100;
 /// Rounds of ramps and passes before what is still cut off is broken.
 const ROUNDS: usize = 4;
 /// Under measured fairness the walks are what keeps the starts equal, so
@@ -325,20 +326,30 @@ fn cheapest(
 
 /// The price of crossing rough ground from `i` to `j`: four a tenth of a
 /// tile of height climbed or dropped, and three open steps more into deep
-/// water.
-fn rough_step(h: &[i32], i: usize, j: usize) -> u32 {
+/// water (under its own `level`).
+fn rough_step(h: &[i32], level: &[i32], i: usize, j: usize) -> u32 {
     let climb = (i64::from((h[j] - h[i]).abs()) * 40 / i64::from(ONE)) as u32;
-    climb + if h[j] < DEEP { 30 } else { 0 }
+    climb
+        + if h[j] < water_at(level, j) - DEEP {
+            30
+        } else {
+            0
+        }
+}
+
+/// The water's level on tile `i` (the line where the raster has none).
+fn water_at(level: &[i32], i: usize) -> i32 {
+    level.get(i).copied().unwrap_or(WATER_LINE)
 }
 
 /// The cheapest way from `from` to `to` when ground that isn't standable
 /// can be crossed at a price: three open steps a step, plus its
 /// [`rough_step`]. The tiles along it, from `from`.
 fn cut_path(r: &Raster, standable: &[u8], from: usize, to: usize) -> Vec<usize> {
-    let h = &r.height.v;
+    let (h, level) = (&r.height.v, &r.level);
     let (_, parent) = cheapest(r.height.n, [from], Some(to), |i, j| {
         Some(match standable[j] {
-            0 => 30 + rough_step(h, i, j),
+            0 => 30 + rough_step(h, level, i, j),
             cost => u32::from(cost),
         })
     });
@@ -376,11 +387,11 @@ fn pieces(standable: &[u8], n: usize, first: usize) -> (Vec<bool>, Vec<Vec<usize
 /// each came from (for tiles off the reachable land).
 fn crossings(r: &Raster, live: &[bool]) -> (Vec<u32>, Vec<u32>) {
     let n = r.height.n;
-    let h = &r.height.v;
+    let (h, level) = (&r.height.v, &r.level);
     // Only the edge of the reachable land can lead off it.
     let edge = (0..n * n).filter(|&i| live[i] && n4(i, n).any(|j| !live[j]));
     cheapest(n, edge, None, |i, j| {
-        (!live[j]).then(|| 10 + rough_step(h, i, j))
+        (!live[j]).then(|| 10 + rough_step(h, level, i, j))
     })
 }
 
@@ -448,8 +459,8 @@ fn ramp(r: &mut Raster, a: usize, b: usize) {
                 continue;
             }
             let along = hs + mul(he - hs, div(t, len));
-            let level = along.clamp(WATER_LINE - FORD, TOP);
             let i = (y as usize) * n + x as usize;
+            let level = along.clamp(water_at(&r.level, i) - FORD, TOP);
             cut.push((w, i, lerp(r.height.v[i], level, w)));
         }
     }
@@ -575,6 +586,10 @@ mod tests {
             land: vec![0; n * n],
             habitat: vec![0; n * n],
             flow: Vec::new(),
+            level: Vec::new(),
+            body: vec![0; n * n],
+            bodies: super::super::levels::Bodies::new(),
+            keep: vec![false; n * n],
             starts: crate::generate::plateaus(n as u32),
             mirrored: true,
         };

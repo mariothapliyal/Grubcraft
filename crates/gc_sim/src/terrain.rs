@@ -299,6 +299,12 @@ pub struct Ground<'a> {
     /// bytes. Empty means still water everywhere; otherwise there must be
     /// one per tile of the map, or the water is taken as still.
     pub flow: &'a [u8],
+    /// The water's own level on each tile, row by row, in
+    /// [`HEIGHT_UNITS`]: 0 where it is `water_level`, higher on highland
+    /// lakes and rivers (docs/27 stage 5). Empty means `water_level`
+    /// everywhere; otherwise there must be one per tile of the map, or it
+    /// is taken as empty.
+    pub water_levels: &'a [u16],
 }
 
 impl Ground<'static> {
@@ -310,6 +316,7 @@ impl Ground<'static> {
         growth: &[],
         footing: &[],
         flow: &[],
+        water_levels: &[],
     };
 }
 
@@ -337,6 +344,9 @@ pub struct Terrain {
     /// One [`Flow`] byte per tile of the map (`tiles` a side), or empty:
     /// still water everywhere.
     flow: Arc<[u8]>,
+    /// The water's own level per tile of the map (`tiles` a side), 0 for
+    /// `water_level`, or empty: `water_level` everywhere.
+    levels: Arc<[u16]>,
     /// The tiles rain can soak, as (index, how wet the ground must be),
     /// the soonest first; the first `soaked` of them are soft now.
     soak: Arc<[(u32, u16)]>,
@@ -429,6 +439,11 @@ impl Terrain {
             footing: footing.into(),
             footing_tiles,
             flow: Flow::layer(ground.flow, map_tiles).into(),
+            levels: if !flat && ground.water_levels.len() == n * n {
+                ground.water_levels.into()
+            } else {
+                Arc::from([])
+            },
             soak: Arc::from([]),
             soak_need: Arc::from([]),
             soaked: 0,
@@ -465,17 +480,19 @@ impl Terrain {
             return Vec::new();
         }
         let h = |x: i32, y: i32| i32::from(self.height[(y * n + x) as usize]);
-        let water = i32::from(self.water_level);
+        let wet = |x: i32, y: i32| h(x, y) < i32::from(self.level_of((y * n + x) as usize));
         // Tiles from the nearest water, counting diagonal steps as one, out
-        // to the reach, spreading from the water's edge.
+        // to the reach, spreading from the water's edge, and that water's
+        // level (each tile's own, highland water's included).
         let mut from_water = alloc::vec![u8::MAX; (n * n) as usize];
+        let mut water_of: Vec<u16> = (0..(n * n) as usize).map(|i| self.level_of(i)).collect();
         let mut edge: Vec<(i32, i32)> = Vec::new();
         for y in 0..n {
             for x in 0..n {
-                if h(x, y) < water {
+                if wet(x, y) {
                     from_water[(y * n + x) as usize] = 0;
                     let shore = crate::nav::DIRS.iter().any(|(dx, dy)| {
-                        index_in(n, x + dx, y + dy).is_some_and(|_| h(x + dx, y + dy) >= water)
+                        index_in(n, x + dx, y + dy).is_some_and(|_| !wet(x + dx, y + dy))
                     });
                     if shore {
                         edge.push((x, y));
@@ -490,6 +507,7 @@ impl Terrain {
                     let (nx, ny) = (x + dx, y + dy);
                     if let Some(i) = index_in(n, nx, ny).filter(|&i| from_water[i] == u8::MAX) {
                         from_water[i] = step;
+                        water_of[i] = water_of[(y * n + x) as usize];
                         next.push((nx, ny));
                     }
                 }
@@ -501,7 +519,7 @@ impl Terrain {
         for y in 0..n {
             for x in 0..n {
                 let i = (y * n + x) as usize;
-                let rise = h(x, y) - water;
+                let rise = h(x, y) - i32::from(water_of[i]);
                 let near = from_water[i];
                 if !(0..=SOAK_RISE).contains(&rise) || !(1..=SOAK_REACH).contains(&near) {
                     continue;
@@ -516,7 +534,7 @@ impl Terrain {
                 // the water).
                 let flat = [(-1, 0), (1, 0), (0, -1), (0, 1)].iter().all(|(dx, dy)| {
                     let (nx, ny) = ((x + dx).clamp(0, n - 1), (y + dy).clamp(0, n - 1));
-                    h(nx, ny) < water || (h(nx, ny) - h(x, y)).abs() <= SOAK_SLOPE
+                    wet(nx, ny) || (h(nx, ny) - h(x, y)).abs() <= SOAK_SLOPE
                 });
                 if open && firm && flat {
                     let wet = SOAK_FROM
@@ -826,7 +844,7 @@ impl Terrain {
         if self.tiles == 0 || self.frozen {
             return None;
         }
-        let (h, line) = (self.height(p), self.water_line());
+        let (h, line) = (self.height(p), self.water_line_at(p));
         // Only ground a river could reach asks after its water.
         let rise = match &self.rivers {
             Some(w) if w.most() > 0 && h < line + i32::from(w.most()) => {
@@ -1067,12 +1085,47 @@ impl Terrain {
         i32::from(self.water_level) + i32::from(self.rise) - i32::from(self.low)
     }
 
-    /// Whether the tile `(x, y)`'s middle lies under the map's water line
+    /// The water's own level on map tile `i` (row by row), in height units,
+    /// before any flood: the map's line, or the tile's own on highland
+    /// water and its shores (docs/27 stage 5).
+    pub fn level_of(&self, i: usize) -> u16 {
+        match self.levels.get(i) {
+            Some(&l) if l != 0 => l,
+            _ => self.water_level,
+        }
+    }
+
+    /// [`Terrain::level_of`] the tile `(x, y)`; the map's line off the map.
+    pub fn tile_level(&self, x: i32, y: i32) -> u16 {
+        index_in(self.tiles, x, y).map_or(self.water_level, |i| self.level_of(i))
+    }
+
+    /// Where the water stands now at `p`, in height units: its tile's own
+    /// level, raised by a flood or dropped by low water as the map's line
+    /// is.
+    pub fn water_line_at(&self, p: FxVec2) -> i32 {
+        i32::from(self.tile_level(p.x.floor_int(), p.y.floor_int())) + i32::from(self.rise)
+            - i32::from(self.low)
+    }
+
+    /// Whether any tile has water at its own level rather than the map's
+    /// line.
+    pub fn has_own_levels(&self) -> bool {
+        !self.levels.is_empty()
+    }
+
+    /// The water's own levels, one per tile (0 for the map's line), or
+    /// empty: for drawing.
+    pub fn levels(&self) -> &[u16] {
+        &self.levels
+    }
+
+    /// Whether the tile `(x, y)`'s middle lies under its water's level
     /// but no deeper than `depth` height units below it.
     pub(crate) fn tile_within(&self, x: i32, y: i32, depth: u16) -> bool {
         self.tile_under_water(x, y)
             && index_in(self.tiles, x, y).is_some_and(|i| {
-                u32::from(self.height[i]) + u32::from(depth) >= u32::from(self.water_level)
+                u32::from(self.height[i]) + u32::from(depth) >= u32::from(self.level_of(i))
             })
     }
 
@@ -1091,10 +1144,10 @@ impl Terrain {
         })
     }
 
-    /// Whether the tile `(x, y)` lies under the map's water line (before
-    /// any flood); never off the map.
+    /// Whether the tile `(x, y)` lies under its water's level (before any
+    /// flood); never off the map.
     pub(crate) fn tile_under_water(&self, x: i32, y: i32) -> bool {
-        index_in(self.tiles, x, y).is_some_and(|i| self.height[i] < self.water_level)
+        index_in(self.tiles, x, y).is_some_and(|i| self.height[i] < self.level_of(i))
     }
 
     /// Whether something at `from` fights downhill against something at `to`.

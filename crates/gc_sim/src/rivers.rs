@@ -1364,8 +1364,8 @@ fn floodplain(
 ) -> (Vec<Plain>, Vec<PlainTile>) {
     let at = |x: i32, y: i32| crate::terrain::index_in(n, x, y);
     let xy = |i: usize| (i as i32 % n, i as i32 / n);
-    let line = i32::from(terrain.water_level());
-    // Out from every river tile over dry land, nearest first.
+    // Out from every river tile over dry land, nearest first, measured
+    // against that river's own water (docs/27 stage 5).
     let mut from = alloc::vec![u32::MAX; reach.len()];
     let mut steps = alloc::vec![0u8; reach.len()];
     let mut queue: Vec<usize> = (0..reach.len()).filter(|&i| reach[i] != NONE).collect();
@@ -1388,6 +1388,7 @@ fn floodplain(
                 continue;
             }
             // Only over land a flood could reach: not over a ridge.
+            let line = i32::from(terrain.level_of(from[i] as usize));
             let above = terrain.height(gc_fixed::FxVec2::from_ints(x + dx, y + dy)) - line;
             if !(0..HEIGHT_UNITS as i32).contains(&above) {
                 continue;

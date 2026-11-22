@@ -38,6 +38,7 @@ pub fn ai_terrain(map: &Map, nav: &[u8]) -> gc_ai::Terrain {
     }
     gc_ai::Terrain::new(nav, tiles)
         .with_heights(heights, map.water_level())
+        .with_water_levels(map.tile_water_levels())
         .with_cover(map.cover.clone())
         .with_growth(map.growth.clone())
 }

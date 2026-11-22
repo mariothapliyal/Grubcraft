@@ -40,9 +40,8 @@ const STEEPEST: f32 = 0.3;
 /// Whether the ground at a point is dry and bare of trees: where walkers and
 /// town carts may go.
 pub fn open_ground<'a>(map: &'a gc_map::Map, scenery: &'a Scenery) -> impl Fn(Vec2) -> bool + 'a {
-    let dry = map.water_level() + SHORE;
     move |p| {
-        map.height_at(p.x, p.y) > dry
+        map.height_at(p.x, p.y) > map.water_at(p.x, p.y) + SHORE
             && !scenery
                 .standing((p.x.floor() as i32, p.y.floor() as i32))
                 .any(|s| s.tree)

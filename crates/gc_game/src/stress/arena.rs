@@ -35,6 +35,9 @@ pub(crate) struct Arena {
     /// Which way the rivers run, if they run at all (see
     /// [`Arena::flowing`]).
     flowing: Option<Angle>,
+    /// Highland water: the tiles and the level its water stands at, in
+    /// sixteenths of a tile (see [`Arena::high_water`]).
+    high: Vec<(Range<i32>, Range<i32>, i32)>,
 }
 
 impl Arena {
@@ -57,6 +60,7 @@ impl Arena {
             },
             map: OnceCell::new(),
             flowing: None,
+            high: Vec::new(),
         }
     }
 
@@ -119,6 +123,28 @@ impl Arena {
         });
     }
 
+    /// A flat plateau over the tiles, `height` sixteenths of a tile up,
+    /// its sides falling to the plain over `edge` tiles.
+    pub fn plateau(&mut self, xs: Range<i32>, ys: Range<i32>, height: i32, edge: i32) {
+        let shape = Arena::rect(xs, ys);
+        self.paint().terrain.push(TerrainOp {
+            shape,
+            mode: Mode::Set,
+            height,
+            edge,
+        });
+    }
+
+    /// Highland water, as a grown map's (docs/27 stage 5): its bed at
+    /// `bed` and its water at its own `level` (sixteenths of a tile), not
+    /// the map's line. Paint it on ground higher than `level` all round,
+    /// as the map maker keeps it in its banks.
+    pub fn high_water(&mut self, xs: Range<i32>, ys: Range<i32>, bed: i32, level: i32) {
+        assert!(bed < level && level > WATER_LINE, "not water over its bed");
+        self.water(xs.clone(), ys.clone(), bed);
+        self.high.push((xs, ys, level));
+    }
+
     /// A hill `height` tiles high with a flat top `r` tiles round `at`,
     /// its sides falling to the plain over `edge` tiles: steep going (a
     /// regiment can climb it, slowly) when that is between 0.6 and 1.2
@@ -149,6 +175,13 @@ impl Arena {
         }
     }
 
+    /// The ground as the computer players see it, built from the map as a
+    /// match does.
+    pub fn ai_terrain(&self) -> gc_ai::Terrain {
+        let map = self.map();
+        gc_match::terrain_view::ai_terrain(map, &map.nav_costs())
+    }
+
     /// Woods: they hide regiments in them and slow the march.
     pub fn woods(&mut self, xs: Range<i32>, ys: Range<i32>) {
         self.cover(xs, ys, CoverKind::Wood);
@@ -174,6 +207,18 @@ impl Arena {
                     .map(|&h| if h < map.water { byte } else { 0 })
                     .collect();
             }
+            if !self.high.is_empty() {
+                let n = map.tiles as i32;
+                map.levels = vec![0; (n * n) as usize];
+                for (xs, ys, level) in &self.high {
+                    let units = (level * gc_sim::terrain::HEIGHT_UNITS as i32 / 16) as u16;
+                    for y in ys.clone() {
+                        for x in xs.clone() {
+                            map.levels[(y * n + x) as usize] = units;
+                        }
+                    }
+                }
+            }
             map
         })
     }
@@ -185,9 +230,11 @@ impl Arena {
         ((0..n).contains(&x) && (0..n).contains(&y)).then(|| (map, (y * n + x) as usize))
     }
 
-    /// Whether tile `(x, y)` is under water.
+    /// Whether tile `(x, y)` is under water (its own level's, on highland
+    /// water).
     pub fn is_river(&self, x: i32, y: i32) -> bool {
-        self.tile(x, y).is_some_and(|(m, t)| m.heights[t] < m.water)
+        self.tile(x, y)
+            .is_some_and(|(m, t)| m.heights[t] < m.level_of(t))
     }
 
     /// Whether tile `(x, y)` is woods or thicket.

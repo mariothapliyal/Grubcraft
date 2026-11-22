@@ -36,6 +36,7 @@ mod forest;
 mod forest_pass;
 mod gate;
 mod gated_towns;
+mod high_water;
 mod mountain;
 mod new_orders;
 mod orders;
@@ -95,6 +96,7 @@ const SCENARIOS: &[Scenario] = &[
     evolve_tithe::SCENARIO,
     charges::SCENARIO,
     dropped::SCENARIO,
+    high_water::SCENARIO,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.
