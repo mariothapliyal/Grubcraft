@@ -314,6 +314,29 @@ pub struct PauseBanner<'a> {
     pub pauses_left: Option<u8>,
 }
 
+/// A rejoining player's game replaying the match so far: turns played and
+/// all the turns to catch up on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CatchUpBanner {
+    pub done: u32,
+    pub total: u32,
+}
+
+impl CatchUpBanner {
+    /// How far along, 0 to 100.
+    pub fn percent(&self) -> u32 {
+        (u64::from(self.done) * 100 / u64::from(self.total.max(1))).min(100) as u32
+    }
+}
+
+/// The lines of the catch-up banner.
+pub fn catch_up_lines(c: &CatchUpBanner) -> [String; 2] {
+    [
+        format!("Rejoining: catching up, {}%", c.percent()),
+        "The computer plays your side until you have caught up.".into(),
+    ]
+}
+
 /// The ping wheel while Alt and the left button are held: where the press
 /// was and where the mouse is now, in UI pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -346,6 +369,8 @@ pub struct KitData<'a> {
     pub pings: &'a [PingMark<'a>],
     pub vote: Option<VoteBanner<'a>>,
     pub pause: Option<PauseBanner<'a>>,
+    /// While this machine catches up on a match it rejoined.
+    pub catch_up: Option<CatchUpBanner>,
     pub wheel: Option<Wheel>,
 }
 
@@ -465,6 +490,8 @@ pub(crate) fn draw(
     chat_log(draw, field, kit, input.now_ms);
     if let Some(p) = &kit.pause {
         pause_banner(draw, field, p);
+    } else if let Some(c) = &kit.catch_up {
+        catch_up_banner(draw, field, c);
     }
     let tip = kit
         .vote
@@ -749,6 +776,31 @@ fn vote_banner(
         }
     }
     tip
+}
+
+/// "Rejoining: catching up, 60%" with a bar, in the middle of the field.
+fn catch_up_banner(draw: &mut DrawList, field: Rect, c: &CatchUpBanner) {
+    let lines = catch_up_lines(c);
+    let chars = lines.iter().map(|l| l.chars().count()).max().unwrap_or(1) as i32;
+    let w = (chars * CELL_W + 48).min(field.w);
+    let h = 2 * ROW + 24 + 18;
+    let r = Rect::new(
+        field.x + (field.w - w) / 2,
+        field.y + (field.h - h) / 2,
+        w,
+        h,
+    );
+    draw.shadow(r, 4);
+    draw.boxed(r, theme::LINEN, 2);
+    draw.border(r.inset(3), 1, theme::WELD);
+    let row = |i: i32| Rect::new(r.x, r.y + 12 + i * ROW, r.w, ROW);
+    draw.text_centered(row(0), 1, theme::MADDER, &lines[0]);
+    draw.text_centered(row(1), 1, theme::INK, &lines[1]);
+    let bar = Rect::new(r.x + 24, r.y + 12 + 2 * ROW + 2, r.w - 48, 10);
+    draw.rect(bar, theme::FIELD_CLOTH);
+    let filled = bar.w * c.percent() as i32 / 100;
+    draw.rect(Rect::new(bar.x, bar.y, filled, bar.h), theme::WOAD);
+    draw.border(bar, 1, theme::INK);
 }
 
 /// "Paused by Ana: 47 s" in the middle of the field.
@@ -1365,6 +1417,37 @@ mod tests {
             run(&kit, &mut Press::default(), at_ms(0)).tip.is_none(),
             "none when the mouse is elsewhere"
         );
+    }
+
+    #[test]
+    fn the_catch_up_banner_says_how_far_and_draws_a_bar() {
+        let c = CatchUpBanner {
+            done: 600,
+            total: 1000,
+        };
+        assert_eq!(c.percent(), 60);
+        assert_eq!(catch_up_lines(&c)[0], "Rejoining: catching up, 60%");
+        assert_eq!(CatchUpBanner { done: 5, total: 0 }.percent(), 100);
+        let field = Rect::new(0, 0, 1280, 720);
+        let mut with = DrawList::default();
+        catch_up_banner(&mut with, field, &c);
+        let mut half = DrawList::default();
+        catch_up_banner(
+            &mut half,
+            field,
+            &CatchUpBanner {
+                done: 0,
+                total: 1000,
+            },
+        );
+        assert!(!with.quads.is_empty());
+        // The bar fills: more of it is drawn at 60% than at none.
+        let area = |d: &DrawList| {
+            (d.quads.iter())
+                .map(|q| u32::from(q.size[0]) * u32::from(q.size[1]))
+                .sum::<u32>()
+        };
+        assert!(area(&with) > area(&half));
     }
 
     #[test]

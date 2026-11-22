@@ -5680,9 +5680,22 @@ impl Running {
                 },
             )
         });
-        for change in changes {
-            let text = gc_match::cover::notice(change, &party_name(&self.parties, change.player()));
-            self.menu.net().announce(text);
+        // The person's own name, as their friends know it, not the side's
+        // colour that `party_name` puts in front.
+        let names: Vec<String> = changes
+            .iter()
+            .map(|c| {
+                let p = usize::from(c.player());
+                o.start
+                    .players
+                    .get(p)
+                    .map_or_else(|| party_name(&self.parties, c.player()), |s| s.name.clone())
+            })
+            .collect();
+        for (change, name) in changes.into_iter().zip(names) {
+            self.menu
+                .net()
+                .announce(gc_match::cover::notice(change, &name));
         }
     }
 
