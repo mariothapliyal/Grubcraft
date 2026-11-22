@@ -876,7 +876,7 @@ pub(crate) mod tests {
         let mut armies = 0;
         for map in &maps {
             let nav = map.sim_nav_costs();
-            let starts = crate::terrain_view::field_starts(map);
+            let starts = crate::terrain_view::field_starts(map, START_PLATEAUS);
             for (who, teams) in [
                 (vec![None, Some(Difficulty::Veteran)], vec![0, 1]),
                 (vec![None; 4], vec![0, 1, 0, 1]),
@@ -1503,15 +1503,13 @@ pub(crate) mod tests {
     fn ring_battles_meet() {
         let n: u64 = std::env::var("AI_BATTLES").map_or(2, |v| v.parse().unwrap());
         let vet = Some(Difficulty::Veteran);
-        let games: [(&[Option<Difficulty>], &[u8], u32); 2] = [
-            (&[vet; 3], &[0, 1, 2], 256),
-            (&[vet; 5], &[0, 1, 0, 1, 1], 320),
-        ];
-        for (slots, teams, tiles) in games {
+        let games: [(&[u8], u32); 2] = [(&[0, 1, 2], 256), (&[0, 1, 0, 1, 1], 320)];
+        for (teams, tiles) in games {
+            let slots = vec![vet; teams.len()];
             for seed in 1..=n {
                 let map = gc_map::FieldMap::new(gc_map::MEASURED, tiles, seed, teams.len()).make();
                 assert_eq!(map.starts().len(), teams.len());
-                let setup = lobby(slots, teams);
+                let setup = lobby(&slots, teams);
                 let played = play_on(&setup, seed, 20, map, |_| {});
                 let met = played.first_contact.map(|t| t / gc_sim::TICKS_PER_SECOND);
                 println!(

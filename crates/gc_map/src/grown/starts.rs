@@ -87,7 +87,7 @@ pub(super) fn ring(n: usize, k: usize, seed: u64) -> Vec<Pos> {
     (0..k as u32)
         .map(|i| {
             let a = first.wrapping_add(gc_fixed::Angle((i * step) as u16));
-            let along = |v: gc_fixed::Fx| (i64::from(radius) * i64::from(v.raw()) >> 16) as i32;
+            let along = |v: gc_fixed::Fx| ((i64::from(radius) * i64::from(v.raw())) >> 16) as i32;
             (middle + along(a.cos()), middle + along(a.sin()))
         })
         .collect()
@@ -536,12 +536,7 @@ mod tests {
         assert_eq!(unfairness(&walk, 3), 0);
         // One start of three further from everyone: 110 against 100 and
         // 100, 10 over a mean of 103.
-        for j in 0..3 {
-            if j != 0 {
-                walk[0][j] = 110;
-                walk[j][0] = 110;
-            }
-        }
+        (walk[0][1], walk[0][2], walk[1][0], walk[2][0]) = (110, 110, 110, 110);
         assert_eq!(unfairness(&walk, 3), 97);
         // The six slots: allies 0 and 1 (north) further apart than 2 and
         // 3, with every foe as near: 40 over a mean of 120, halved.

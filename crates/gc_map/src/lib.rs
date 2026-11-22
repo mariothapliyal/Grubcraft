@@ -414,8 +414,8 @@ mod tests {
         assert_eq!(at_320(4), 0x4810_c8ad_25ff_bc7c);
         // Grown land: erosion and the river lines (and their current) are
         // the parts most likely to drift, and each of the dials.
-        assert_eq!(hash(GROWN + 1), 0x4703_8b16_3011_30c2);
-        assert_eq!(hash(GROWN + 2), 0x1ff1_ebb1_47ce_def2);
+        assert_eq!(hash(GROWN + 1), 0x15f7_48c8_7ec7_597a);
+        assert_eq!(hash(GROWN + 2), 0xbe59_f66b_9843_7ebc);
         assert_eq!(hash(GROWN + 3), 0xf96d_3d17_4c9b_bd9a);
         // Measured fairness: the start search, its settling on the true
         // walks and the paired sites.
@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn rings_are_for_three_or_five_on_measured_land() {
         for players in 0..=6 {
-            for choice in 0..FIELD_MAPS.len() {
+            for (choice, name) in FIELD_MAPS.iter().enumerate() {
                 let ring = FieldMap::new(choice, 256, 1, players).ring;
                 let measured = (MEASURED..FIELD_MAPS.len()).contains(&choice);
                 let want = if measured && matches!(players, 3 | 5) {
@@ -448,7 +448,7 @@ mod tests {
                 } else {
                     0
                 };
-                assert_eq!(ring, want, "{} with {players}", FIELD_MAPS[choice]);
+                assert_eq!(ring, want, "{name} with {players}");
             }
         }
         let map = FieldMap::new(MEASURED + 1, 256, 2, 3).make();

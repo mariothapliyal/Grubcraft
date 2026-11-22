@@ -31,6 +31,14 @@ fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String
         Some((recipe, n)) => (recipe, n.parse().map_err(|_| format!("{n} isn't a count"))?),
         None => (recipe, 0),
     };
+    let measured = recipe
+        .get(..9)
+        .is_some_and(|p| p.eq_ignore_ascii_case("measured-"));
+    if players != 0 && !(measured && matches!(players, 3 | 5)) {
+        return Err(format!(
+            "only Measured land is made for a count of players, 3 or 5 (not {recipe}:{players})"
+        ));
+    }
     let is = |name: &str| name.eq_ignore_ascii_case(recipe);
     let tiles = || {
         size.parse()

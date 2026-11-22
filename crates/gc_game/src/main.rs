@@ -6209,7 +6209,6 @@ impl Running {
             // maker's, most often) is drawn from the ground it stored, so
             // the soldiers walk on the ground you see.
             let differs = r.map_tiles != self.heightmap.tiles
-                || r.nav != nav
                 || stored.heights != shown.heights
                 || stored.water_level != shown.water_level
                 || stored.cover != shown.cover
@@ -6222,7 +6221,7 @@ impl Running {
                     self.blocked_marks = blocked_marks(&r.nav, r.map_tiles);
                 }
                 nav.clone_from(&r.nav);
-                let older = r.header.map_maker.is_none_or(|m| m != gc_map::MAP_MAKER);
+                let older = r.header.map_maker.is_none_or(|m| m < gc_map::MAP_MAKER);
                 map_note = Some(if older {
                     "This replay was recorded on an older map maker: its ground is drawn as it was played, without the land's colours."
                 } else {
@@ -6527,7 +6526,7 @@ impl Running {
                 &self.units.stats,
                 &self.units.factions,
                 &self.units.points,
-                &terrain_view::field_starts(&self.heightmap),
+                &terrain_view::field_starts(&self.heightmap, setup.players.len()),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
                 &mut self.minds,

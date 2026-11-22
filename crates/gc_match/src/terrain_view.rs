@@ -19,10 +19,11 @@ pub fn plateau_positions(tiles: u32) -> [Vec2; START_PLATEAUS] {
 /// six (grown land with measured fairness moves them off the plateaus),
 /// or three or five round a ring (Measured land made for that many
 /// players, see [`crate::battle::battle_starts`]), or the six plateaus for
-/// any other map.
-pub fn field_starts(map: &Map) -> Vec<Vec2> {
+/// any other map, or a ring too small for the `players` who play on it.
+pub fn field_starts(map: &Map, players: usize) -> Vec<Vec2> {
     let own = map.start_positions();
-    if matches!(own.len(), 3 | 5 | START_PLATEAUS) {
+    let ring = matches!(own.len(), 3 | 5) && players <= own.len();
+    if ring || own.len() == START_PLATEAUS {
         own
     } else {
         plateau_positions(map.tiles).to_vec()

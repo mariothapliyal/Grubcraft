@@ -37,9 +37,9 @@ fn work(jobs: mpsc::Receiver<MapPreviewKey>, made: mpsc::Sender<Made>) {
         let starts = match key {
             // (Measured land moves the starts off the plateaus, or puts
             // three or five round a ring.)
-            MapPreviewKey::Field { tiles, .. } => {
+            MapPreviewKey::Field { tiles, players, .. } => {
                 let side = tiles as f32;
-                (gc_match::terrain_view::field_starts(&map).iter())
+                (gc_match::terrain_view::field_starts(&map, usize::from(players)).iter())
                     .map(|p| (*p / side).to_array())
                     .collect()
             }

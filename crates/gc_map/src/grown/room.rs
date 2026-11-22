@@ -146,16 +146,20 @@ pub(crate) fn even(r: &mut Raster, standable: &[u8], in_play: usize, seed: u32) 
         }
     };
     for (k, &s) in starts.iter().enumerate() {
-        // On mirrored land, the twin of a start worked on earlier follows it.
-        if r.mirrored && starts[..k].contains(&twin(s)) {
+        // On mirrored land, the twin of a start worked on earlier follows
+        // it. (The slots are turned copies to within a tile.)
+        if r.mirrored && starts[..k].iter().any(|&t| dist2(t, twin(s)) <= 2) {
             continue;
         }
+        // Each list is worked through until the start has changed as many
+        // tiles as it needs (one another start's change has reached
+        // already doesn't count).
         if open[k] < low {
-            for i in std::mem::take(&mut cut[k])
-                .into_iter()
-                .take((low - open[k]) as usize)
-            {
-                // (Another start's change may have reached this tile.)
+            let mut left = low - open[k];
+            for i in std::mem::take(&mut cut[k]) {
+                if left == 0 {
+                    break;
+                }
                 if room_of(r, standable, i) != Room::Cuttable {
                     continue;
                 }
@@ -167,14 +171,17 @@ pub(crate) fn even(r: &mut Raster, standable: &[u8], in_play: usize, seed: u32) 
                     Habitat::Grassland
                 };
                 set(r, i, gc_sim::Cover::Open, cleared);
+                left -= 1;
             }
         } else if open[k] > high {
-            for i in std::mem::take(&mut grow[k])
-                .into_iter()
-                .take((open[k] - high) as usize)
-            {
+            let mut left = open[k] - high;
+            for i in std::mem::take(&mut grow[k]) {
+                if left == 0 {
+                    break;
+                }
                 if room_of(r, standable, i) == Room::Open {
                     set(r, i, gc_sim::Cover::Grass, Habitat::ScrubEdge);
+                    left -= 1;
                 }
             }
         }
