@@ -145,7 +145,7 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
     let phase = fbm(n, seeds.next(), n as i32 * ONE / 6, 3);
     let meander = fbm(n, seeds.next(), n as i32 * ONE / 4, 3);
     let mut bodies = Bodies::new();
-    let lines = river_lines(
+    let mut lines = river_lines(
         h,
         &filled.height,
         &acc,
@@ -283,6 +283,13 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
         bodies.chain(wet_points.map(|i| body[i]));
     }
     bodies.order();
+    // The lines' own levels as the bodies have them now (ordering may have
+    // lowered a reach), for the current and the fords.
+    for line in &mut lines {
+        for (l, &b) in line.level.iter_mut().zip(&line.body) {
+            *l = bodies.level(b);
+        }
+    }
     let level = bodies.per_tile(&body);
     let mut acc = acc;
     for i in 0..nn / 2 {

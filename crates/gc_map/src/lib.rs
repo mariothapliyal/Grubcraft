@@ -320,6 +320,22 @@ mod tests {
                     !watery.iter().all(|&w| w)
                 });
                 highland += usize::from(wet);
+                // A dry shore tile with dry land all round has no wading
+                // cell: the shore band stops short of falling land.
+                let n = map.tiles as usize;
+                let dry_round = (y > 0 && y + 1 < n && x > 0 && x + 1 < n)
+                    && (0..9).all(|k| {
+                        let j = (y + k / 3 - 1) * n + x + k % 3 - 1;
+                        map.heights[j] >= map.level_of(j)
+                    });
+                if !wet && dry_round {
+                    let fords = (0..per * per)
+                        .filter(|k| {
+                            nav[(y * per + k / per) * side + x * per + k % per] == gc_sim::nav::FORD
+                        })
+                        .count();
+                    assert_eq!(fords, 0, "{choice}: wading on dry shore tile {x},{y}");
+                }
             }
             assert!(
                 agree * 100 >= asked * 97,
@@ -362,11 +378,11 @@ mod tests {
         assert_eq!(at_320(4), 0x4810_c8ad_25ff_bc7c);
         // Grown land: erosion and the river lines (and their current) are
         // the parts most likely to drift, and each of the dials.
-        assert_eq!(hash(GROWN + 1), 0x34aa_00da_b50c_5698);
-        assert_eq!(hash(GROWN + 2), 0xf5cc_bdde_4dba_80ac);
-        assert_eq!(hash(GROWN + 3), 0x5d2d_a105_29f3_9ca2);
+        assert_eq!(hash(GROWN + 1), 0xe074_8d2a_70f5_2b14);
+        assert_eq!(hash(GROWN + 2), 0x5907_fd65_e138_8588);
+        assert_eq!(hash(GROWN + 3), 0x70cf_08d8_a817_2132);
         // Measured fairness: the start search, its settling on the true
         // walks and the paired sites.
-        assert_eq!(hash(MEASURED + 2), 0x6d32_e6fd_4941_0f33);
+        assert_eq!(hash(MEASURED + 2), 0xf164_1f72_b03f_38c9);
     }
 }

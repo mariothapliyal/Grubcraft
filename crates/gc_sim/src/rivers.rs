@@ -1387,9 +1387,16 @@ fn floodplain(
             if from[j] != u32::MAX || terrain.tile_under_water(x + dx, y + dy) {
                 continue;
             }
-            // Only over land a flood could reach: not over a ridge.
-            let line = i32::from(terrain.level_of(from[i] as usize));
-            let above = terrain.height(gc_fixed::FxVec2::from_ints(x + dx, y + dy)) - line;
+            // Only over land a flood could reach: not over a ridge, and only
+            // land whose own water is this river's (a highland river's
+            // shore, or any land by a low one), so the water the flood
+            // stands at there is the water `Terrain::wet` reads.
+            let line = terrain.level_of(from[i] as usize);
+            if terrain.level_of(j) != line {
+                continue;
+            }
+            let above =
+                terrain.height(gc_fixed::FxVec2::from_ints(x + dx, y + dy)) - i32::from(line);
             if !(0..HEIGHT_UNITS as i32).contains(&above) {
                 continue;
             }

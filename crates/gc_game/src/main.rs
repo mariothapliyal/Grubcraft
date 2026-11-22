@@ -6188,6 +6188,7 @@ impl Running {
                 || stored.water_level != shown.water_level
                 || stored.cover != shown.cover
                 || (!stored.growth.is_empty() && stored.growth != shown.growth)
+                || stored.water_levels != shown.water_levels
             {
                 map_note = Some(
                     "This replay's map was made by another build: the ground may look different from where the soldiers walk.",

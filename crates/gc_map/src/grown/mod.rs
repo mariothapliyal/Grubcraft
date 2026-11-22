@@ -637,7 +637,12 @@ fn move_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds, reach: i32) -
             for x in (at.0 - open).max(0)..(at.0 + open + 1).min(n) {
                 let i = (y * n + x) as usize;
                 let d2 = dist2((x, y), at);
-                if d2 > open * open || r.height.v[i] <= WATER_LINE {
+                if d2 > open * open {
+                    continue;
+                }
+                // (Kept for the start: no highland shore's level on it.)
+                r.keep[i] = true;
+                if r.height.v[i] <= WATER_LINE {
                     continue;
                 }
                 r.cover[i] = gc_sim::Cover::Open as u8;

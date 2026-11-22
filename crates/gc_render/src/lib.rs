@@ -356,9 +356,10 @@ struct TerrainGpu {
     scar_map: wgpu::Texture,
     /// Whether the scar map holds any mark.
     scarred: bool,
-    /// One half-float texel per tile: how far the water there stands over
-    /// the water line, in tiles: its own level (`water_base`) and how far
-    /// the rivers raise it (see [`Renderer::set_river_water`]).
+    /// Two half floats a tile: how far the water there stands over the
+    /// water line, in tiles, with how far the rivers raise it (see
+    /// [`Renderer::set_river_water`]), and its own level (`water_base`)
+    /// alone.
     river_map: wgpu::Texture,
     /// Each tile's own level over the map's water line, in tiles; empty
     /// when every tile's water is at the line.
@@ -1431,10 +1432,11 @@ impl Renderer {
         let scar_view = scar_map.create_view(&wgpu::TextureViewDescriptor::default());
         // Each tile's water at its own level, the rivers not raised until
         // `set_river_water`.
-        let river_map = self.tile_map("river water", wgpu::TextureFormat::R16Float, tiles);
+        let river_map = self.tile_map("river water", wgpu::TextureFormat::Rg16Float, tiles);
         let water_base = water_base(t.water_levels, t.water_level, tiles);
         if !water_base.is_empty() {
-            Self::write_tile_map(&self.queue, &river_map, tiles, 2, &half_floats(&water_base));
+            let texels = river_texels(water_base.len(), |i| water_base[i], |_| 0.0);
+            Self::write_tile_map(&self.queue, &river_map, tiles, 4, &texels);
         }
         let river_view = river_map.create_view(&wgpu::TextureViewDescriptor::default());
         // The ground's look by tile; a single neutral texel when there is
@@ -1562,7 +1564,7 @@ impl Renderer {
         self.chunk_levels = vec![0; chunk_count as usize];
         self.terrain_gpu_bytes = t.heights.len() as u64 * 2
             + u64::from(tint_side * tint_side) * 4
-            + u64::from(tiles * tiles) * (1 + 4 + 4 + 2)
+            + u64::from(tiles * tiles) * (1 + 4 + 4 + 4)
             + u64::from(look_side * look_side) * 4
             + u64::from(mask_side * mask_side)
             + u64::from(occlusion_side * occlusion_side);
@@ -1734,22 +1736,12 @@ impl Renderer {
         let tiles = terrain.tiles;
         let n = (tiles * tiles) as usize;
         let base = |i: usize| terrain.water_base.get(i).copied().unwrap_or(0.0);
-        let texels: Vec<f32> = match values {
-            Some(v) if v.len() == n => v
-                .iter()
-                .enumerate()
-                .map(|(i, &r)| base(i) + f32::from(r) / 128.0)
-                .collect(),
-            None if terrain.rivered => (0..n).map(base).collect(),
+        let texels = match values {
+            Some(v) if v.len() == n => river_texels(n, base, |i| f32::from(v[i]) / 128.0),
+            None if terrain.rivered => river_texels(n, base, |_| 0.0),
             _ => return,
         };
-        Self::write_tile_map(
-            &self.queue,
-            &terrain.river_map,
-            tiles,
-            2,
-            &half_floats(&texels),
-        );
+        Self::write_tile_map(&self.queue, &terrain.river_map, tiles, 4, &texels);
         terrain.rivered = values.is_some();
     }
 
@@ -2211,12 +2203,22 @@ fn water_base(levels: &[f32], line: f32, tiles: u32) -> Vec<f32> {
     base
 }
 
-/// `values` as IEEE half floats, little-endian bytes, for an `R16Float`
-/// texture. Rounds to nearest; too small is zero, too large the largest.
-fn half_floats(values: &[f32]) -> Vec<u8> {
-    values.iter().flat_map(|&v| half(v).to_le_bytes()).collect()
+/// The river map's `n` texels for an `Rg16Float` texture, little-endian
+/// half floats: red each tile's own level over the line (`base`) with the
+/// rivers' `rise` there, green the level alone (for the falls' white water,
+/// so a swollen river's sloping rise doesn't froth).
+fn river_texels(n: usize, base: impl Fn(usize) -> f32, rise: impl Fn(usize) -> f32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(n * 4);
+    for i in 0..n {
+        let b = base(i);
+        out.extend_from_slice(&half(b + rise(i)).to_le_bytes());
+        out.extend_from_slice(&half(b).to_le_bytes());
+    }
+    out
 }
 
+/// IEEE half float bits of `v`. Rounds to nearest; too small is zero, too
+/// large the largest.
 fn half(v: f32) -> u16 {
     let bits = v.to_bits();
     let sign = ((bits >> 16) & 0x8000) as u16;

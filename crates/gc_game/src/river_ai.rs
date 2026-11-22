@@ -73,7 +73,7 @@ fn computer_players_clear_jams_off_their_bridges_and_mend_them() {
     let full: u32 = hp(&world).iter().sum();
     let mut cmds = Vec::new();
     let (mut most_jam, mut lowest) = (0u8, full);
-    let mut hacker = None;
+    let mut hackers = Vec::new();
     let fighter = Kit::of(&real.data, &real.table, SIDES[1]).fighter;
     let mut fighters = Vec::new();
     let end = 4 * 60 * TICKS_PER_SECOND;
@@ -94,49 +94,59 @@ fn computer_players_clear_jams_off_their_bridges_and_mend_them() {
                 },
             });
         }
-        // Then it hacks at a deck tile until it is hurt, and walks off.
+        // Then three of its regiments hack at a deck tile until it is hurt,
+        // and walk off (one alone is beaten off by the mind's soldiers
+        // before the tile is hurt enough to mend).
         let deck = (world.structures().unwrap().iter())
             .find(|v| v.tile == (50, BRIDGE_Y))
             .map(|v| (v.handle, v.hp * 100 / v.max_hp));
         if t == 145 * TICKS_PER_SECOND {
             fighters = regiments_of(&world, 1, fighter);
-            cmds.push(PlayerCommand {
-                player: 1,
-                command: Command::SpawnRegiment {
-                    unit: fighter,
-                    position: gc_fixed::FxVec2::from_ints(50, BRIDGE_Y - 2),
-                    facing: gc_sim::scenario::NORTH,
-                },
-            });
+            // On the west bank beside the bridge's end (the river north of
+            // the deck is deep).
+            for (x, y) in [(46, BRIDGE_Y - 1), (44, BRIDGE_Y - 1), (45, BRIDGE_Y + 2)] {
+                cmds.push(PlayerCommand {
+                    player: 1,
+                    command: Command::SpawnRegiment {
+                        unit: fighter,
+                        position: gc_fixed::FxVec2::from_ints(x, y),
+                        facing: gc_sim::scenario::NORTH,
+                    },
+                });
+            }
         }
         if t == 150 * TICKS_PER_SECOND
             && let Some((structure, _)) = deck
         {
-            hacker = regiments_of(&world, 1, fighter)
+            hackers = regiments_of(&world, 1, fighter)
                 .into_iter()
-                .find(|h| !fighters.contains(h));
-            cmds.push(PlayerCommand {
-                player: 1,
-                command: Command::AttackStructure {
-                    regiment: hacker.unwrap(),
-                    structure,
-                },
-            });
+                .filter(|h| !fighters.contains(h))
+                .collect();
+            assert!(!hackers.is_empty(), "the hackers are put down");
+            for &regiment in &hackers {
+                cmds.push(PlayerCommand {
+                    player: 1,
+                    command: Command::AttackStructure {
+                        regiment,
+                        structure,
+                    },
+                });
+            }
         }
-        if deck.is_some_and(|d| d.1 < 60)
-            && let Some(hacker) = hacker.take()
-        {
-            cmds.push(PlayerCommand {
-                player: 1,
-                command: Command::MoveTo {
-                    regiment: hacker,
-                    target: gc_fixed::FxVec2::from_ints(62, 72),
-                    facing: None,
-                    files: 0,
-                    pace: gc_fixed::Fx::ZERO,
-                    brigade: 0,
-                },
-            });
+        if deck.is_some_and(|d| d.1 < 60) {
+            for regiment in hackers.drain(..) {
+                cmds.push(PlayerCommand {
+                    player: 1,
+                    command: Command::MoveTo {
+                        regiment,
+                        target: gc_fixed::FxVec2::from_ints(62, 72),
+                        facing: None,
+                        files: 0,
+                        pace: gc_fixed::Fx::ZERO,
+                        brigade: 0,
+                    },
+                });
+            }
         }
         world.tick(&cmds);
         if t.is_multiple_of(TICKS_PER_SECOND) {

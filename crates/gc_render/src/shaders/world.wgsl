@@ -133,29 +133,41 @@ fn ghost_shade(clip: vec4<f32>, n: vec3<f32>, world: vec3<f32>, tint: vec3<f32>)
 // the grass (128 leaves it), a is the `GROUND_*` pattern drawn over it.
 @group(0) @binding(18) var ground_look: texture_2d<f32>;
 // How far the water stands over the water line, one texel a tile, in tiles:
-// the tile's own level on highland lakes and rivers (Terrain::water_levels)
-// and how far the rivers raise it (Renderer::set_river_water). Read without a
-// sampler, so every stage can (soldiers are stood in a compute pass).
+// r the tile's own level on highland lakes and rivers (Terrain::water_levels)
+// with how far the rivers raise it (Renderer::set_river_water), g its own
+// level alone. Read without a sampler, so every stage can (soldiers are
+// stood in a compute pass).
 @group(0) @binding(19) var river_map: texture_2d<f32>;
 
-fn river_texel(p: vec2<i32>) -> f32 {
+fn river_texel(p: vec2<i32>) -> vec2<f32> {
     let size = vec2<i32>(textureDimensions(river_map));
-    return textureLoad(river_map, clamp(p, vec2<i32>(0, 0), size - vec2<i32>(1, 1)), 0).r;
+    return textureLoad(river_map, clamp(p, vec2<i32>(0, 0), size - vec2<i32>(1, 1)), 0).rg;
+}
+
+// The river map at `xz`, eased between tile centres.
+fn river_at(xz: vec2<f32>) -> vec2<f32> {
+    let s = xz - vec2<f32>(0.5);
+    let i = vec2<i32>(floor(s));
+    let f = fract(s);
+    return mix(
+        mix(river_texel(i), river_texel(i + vec2<i32>(1, 0)), f.x),
+        mix(river_texel(i + vec2<i32>(0, 1)), river_texel(i + vec2<i32>(1, 1)), f.x),
+        f.y,
+    );
+}
+
+// How steeply the water's own level falls at `xz`, in tiles a tile: high at
+// a highland river's falls, nothing where a swollen river's rise slopes.
+fn water_fall(xz: vec2<f32>) -> f32 {
+    return abs(river_at(xz + vec2<f32>(0.5, 0.0)).y - river_at(xz - vec2<f32>(0.5, 0.0)).y)
+        + abs(river_at(xz + vec2<f32>(0.0, 0.5)).y - river_at(xz - vec2<f32>(0.0, 0.5)).y);
 }
 
 // The water's surface at `xz`: the water line, raised to the tile's own
 // level and where a river is up (eased between tile centres, so it steps
 // down where a highland river falls).
 fn water_surface(xz: vec2<f32>) -> f32 {
-    let s = xz - vec2<f32>(0.5);
-    let i = vec2<i32>(floor(s));
-    let f = fract(s);
-    let r = mix(
-        mix(river_texel(i), river_texel(i + vec2<i32>(1, 0)), f.x),
-        mix(river_texel(i + vec2<i32>(0, 1)), river_texel(i + vec2<i32>(1, 1)), f.x),
-        f.y,
-    );
-    return g.misc.x + r;
+    return g.misc.x + river_at(xz).x;
 }
 
 fn sample_height(p: vec2<i32>) -> f32 {
@@ -1370,9 +1382,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         // White water where a highland river falls to the reach below: the
         // surface drops steeply there (docs/27 stage 5). Churned streaks
         // that run with the time, over most of the water.
-        let fall = abs(water_surface(xz + vec2<f32>(0.5, 0.0)) - water_surface(xz - vec2<f32>(0.5, 0.0)))
-            + abs(water_surface(xz + vec2<f32>(0.0, 0.5)) - water_surface(xz - vec2<f32>(0.0, 0.5)));
-        let churn = smoothstep(0.08, 0.3, fall);
+        let churn = smoothstep(0.08, 0.3, water_fall(xz));
         if churn > 0.0 {
             let streak = vnoise(wp.xz * 2.3 + vec2<f32>(g.misc.y * 1.7, g.misc.y * 1.1));
             let froth = churn * (0.55 + 0.45 * smoothstep(0.35, 0.7, streak));

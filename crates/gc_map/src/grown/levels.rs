@@ -252,8 +252,26 @@ fn shores(h: &Grid, body: &[u16], keep: &[bool], level: &mut [i32]) {
         return;
     }
     let (d, near) = nearest(&high, level, n, SHORE_BAND, WATER_LINE);
-    let shore = |i: usize, lv: i32| body[i] == 0 && h.v[i] >= lv;
+    // A shore tile stands no lower than the water, and so does all round
+    // it, but for that water itself: the last tile before land falls away
+    // (or before lower water) keeps the line, so the surface drawn between
+    // tiles never climbs over lower ground and no ground below the level
+    // reads as water.
+    let shore = |i: usize, lv: i32| {
+        let (x, y) = ((i % n) as i32, (i / n) as i32);
+        body[i] == 0
+            && h.v[i] >= lv
+            && NEIGHBOURS.iter().all(|&(dx, dy)| {
+                let (px, py) = (x + dx, y + dy);
+                if !(0..n as i32).contains(&px) || !(0..n as i32).contains(&py) {
+                    return true;
+                }
+                let k = py as usize * n + px as usize;
+                h.v[k] >= lv || (high[k] && level[k] == lv)
+            })
+    };
     let last = nn - 1;
+    let mut sets = Vec::new();
     for i in 0..nn.div_ceil(2) {
         let lv = near[i];
         // (Neither a tile nor its turned copy kept for a start, so mirrored
@@ -263,9 +281,12 @@ fn shores(h: &Grid, body: &[u16], keep: &[bool], level: &mut [i32]) {
         }
         for k in [i, last - i] {
             if shore(k, lv) {
-                level[k] = lv;
+                sets.push((k, lv));
             }
         }
+    }
+    for (k, lv) in sets {
+        level[k] = lv;
     }
 }
 
