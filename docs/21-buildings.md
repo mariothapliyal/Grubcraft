@@ -117,7 +117,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 
 | Building | Tier | Cost (Grub / Marrow) | Build time | Hit points | Armour | Size | Supply | What it does |
 |---|---|---|---|---|---|---|---|---|
-| Hive | 1 | 300 / 0 | 100 s | 2,600 | Living | 5×5 | +12 | Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva. Root-veins spread 15 tiles from its edge (built: enough to reach its base's seeps and vein on every map). |
+| Hive | 1 | 300 / 0 | 100 s | 2,600 | Living | 5×5 | +12 | Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva, Gnawers here and fighters at a Hatchery Pit. Root-veins spread 15 tiles from its edge (built: enough to reach its base's seeps and vein on every map). |
 | Great Hive (upgrades Hive) | 2 | 300 / 100 | 60 s | 3,400 | Living | 5×5 | +22 | Tier 2: evolutions, Drone-Moths, the Broodmother Bulk and a second hero. |
 | Throne Hive (upgrades Great Hive) | 3 | 600 / 250 | 90 s | 4,200 | Living | 5×5 | +32 | Tier 3: monsters, top upgrades and a third hero. |
 | Pustule | 1 | 40 / 0 | 20 s | 400 | Living | 2×2 | +8 | Carries the root-veins 8 tiles further; kill it and every seep beyond stops delivering. |

@@ -39,7 +39,7 @@ const SEED: u64 = 0x50AC_0006;
 const MAP: usize = SHIPPED_CONQUEST_MAPS + 2;
 const PLAYERS: usize = 6;
 /// Each faction twice but the Brood, whose soldiers come from larvae at
-/// its Hive (not built yet), so the script has no barracks for it.
+/// a Hatchery Pit the script doesn't build.
 const FACTIONS: [Faction; PLAYERS] = [
     Faction::EmberClans,
     Faction::CarrionConcord,
