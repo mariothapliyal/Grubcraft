@@ -4,8 +4,8 @@
     buildings: [
         (
             name: "Hive",
-            blurb: "Your starting base: holds 3 larvae, spawns one every 12 seconds and carries Grub from seeps. Hatches Gnawers; fighters hatch at a Hatchery Pit.",
-            summary: "Your starting base. It holds 3 larvae and spawns one every 12 seconds, and every regiment hatches from a larva (Gnawers here, fighters at a Hatchery Pit), so larvae often limit your army before Grub does. Its root-veins carry Grub from your seeps. Upgrade to the Great Hive for flyers and artillery. Workers clear woods and scrub (S) to make room; cleared ground is open.",
+            blurb: "Your starting base: holds 3 larvae, spawns one every 12 s, carries Grub from seeps and hatches Gnawers.",
+            summary: "Your starting base. It holds 3 larvae and spawns one every 12 seconds, and every regiment hatches from a larva (fighters at a Hatchery Pit), so larvae often limit your army before Grub does. Its root-veins carry Grub from your seeps. Upgrade it for flyers and artillery. Workers clear woods and scrub (S) to make room; cleared ground is open.",
             notes: [
                 ("Great Hive", "The gate to the mid game: the Chrysalis Chamber, Drone-Moths, the Broodmother Bulk and a second hero. Upgrading uses no Gnawer, but it costs Marrow."),
             ],
