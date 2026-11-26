@@ -15,6 +15,12 @@ pub struct Strategy {
     pub workers_percent: u8,
     /// Production buildings it keeps per tier.
     pub producers_per_tier: u8,
+    /// Ticks it waits after ordering a regiment at a production building
+    /// before it orders the next there (0: it keeps every queue full). The
+    /// Brood's regiments hatch together rather than one after another, so
+    /// without it a Recruit's one Hatchery Pit turns all its Grub into an
+    /// army at once (11 regiments by 5:00, Mario 2026-11-27).
+    pub train_gap: u32,
     /// Weighs its army against the enemy's, as far as it knows it, before
     /// it sets out, and goes for the enemy it has the best odds against.
     pub weighs_odds: bool,
@@ -47,6 +53,11 @@ pub struct Strategy {
     /// the usual play outside one, see [`Strategy::opening`].
     pub early: Early,
 }
+
+/// A Recruit's [`Strategy::train_gap`]: a little over a Yari Ashigaru's
+/// training time, so a Clans Recruit's Dojo is barely slowed (6 regiments
+/// by 5:00 either way) while the Brood's 11 by 5:00 fall to 7.
+const RECRUIT_TRAIN_GAP: u32 = (30.0 * TICKS) as u32;
 
 /// The supply of the attack it sends at an enemy it has seen expand
 /// early.
@@ -173,6 +184,7 @@ impl Strategy {
             Difficulty::Recruit => Strategy {
                 workers_percent: 60,
                 producers_per_tier: 1,
+                train_gap: RECRUIT_TRAIN_GAP,
                 weighs_odds: false,
                 counters: false,
                 opportunist: false,
@@ -188,6 +200,7 @@ impl Strategy {
             Difficulty::Veteran => Strategy {
                 workers_percent: 70,
                 producers_per_tier: 2,
+                train_gap: 0,
                 weighs_odds: true,
                 counters: false,
                 opportunist: false,
@@ -203,6 +216,7 @@ impl Strategy {
             Difficulty::General => Strategy {
                 workers_percent: 85,
                 producers_per_tier: 2,
+                train_gap: 0,
                 weighs_odds: true,
                 counters: true,
                 opportunist: false,
@@ -218,6 +232,7 @@ impl Strategy {
             Difficulty::Warlord => Strategy {
                 workers_percent: 100,
                 producers_per_tier: 3,
+                train_gap: 0,
                 weighs_odds: true,
                 counters: true,
                 opportunist: true,

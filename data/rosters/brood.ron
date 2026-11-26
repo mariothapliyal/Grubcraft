@@ -424,8 +424,8 @@
         (
             tier: 1,
             class: Light,
-            cost: (grub: 90, marrow: 0),
-            supply: 3,
+            cost: (grub: 65, marrow: 0),
+            supply: 2,
             train_time: 13.0,
             from: Building("Hatchery Pit"),
             flags: [Hatches],

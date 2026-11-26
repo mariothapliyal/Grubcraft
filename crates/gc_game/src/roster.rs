@@ -67,18 +67,6 @@ fn field_price_percent(faction: Faction) -> u32 {
     }
 }
 
-/// The Grub a Field Battle prices `unit` at: its roster cost, but for
-/// Conquest-only price changes that Field Battles don't follow. The
-/// Skitterlings went from 65 to 90 Grub to slow the Brood's early Conquest
-/// army (2026-11-27); a Field Battle army has no early game, so it keeps
-/// the old price.
-fn field_grub(unit: &ConquestUnitRecord) -> u32 {
-    match unit.name() {
-        "Skitterlings" => 65,
-        _ => u32::from(unit.cost_grub),
-    }
-}
-
 /// What `unit` costs in a Field Battle army, from its roster cost: three
 /// points a Grub and six a Marrow, times its faction's
 /// [`field_price_percent`], to the nearest 10 (a Yari Ashigaru regiment is
@@ -88,7 +76,7 @@ pub fn field_points(unit: &ConquestUnitRecord) -> u32 {
     if left_out(unit) || unit.tier == 0 {
         return 0;
     }
-    let raw = 3 * (field_grub(unit) + 2 * u32::from(unit.cost_marrow));
+    let raw = 3 * (u32::from(unit.cost_grub) + 2 * u32::from(unit.cost_marrow));
     let raw = raw * field_price_percent(unit.faction()) / 100;
     (raw + 5) / 10 * 10
 }
