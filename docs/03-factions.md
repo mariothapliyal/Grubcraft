@@ -167,7 +167,7 @@ The stress scenario `evolve_tithe` ([40](40-real-play-checks.md#2-stress-scenari
 |---|---|
 | Hive → Great Hive → Throne Hive | Main building, larvae, tiers |
 | Pustule | Vein relay, +8 supply |
-| Hatchery Pit | +3 larva capacity, and grows its own larva every 12 s like the Hive |
+| Hatchery Pit | Where the tier-1 fighters hatch (the Brood's barracks); +3 larva capacity, and grows its own larva every 12 s like the Hive |
 | Chrysalis Chamber | Unlocks evolutions |
 | Moth Roost | Air |
 | Gorge | Monsters and siege |

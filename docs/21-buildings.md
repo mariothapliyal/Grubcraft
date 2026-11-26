@@ -121,7 +121,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Great Hive (upgrades Hive) | 2 | 300 / 100 | 60 s | 3,400 | Living | 5×5 | +22 | Tier 2: evolutions, Drone-Moths, the Broodmother Bulk and a second hero. |
 | Throne Hive (upgrades Great Hive) | 3 | 600 / 250 | 90 s | 4,200 | Living | 5×5 | +32 | Tier 3: monsters, top upgrades and a third hero. |
 | Pustule | 1 | 40 / 0 | 20 s | 400 | Living | 2×2 | +8 | Carries the root-veins 8 tiles further; kill it and every seep beyond stops delivering. |
-| Hatchery Pit | 1 | 120 / 0 | 40 s | 900 | Living | 3×3 |  | Holds 3 more larvae and spawns its own every 12 s. |
+| Hatchery Pit | 1 | 120 / 0 | 40 s | 900 | Living | 3×3 |  | Production: where Skitterlings, Chitin Guard and Reclaimers hatch, from any larva. Holds 3 more larvae and spawns its own every 12 s. |
 | Chrysalis Chamber | 2 | 150 / 50 | 50 s | 1,100 | Living | 3×3 |  | Unlocks evolutions: tier-1 regiments cocoon where they stand into their tier-2 forms. |
 | Moth Roost | 2 | 150 / 40 | 50 s | 1,000 | Living | 3×3 |  | Lets larvae hatch into Drone-Moths. |
 | Gorge | 2 | 180 / 60 | 60 s | 1,300 | Living | 4×4 |  | Lets larvae hatch into Broodmother Bulks and, at tier 3, the Colossus Maw. |

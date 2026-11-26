@@ -180,9 +180,9 @@ A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Gnawer | 1 | Worker | 50 / 0 | 1 | 12 | Hive | 1 × 18 | 1 | 3.25 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | — | |
-| Skitterlings | 1 | Light | 65 / 0 | 2 | 13 | Hive | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 46 / 22 / 3 | 40 | 60 | |
-| Chitin Guard | 1 | Heavy | 90 / 0 | 4 | 22 | Hive | 12 × 12 | 6 | 2.75 | 70 | 0.9 / 1.0 | 24 / 45 / 4 | 15 | 60 | |
-| Reclaimer | 1 | Support | 75 / 0 | 2 | 18 | Hive | 1 × 60 | 1 | 2.5 | 120 | 1.5 / 1.5 | 10 / 20 / 3 | 0 | 40 | |
+| Skitterlings | 1 | Light | 90 / 0 | 3 | 13 | Hatchery Pit | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 46 / 22 / 3 | 40 | 60 | |
+| Chitin Guard | 1 | Heavy | 90 / 0 | 4 | 22 | Hatchery Pit | 12 × 12 | 6 | 2.75 | 70 | 0.9 / 1.0 | 24 / 45 / 4 | 15 | 60 | |
+| Reclaimer | 1 | Support | 75 / 0 | 2 | 18 | Hatchery Pit | 1 × 60 | 1 | 2.5 | 120 | 1.5 / 1.5 | 10 / 20 / 3 | 0 | 40 | |
 | Spitters | 2 | Ranged | 50 / 15 | 3 | 15 | Skitterlings | 16 × 5 | 8 | 3.5 | 100 | 0.8 / 0.9 | 17 / 15 / 2 | 5 | 45 | 22, 3, 3.0 s, 35% |
 | Burrowers | 2 | Light | 60 / 15 | 3 | 15 | Skitterlings | 16 × 7 | 8 | 4.0 | 110 | 0.8 / 0.8 | 38 / 25 / 3 | 50 | 50 | |
 | Mantid Reapers | 2 | Spear | 70 / 25 | 4 | 15 | Chitin Guard | 12 × 11 | 6 | 3.25 | 90 | 1.0 / 1.1 | 47 / 35 / 6 | 25 | 65 | |
@@ -191,7 +191,7 @@ A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (
 | Broodmother Bulk | 2 | Artillery | 160 / 60 | 4 | 35 | Gorge | 1 × 380 | 1 | 1.75 | 45 | 3.0 / 3.0 | 15 / 25 / 8 | 0 | 55 | 45, 10, 12.0 s, 30% |
 | Colossus Maw | 3 | Monster | 260 / 140 | 6 | 55 | Gorge | 1 × 600 | 1 | 2.5 | 70 | 3.5 / 3.5 | 55 / 35 / 28 | 50 | 95 | |
 
-Brood regiments are hatched from larvae at a Hive or Hatchery Pit; "Hive" above means either.
+Every Brood regiment hatches from a larva, which can come from any Hive or Hatchery Pit. Gnawers hatch at a Hive and tier-1 fighters at a Hatchery Pit, so the Pit is the Brood's barracks (2026-11-27, Mario: 11 regiments by 5:00 was too many; with Skitterlings at 90 Grub and 3 supply instead of 65 and 2, the AI's Brood have about 7 fighting regiments at 5:00 on Recruit and 4 on Veteran, down from 10 or 11).
 
 **Summoned**
 
