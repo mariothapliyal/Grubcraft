@@ -201,6 +201,7 @@ mod online;
 mod profile;
 mod puppets;
 mod replays;
+mod resolution;
 mod ring_tool;
 #[cfg(test)]
 mod river_ai;
@@ -563,6 +564,9 @@ struct Options {
     /// Time each pass on the GPU and print the averages at exit
     /// (`--gpu-times`, with `--frames`).
     gpu_times: bool,
+    /// Draw the world at this share of the window's resolution
+    /// (`--world-scale`) rather than letting the graphics preset choose.
+    world_scale: Option<f32>,
     frames: Option<u64>,
     /// Leave the last this many of the `--frames` undrawn, as for a hidden
     /// window (`--hidden-frames N`; see `Running::hide_window_for_check`).
@@ -642,6 +646,7 @@ fn parse_args() -> Options {
         hidden_frames: None,
         overlay: false,
         gpu_times: false,
+        world_scale: None,
         menu: None,
         audio: true,
         battle: None,
@@ -798,6 +803,13 @@ fn parse_args() -> Options {
                 }
                 _ => false,
             },
+            "--world-scale" => match value.parse::<f32>() {
+                Ok(v) if (gc_render::MIN_WORLD_SCALE..=1.0).contains(&v) => {
+                    opts.world_scale = Some(v);
+                    true
+                }
+                _ => false,
+            },
             "--render-scale" => match value.parse::<f32>() {
                 Ok(v) if (0.25..=1.0).contains(&v) => {
                     opts.render.render_scale = v;
@@ -944,7 +956,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord [--players 2-6]] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--hidden-frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--season spring|summer|autumn|winter] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
+         [--render-scale 0.25..1] [--world-scale 0.5..1] [--gpu-times] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--season spring|summer|autumn|winter] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -1115,6 +1127,10 @@ struct Running {
     overlay: bool,
     /// `--gpu-times`: GPU timings are taken all along and printed at exit.
     opts_gpu_times: bool,
+    /// The world's resolution as the graphics preset picks it, unless
+    /// `--world-scale` fixed it (`fixed_world_scale`).
+    auto_resolution: resolution::AutoResolution,
+    fixed_world_scale: bool,
     /// Whether the AI lens is showing (L).
     lens: bool,
     /// Marks over ground no regiment can cross, and whether to show them (G).
@@ -1772,7 +1788,12 @@ impl App {
             ))
         })?;
         self.memory_timeline.mark("gpu device + pipelines");
-        renderer.set_gpu_timing(opts.gpu_times || opts.overlay);
+        // GPU timings feed the automatic resolution and the dev overlay;
+        // they cost a few dozen timestamps a frame.
+        renderer.set_gpu_timing(true);
+        if let Some(scale) = opts.world_scale {
+            renderer.set_world_scale(scale);
+        }
         // The game opens on the map a two-player battle from a new lobby
         // would be on, or on one opened with `--map`.
         let first_key = battle_map(
@@ -2099,6 +2120,8 @@ impl App {
             },
             overlay: opts.overlay,
             opts_gpu_times: opts.gpu_times,
+            auto_resolution: resolution::AutoResolution::default(),
+            fixed_world_scale: opts.world_scale.is_some(),
             lens: false,
             blocked_marks,
             show_blocked: false,
@@ -2484,8 +2507,6 @@ impl ApplicationHandler for App {
                         KeyCode::F8 if down && !event.repeat => r.toggle_director(),
                         KeyCode::F11 | KeyCode::Backquote if down && !event.repeat => {
                             r.overlay = !r.overlay;
-                            let timing = r.overlay || r.opts_gpu_times;
-                            r.renderer.set_gpu_timing(timing);
                             r.refresh_overlay();
                             r.memory_timeline.print();
                             print_memory(&r.renderer);
@@ -2797,6 +2818,41 @@ impl Running {
             Some(due) if now < due + period => due + period,
             _ => now + period,
         })
+    }
+
+    /// The time each frame has to be drawn in, in milliseconds: the frame
+    /// cap's, or the screen's refresh with V-sync on if that is slower (60
+    /// a second where neither is known).
+    fn frame_budget_ms(&self) -> f32 {
+        let settings = self.menu.settings();
+        let refresh = (self.window.current_monitor())
+            .and_then(|m| m.refresh_rate_millihertz())
+            .map_or(0, |mhz| mhz.div_ceil(1000));
+        let mut rate = u32::from(settings.frame_cap);
+        if settings.vsync && refresh > 0 && (rate == 0 || refresh < rate) {
+            rate = refresh;
+        }
+        1000.0 / if rate == 0 { 60.0 } else { rate as f32 }
+    }
+
+    /// Every half second, set the world's resolution from the GPU's time
+    /// for the frames since (see `resolution`), unless `--world-scale` or
+    /// `--gpu-times` fixed it.
+    fn choose_resolution(&mut self) {
+        if self.fixed_world_scale || self.opts_gpu_times {
+            return;
+        }
+        let Some(times) = self.renderer.gpu_times() else {
+            return;
+        };
+        if times.frames < resolution::WINDOW_FRAMES {
+            return;
+        }
+        let aim = resolution::aim(self.menu.settings().graphics);
+        let budget = self.frame_budget_ms();
+        let scale = self.auto_resolution.update(times.total, budget, aim);
+        self.renderer.set_world_scale(scale);
+        self.renderer.reset_gpu_times();
     }
 
     /// `--gpu-times`: each pass's average GPU time, at exit.
@@ -4372,7 +4428,10 @@ impl Running {
         }
         let mut max_ticks = MAX_TICKS_PER_FRAME;
         if let Some(until) = self.play_from.filter(|_| {
-            self.match_started && !self.menu_open && self.watching.is_none() && self.online.is_none()
+            self.match_started
+                && !self.menu_open
+                && self.watching.is_none()
+                && self.online.is_none()
         }) {
             let left = until.saturating_sub(self.world.tick_count());
             max_ticks = left.min(PLAY_FROM_TICKS_PER_FRAME);
@@ -5740,6 +5799,8 @@ impl Running {
         };
         if outcome == gc_render::FrameOutcome::Skipped {
             self.resume_at = Some(Instant::now() + SKIPPED_FRAME_PAUSE);
+        } else {
+            self.choose_resolution();
         }
         profile::frame_mark();
         // The panel names the selection's formation, which orders, routs and
@@ -8081,7 +8142,12 @@ impl Running {
             let parts: Vec<String> = (t.parts.iter())
                 .map(|(name, ms)| format!("{name} {ms:.2}"))
                 .collect();
-            format!("\ngpu ms  {:.2} a frame: {}", t.total, parts.join("  "))
+            format!(
+                "\ngpu ms  {:.2} a frame, world at {:.0}%: {}",
+                t.total,
+                self.renderer.world_scale() * 100.0,
+                parts.join("  ")
+            )
         });
         let text = format!(
             "GRUBCRAFT DEV OVERLAY                          ` or F11 hides\n\

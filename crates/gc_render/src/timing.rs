@@ -159,7 +159,10 @@ impl GpuTimer {
         Some((&self.set, from, to))
     }
 
-    pub fn render_pass(&mut self, name: &'static str) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
+    pub fn render_pass(
+        &mut self,
+        name: &'static str,
+    ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
         let (from, to) = self.take(name)?;
         self.open = Some((from, from));
         Some(wgpu::RenderPassTimestampWrites {
@@ -169,7 +172,10 @@ impl GpuTimer {
         })
     }
 
-    pub fn compute_pass(&mut self, name: &'static str) -> Option<wgpu::ComputePassTimestampWrites<'_>> {
+    pub fn compute_pass(
+        &mut self,
+        name: &'static str,
+    ) -> Option<wgpu::ComputePassTimestampWrites<'_>> {
         let (from, to) = self.take(name)?;
         Some(wgpu::ComputePassTimestampWrites {
             query_set: &self.set,
@@ -191,7 +197,11 @@ impl GpuTimer {
         let at = self.next;
         self.next += 1;
         pass.write_timestamp(&self.set, at);
-        self.sections.push(Section { name, from: last, to: at });
+        self.sections.push(Section {
+            name,
+            from: last,
+            to: at,
+        });
         if let Some(open) = &mut self.open {
             open.1 = at;
         }
@@ -225,9 +235,11 @@ impl GpuTimer {
             if slot.state.load(Ordering::Acquire) == COPIED {
                 let state = slot.state.clone();
                 state.store(MAPPING, Ordering::Release);
-                slot.buffer.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-                    state.store(if r.is_ok() { READY } else { FAILED }, Ordering::Release);
-                });
+                slot.buffer
+                    .slice(..)
+                    .map_async(wgpu::MapMode::Read, move |r| {
+                        state.store(if r.is_ok() { READY } else { FAILED }, Ordering::Release);
+                    });
             }
         }
         // Run the callbacks of any reads the GPU has finished; never wait.
@@ -279,7 +291,8 @@ impl Totals {
         // A frame where a part was not drawn has no time for it: count it as
         // nothing rather than leaving the average to the frames that drew it.
         for s in sections {
-            let (Some(&a), Some(&b)) = (ticks.get(s.from as usize), ticks.get(s.to as usize)) else {
+            let (Some(&a), Some(&b)) = (ticks.get(s.from as usize), ticks.get(s.to as usize))
+            else {
                 continue;
             };
             let ms = b.saturating_sub(a) as f64 * period / 1e6;
@@ -300,7 +313,11 @@ impl GpuTimes {
             self.total, self.frames
         )];
         for (name, ms) in &self.parts {
-            let share = if self.total > 0.0 { ms / self.total * 100.0 } else { 0.0 };
+            let share = if self.total > 0.0 {
+                ms / self.total * 100.0
+            } else {
+                0.0
+            };
             out.push(format!("  {name:<18} {ms:7.2} ms {share:5.1}%"));
         }
         out

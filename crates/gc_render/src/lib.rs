@@ -195,6 +195,10 @@ pub const GROUND_LITTER: u8 = 10;
 pub const GROUND_BONE: u8 = 11;
 pub const GROUND_MOSS: u8 = 12;
 
+/// The lowest share of the frame's resolution [`Renderer::set_world_scale`]
+/// draws the world at.
+pub const MIN_WORLD_SCALE: f32 = 0.5;
+
 /// The most of the window's height [`Renderer::set_covered`] takes as
 /// covered.
 const MAX_COVERED: f32 = 0.9;
@@ -465,6 +469,9 @@ pub struct Renderer {
     /// The share of the window's height that opaque interface covers at its
     /// foot (see [`Renderer::set_covered`]).
     covered: f32,
+    /// The 3D world's resolution as a share of the frame's, each way (see
+    /// [`Renderer::set_world_scale`]).
+    world_scale: f32,
 }
 
 /// How many driver messages are kept between two looks at them, and how
@@ -1066,7 +1073,7 @@ impl Renderer {
         let timer = timing::GpuTimer::new(&device, &queue);
         let world_targets = make_world_targets(
             &device,
-            &config,
+            (config.width, config.height),
             hdr_target,
             adapter_info.transient_saves_memory == Some(true),
         );
@@ -1139,6 +1146,7 @@ impl Renderer {
             timer,
             timing: false,
             covered: 0.0,
+            world_scale: 1.0,
         })
     }
 
@@ -1219,7 +1227,7 @@ impl Renderer {
     /// nothing only it would show is drawn, and the sun's shadow map covers
     /// only the ground left in view (so its texels are finer). 0 for none.
     pub fn set_covered(&mut self, share: f32) {
-        self.covered = if share.is_finite() && std::env::var_os("GC_NO_COVER").is_none() {
+        self.covered = if share.is_finite() {
             share.clamp(0.0, MAX_COVERED)
         } else {
             0.0
@@ -1240,7 +1248,12 @@ impl Renderer {
         let low = -1.0 + 2.0 * cut;
         let a = 2.0 / (1.0 - low);
         let b = -(1.0 + low) / (1.0 - low);
-        let stretch = Mat4::from_cols(Vec4::X, Vec4::new(0.0, a, 0.0, 0.0), Vec4::Z, Vec4::new(0.0, b, 0.0, 1.0));
+        let stretch = Mat4::from_cols(
+            Vec4::X,
+            Vec4::new(0.0, a, 0.0, 0.0),
+            Vec4::Z,
+            Vec4::new(0.0, b, 0.0, 1.0),
+        );
         stretch * view_proj
     }
 
@@ -1248,7 +1261,7 @@ impl Renderer {
     /// what [`Renderer::seen`] cuts off.
     fn drawn_rows(&self) -> u32 {
         let cut = (self.covered - COVER_MARGIN).max(0.0);
-        let h = self.config.height;
+        let h = self.world_size().1;
         ((h as f32 * (1.0 - cut)).ceil() as u32).clamp(1, h)
     }
 
@@ -1377,13 +1390,43 @@ impl Renderer {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
+        self.remake_world_targets();
+    }
+
+    /// Size the images the 3D world is drawn into to the frame and the
+    /// world's scale.
+    fn remake_world_targets(&mut self) {
+        let size = self.world_size();
         self.world_targets = make_world_targets(
             &self.device,
-            &self.config,
+            size,
             self.hdr_target,
             self.adapter_info.transient_saves_memory == Some(true),
         );
-        self.post_targets = self.post.targets(&self.device, width, height);
+        self.post_targets = self.post.targets(&self.device, size.0, size.1);
+    }
+
+    /// The size of the images the 3D world is drawn into.
+    fn world_size(&self) -> (u32, u32) {
+        scaled(self.config.width, self.config.height, self.world_scale)
+    }
+
+    /// Draw the 3D world at `scale` of the frame's resolution each way (0.5
+    /// to 1, in steps of a twentieth), scaled up and sharpened onto the
+    /// screen by the composite; the interface stays at full resolution. On a
+    /// Retina screen 0.75 keeps the world at 1.5 pixels a point, at a little
+    /// over half the cost. Remakes the world's images when the step changes.
+    pub fn set_world_scale(&mut self, scale: f32) {
+        let step = (scale.clamp(MIN_WORLD_SCALE, 1.0) * 20.0).round() / 20.0;
+        if step.is_finite() && step != self.world_scale {
+            self.world_scale = step;
+            self.remake_world_targets();
+        }
+    }
+
+    /// The 3D world's resolution as a share of the frame's, each way.
+    pub fn world_scale(&self) -> f32 {
+        self.world_scale
     }
 
     pub fn aspect_ratio(&self) -> f32 {
@@ -1897,7 +1940,8 @@ impl Renderer {
     /// Time each pass of the frame on the GPU, where it can be (the dev
     /// overlay and `--gpu-times`). Turning it on starts the averages afresh.
     pub fn set_gpu_timing(&mut self, on: bool) {
-        if on && !self.timing
+        if on
+            && !self.timing
             && let Some(t) = &mut self.timer
         {
             t.reset();
@@ -2013,8 +2057,13 @@ impl Renderer {
             ],
             lights: lights::pack(&self.lights),
         };
-        self.post
-            .write_grade(&self.queue, &look, frame.time_seconds, &self.cinema);
+        self.post.write_grade(
+            &self.queue,
+            &look,
+            frame.time_seconds,
+            &self.cinema,
+            self.world_scale,
+        );
         // With nothing to draw the frame is a bare clear: no uploads and no
         // depth buffer, to measure the floor cost of presenting.
         let bare = !self.options.draw_terrain && !self.options.draw_blocks;
@@ -2251,13 +2300,16 @@ impl Renderer {
                 }
             };
             // Nothing under the bottom bar is shaded.
+            let (width, height) = self.world_size();
             let rows = self.drawn_rows();
-            if rows < self.config.height {
-                pass.set_scissor_rect(0, 0, self.config.width, rows);
+            if rows < height {
+                pass.set_scissor_rect(0, 0, width, rows);
             }
             pass.set_bind_group(0, &terrain.bind_group, &[]);
-            draw_calls += draw_terrain(&mut pass, false);
-            split(&mut pass, "world/terrain");
+            // Everything opaque that stands on the ground first, the ground
+            // after: its costly pixels behind trees, soldiers and buildings
+            // then fail the depth test before they are shaded. (Apple's
+            // GPUs sort this out themselves; others do not.)
             let (calls, scenery_instances, scenery_tris) = if self.options.draw_blocks {
                 self.scenery.draw(&mut pass, false)
             } else {
@@ -2271,6 +2323,8 @@ impl Renderer {
             soldiers_drawn = drawn;
             triangles = tris + scenery_tris;
             split(&mut pass, "world/soldiers");
+            draw_calls += draw_terrain(&mut pass, false);
+            split(&mut pass, "world/terrain");
             draw_calls += draw_boxes(&mut pass, &self.block_pipeline);
             draw_calls += self.soldiers.draw_contacts(&mut pass);
             // The sky last, at the far plane: only pixels nothing covered.
@@ -2701,7 +2755,7 @@ struct WorldTargets {
 
 fn make_world_targets(
     device: &wgpu::Device,
-    config: &wgpu::SurfaceConfiguration,
+    (width, height): (u32, u32),
     hdr: Hdr,
     transient_saves_memory: bool,
 ) -> WorldTargets {
@@ -2709,8 +2763,8 @@ fn make_world_targets(
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -2728,7 +2782,7 @@ fn make_world_targets(
         let bytes = if transient_saves_memory {
             0
         } else {
-            u64::from(config.width) * u64::from(config.height) * u64::from(hdr.samples) * texel
+            u64::from(width) * u64::from(height) * u64::from(hdr.samples) * texel
         };
         (
             texture.create_view(&wgpu::TextureViewDescriptor::default()),
@@ -2909,14 +2963,24 @@ mod tests {
         };
         for s in [[0.0, 0.0], [3.25, 4.5], [7.9, 0.1], [8.0, 8.0], [5.5, 2.75]] {
             let height = |x, z| sample(x, z);
-            let across = bilinear(&height, [s[0] - 1.0, s[1]]) - bilinear(&height, [s[0] + 1.0, s[1]]);
-            let down = bilinear(&height, [s[0], s[1] - 1.0]) - bilinear(&height, [s[0], s[1] + 1.0]);
+            let across =
+                bilinear(&height, [s[0] - 1.0, s[1]]) - bilinear(&height, [s[0] + 1.0, s[1]]);
+            let down =
+                bilinear(&height, [s[0], s[1] - 1.0]) - bilinear(&height, [s[0], s[1] + 1.0]);
             let (sx, sz) = (slope(0), slope(1));
             // Half floats keep 11 bits: each slope is within 1/2048 of
             // itself, so a blend of them within that of the steepest.
             let near = |a: f32, b: f32| (a - b).abs() <= 2.0 * max_height / 2048.0;
-            assert!(near(bilinear(&sx, s), across), "{s:?}: {} vs {across}", bilinear(&sx, s));
-            assert!(near(bilinear(&sz, s), down), "{s:?}: {} vs {down}", bilinear(&sz, s));
+            assert!(
+                near(bilinear(&sx, s), across),
+                "{s:?}: {} vs {across}",
+                bilinear(&sx, s)
+            );
+            assert!(
+                near(bilinear(&sz, s), down),
+                "{s:?}: {} vs {down}",
+                bilinear(&sz, s)
+            );
         }
     }
 

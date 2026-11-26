@@ -57,7 +57,8 @@ struct Grade {
     shadow_tint: [f32; 4],
     /// Tint for the bright end (rgb).
     light_tint: [f32; 4],
-    /// Film grain, time in seconds.
+    /// Film grain, time in seconds, and the world's resolution as a share
+    /// of the screen's (under 1, the composite sharpens as it scales up).
     film: [f32; 4],
     /// The screen's shake as an offset of the picture (a share of its
     /// size), the zoom that hides its edges, the height of each letterbox
@@ -221,12 +222,13 @@ impl PostGpu {
         look: &Look,
         time_seconds: f32,
         cinema: &Cinema,
+        world_scale: f32,
     ) {
         let grade = Grade {
             tone: [look.exposure, look.contrast, look.saturation, look.vignette],
             shadow_tint: rgba(look.shadow_tint, 0.0),
             light_tint: rgba(look.light_tint, 0.0),
-            film: [look.grain, time_seconds, 0.0, 0.0],
+            film: [look.grain, time_seconds, world_scale, 0.0],
             camera: [
                 cinema.shake[0],
                 cinema.shake[1],

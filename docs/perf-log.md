@@ -2,6 +2,19 @@
 
 Before and after numbers from each milestone's performance pass ([12 · Performance](12-performance.md#the-loop)). Newest first.
 
+## GPU work for integrated graphics (2026-11-26)
+
+The GPU's time for each pass is now measured (`--gpu-times`, the dev overlay; see [12](12-performance.md#gpu-work)). Six-player General battle, seed 3, 200 s in, 80 frames averaged, lavapipe at 1280x760 without MSAA, cloud container; three runs each. "Before" is this branch with the four changes switched off (the bottom bar not cut, the slopes read from the heights, the ground drawn first), so it differs from main only by the timing itself.
+
+| | Before | After |
+|---|---|---|
+| GPU ms a frame, three runs | 574.3, 574.9, 545.1 | 527.8, 510.2, 496.7 |
+| mean | 564.8 | 511.6 (−9.4%) |
+| world at 75% (Balanced or Battery, only when the GPU lags), emulated Retina 2560x1520, MSAA | 3,159 | 2,402 (−24%) |
+| frames a second, light scene, cap 60 | 111 (cap ignored) | 60 |
+
+Same picture in the match before and after (screenshots in the project's `screenshots/gpu-half/`); the differences are run-to-run noise and the shadows a touch finer. No change to the simulation.
+
 ## Sim memory and six-player speed (2026-11-20)
 
 Each side's walking grid from its first gate was a whole copy of the shared one. Now the grid's layers of cells are held in runs of 4,096 that grids share until written, and shared again after each change wherever they came out alike, so a side's grid keeps only the cells round its own gates. A gate opening or shutting settles the walking areas by racing floods out from it (a gate in a town wall walks the town) instead of numbering the whole map, and a sector that changes alike on several grids is linked once. No change to how battles play out: every golden replay verifies and every benchmark hash is unchanged. Cloud container.

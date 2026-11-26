@@ -7,10 +7,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::lobby::Faction;
 
+/// How the game spends the GPU (the game's `resolution` module does the
+/// resolution part).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GraphicsPreset {
+    /// Keeps the GPU about half idle, for a laptop's battery and heat: the
+    /// 3D world drops to as low as half resolution to do it, and a third of
+    /// the dust, sparks and smoke.
     Battery,
+    /// Full resolution while the GPU keeps up with the frame cap; the 3D
+    /// world drops to as low as 70% only while it cannot, so integrated
+    /// graphics keep a steady frame rate. Three quarters of the effects.
     Balanced,
+    /// Always full resolution, and every effect.
     High,
 }
 
