@@ -272,11 +272,14 @@ pub struct RenderStats {
 }
 
 /// What a frame draws, for leaving out the soldiers nobody would see: the
-/// camera's view and, with shadows on, the sun's shadow map (a soldier
-/// outside the screen can still cast onto it).
+/// camera's view less what the interface covers, and, with shadows on, the
+/// sun's shadow map (a soldier outside the screen can still cast onto it).
+/// Also the camera's whole view, for sounds and effects that should start
+/// under the interface too (`in_view`).
 #[derive(Clone, Copy, Debug)]
 pub struct Cull {
     camera: [Vec4; 6],
+    view: [Vec4; 6],
     sun: Option<[Vec4; 6]>,
 }
 
@@ -284,19 +287,31 @@ impl Cull {
     /// Sees everything; for before the first frame.
     pub const EVERYTHING: Cull = Cull {
         camera: [Vec4::new(0.0, 0.0, 0.0, 1.0); 6],
+        view: [Vec4::new(0.0, 0.0, 0.0, 1.0); 6],
         sun: None,
     };
 
-    fn new(camera: Mat4, sun: Option<Mat4>) -> Cull {
+    /// `camera` is what is drawn of `view`.
+    fn new(camera: Mat4, view: Mat4, sun: Option<Mat4>) -> Cull {
         // A broken matrix (a window with no size yet) draws everything
         // rather than nothing.
-        if !camera.is_finite() || sun.is_some_and(|m| !m.is_finite()) {
+        if !camera.is_finite() || !view.is_finite() || sun.is_some_and(|m| !m.is_finite()) {
             return Cull::EVERYTHING;
         }
         Cull {
             camera: unit_planes(frustum_planes(camera)),
+            view: unit_planes(frustum_planes(view)),
             sun: sun.map(|m| unit_planes(frustum_planes(m))),
         }
+    }
+
+    /// Whether a sphere of `radius` around `center` touches the camera's
+    /// whole view, the part under the interface too: for sounds, and for
+    /// effects that may rise into what is drawn.
+    pub fn in_view(&self, center: Vec3, radius: f32) -> bool {
+        self.view
+            .iter()
+            .all(|p| p.truncate().dot(center) + p.w >= -radius)
     }
 
     /// Whether a sphere of `radius` around `center` touches the camera's
@@ -1218,7 +1233,7 @@ impl Renderer {
             .as_ref()
             .and_then(|t| self.sun_view(seen, t))
             .map(|(m, _)| m);
-        Cull::new(seen, sun)
+        Cull::new(seen, view_proj, sun)
     }
 
     /// Tell the renderer that opaque interface (the match's bottom bar)
@@ -1414,7 +1429,7 @@ impl Renderer {
     }
 
     /// The size of the images the 3D world is drawn into.
-    fn world_size(&self) -> (u32, u32) {
+    pub fn world_size(&self) -> (u32, u32) {
         scaled(self.config.width, self.config.height, self.world_scale)
     }
 
@@ -3147,7 +3162,7 @@ mod tests {
         let proj = perspective(1.0, 1.5, 0.5, 500.0);
         let on_screen = Vec3::new(0.0, 1.0, -25.0);
         let behind = Vec3::new(0.0, 1.0, 25.0);
-        let cull = Cull::new(proj * view, None);
+        let cull = Cull::new(proj * view, proj * view, None);
         assert!(cull.sees(on_screen, 1.0));
         assert!(!cull.sees(behind, 1.0));
         // A soldier's size counts: its edge reaches the screen.
@@ -3159,10 +3174,13 @@ mod tests {
         let sun_view = look_at_mat4(Vec3::new(0.0, 50.0, 30.0), Vec3::ZERO, Vec3::Y);
         let sun_proj =
             glam::camera::rh::proj::directx::orthographic(-40.0, 40.0, -40.0, 40.0, 0.0, 200.0);
-        let cull = Cull::new(proj * view, Some(sun_proj * sun_view));
+        let cull = Cull::new(proj * view, proj * view, Some(sun_proj * sun_view));
         assert!(cull.sees(behind, 1.0));
         assert!(Cull::EVERYTHING.sees(behind, 0.0));
-        assert!(Cull::new(Mat4::from_cols_array(&[f32::NAN; 16]), None).sees(behind, 0.0));
+        assert!(
+            Cull::new(Mat4::from_cols_array(&[f32::NAN; 16]), Mat4::IDENTITY, None)
+                .sees(behind, 0.0)
+        );
     }
 
     /// Whether `block` of `module` reaches a barrier after a `return` (once

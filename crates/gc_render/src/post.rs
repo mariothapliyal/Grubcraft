@@ -344,7 +344,11 @@ impl PostGpu {
         // The chain is timed as one: from the start of its first pass to the
         // end of its last.
         let passes = (t.levels.len() * 2).saturating_sub(1);
-        let span = timer.and_then(|timer| timer.span("glow"));
+        // No queries are taken for a chain with no passes (glow off): none
+        // would write them.
+        let span = timer
+            .filter(|_| passes > 0)
+            .and_then(|timer| timer.span("glow"));
         let mut index = 0;
         let mut pass = |encoder: &mut wgpu::CommandEncoder,
                         pipeline: &wgpu::RenderPipeline,

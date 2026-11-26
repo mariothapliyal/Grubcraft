@@ -30,6 +30,9 @@ struct Section {
 struct Slot {
     buffer: wgpu::Buffer,
     sections: Vec<Section>,
+    /// The `reset` count when the frame was copied in: a frame from before
+    /// the last reset is not added.
+    epoch: u32,
     /// Where the slot is: `FREE` to `COPIED` to `MAPPING` to `READY` (or
     /// straight back to `FREE` if the read failed) and back.
     state: Arc<AtomicU8>,
@@ -61,6 +64,8 @@ pub(crate) struct GpuTimer {
     /// ring, or timing is off).
     on: bool,
     totals: Totals,
+    /// How many times the averages have been reset.
+    epoch: u32,
 }
 
 /// Each section's time summed over the frames read, for averages.
@@ -115,6 +120,7 @@ impl GpuTimer {
                     mapped_at_creation: false,
                 }),
                 sections: Vec::new(),
+                epoch: 0,
                 state: Arc::new(AtomicU8::new(FREE)),
             })
             .collect();
@@ -130,6 +136,7 @@ impl GpuTimer {
             open: None,
             on: false,
             totals: Totals::default(),
+            epoch: 0,
         })
     }
 
@@ -228,6 +235,7 @@ impl GpuTimer {
         // Swapped, so both keep their room and no frame allocates.
         std::mem::swap(&mut slot.sections, &mut self.sections);
         self.sections.clear();
+        slot.epoch = self.epoch;
         slot.state.store(COPIED, Ordering::Release);
     }
 
@@ -250,7 +258,9 @@ impl GpuTimer {
         let _ = device.poll(wgpu::PollType::Poll);
         for slot in &mut self.slots {
             if slot.state.load(Ordering::Acquire) == READY {
-                if let Ok(data) = slot.buffer.slice(..).get_mapped_range() {
+                if slot.epoch == self.epoch
+                    && let Ok(data) = slot.buffer.slice(..).get_mapped_range()
+                {
                     let ticks: &[u64] = bytemuck::cast_slice(&data);
                     self.totals.add(&slot.sections, ticks, self.period);
                 }
@@ -288,6 +298,7 @@ impl GpuTimer {
 
     pub fn reset(&mut self) {
         self.totals = Totals::default();
+        self.epoch = self.epoch.wrapping_add(1);
     }
 }
 

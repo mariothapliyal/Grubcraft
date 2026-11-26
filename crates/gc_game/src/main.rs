@@ -2867,13 +2867,13 @@ impl Running {
         match self.renderer.gpu_times() {
             Some(t) => {
                 let rs = self.renderer.stats();
-                let size = self.window.inner_size();
+                let (width, height) = self.renderer.world_size();
                 println!(
-                    "gpu times on {} via {:?}, {}x{}: {} draw calls, {} soldiers, {} scenery, {}k triangles",
+                    "gpu times on {} via {:?}, world {}x{}: {} draw calls, {} soldiers, {} scenery, {}k triangles",
                     info.name,
                     info.backend,
-                    size.width,
-                    size.height,
+                    width,
+                    height,
                     rs.draw_calls,
                     rs.soldiers_drawn,
                     rs.scenery_drawn,
@@ -4446,6 +4446,7 @@ impl Running {
         let mut max_ticks = MAX_TICKS_PER_FRAME;
         if let Some(until) = self.play_from.filter(|_| {
             self.match_started
+                && !self.paused
                 && !self.menu_open
                 && self.watching.is_none()
                 && self.online.is_none()
@@ -5449,7 +5450,7 @@ impl Running {
                 };
                 let centre = look.centre();
                 let at = Vec3::new(centre.x, look.base + look.top * 0.5, centre.y);
-                if cull.on_screen(at, look.top + 6.0)
+                if cull.in_view(at, look.top + 6.0)
                     && (reveal || fog.sees_tile((centre.x.floor() as i32, centre.y.floor() as i32)))
                 {
                     ambient::bases::emit(
@@ -7891,7 +7892,7 @@ impl Running {
         let mut sounded = 0;
         let on_screen = self.puppets.drain_impacts().filter_map(|i| {
             let at = glam::Vec3::new(i.pos.x, hm.height_at(i.pos.x, i.pos.y), i.pos.y);
-            cull.on_screen(at, 1.0).then_some((i, at))
+            cull.in_view(at, 1.0).then_some((i, at))
         });
         for (i, at) in on_screen.take(BLOWS_SHOWN) {
             let unit = usize::from(i.victim);
@@ -7939,8 +7940,9 @@ impl Running {
             gc_render::MAX_BOX_INSTANCES - BOX_ROOM_AFTER_CORPSES,
             &mut self.instances,
         );
-        self.siege
-            .emit_damage(standing, |at, radius| cull.sees(at, radius));
+        self.siege.emit_damage(standing, |at, radius| {
+            cull.in_view(at, radius) || cull.sees(at, radius)
+        });
         let catching_up = self.online.is_some() && self.menu.net().catching_up();
         let particles = self.siege.take_particles();
         // Replayed blows would burst out all at once at stale spots.
@@ -9374,7 +9376,7 @@ impl Running {
         for i in 0..hamlets.len() {
             for (at, r, done) in hamlets.smouldering(i, |t| self.scenery.occupied_at(t)) {
                 let tile = (at.x.floor() as i32, at.z.floor() as i32);
-                if !cull.on_screen(at, r + 4.0) || !(reveal || fog.sees_tile(tile)) {
+                if !cull.in_view(at, r + 4.0) || !(reveal || fog.sees_tile(tile)) {
                     continue;
                 }
                 // From the charred wall to one side, so a crow on the
@@ -9934,7 +9936,7 @@ impl Running {
             let role = look.map(|l| l.role);
             let on_screen = look.is_some_and(|l| {
                 let at = Vec3::new(centre.x, l.base + l.top * 0.5, centre.y);
-                cull.on_screen(at, l.top + 6.0)
+                cull.in_view(at, l.top + 6.0)
                     && (reveal || fog.sees_tile((centre.x.floor() as i32, centre.y.floor() as i32)))
             });
             let done = s.finished() && on_screen;
