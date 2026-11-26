@@ -1234,12 +1234,19 @@ impl Renderer {
         };
     }
 
+    /// The share of the frame's height left undrawn at its foot: what the
+    /// interface covers, less a margin for the screen shake and the
+    /// picture's blurs, which read a little past what shows.
+    fn cut(&self) -> f32 {
+        (self.covered - COVER_MARGIN).max(0.0)
+    }
+
     /// The part of `view_proj`'s view that is drawn: its foot cut off where
     /// the interface covers it (less a margin for the screen shake and the
     /// picture's blurs, which read a little past what shows), as a view whose
     /// clip space spans just that part. The view itself when nothing covers it.
     fn seen(&self, view_proj: Mat4) -> Mat4 {
-        let cut = (self.covered - COVER_MARGIN).max(0.0);
+        let cut = self.cut();
         if cut <= 0.0 {
             return view_proj;
         }
@@ -1260,7 +1267,7 @@ impl Renderer {
     /// The rows of the frame the world pass draws, from the top: all but
     /// what [`Renderer::seen`] cuts off.
     fn drawn_rows(&self) -> u32 {
-        let cut = (self.covered - COVER_MARGIN).max(0.0);
+        let cut = self.cut();
         let h = self.world_size().1;
         ((h as f32 * (1.0 - cut)).ceil() as u32).clamp(1, h)
     }
@@ -1473,20 +1480,7 @@ impl Renderer {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         // The ground's slope at each height sample, for its normal (see
         // `ground_slopes`).
-        let slope_map = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("ground slope"),
-            size: wgpu::Extent3d {
-                width: t.size,
-                height: t.size,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rg16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let slope_map = self.tile_map("ground slope", wgpu::TextureFormat::Rg16Float, t.size);
         Self::write_tile_map(
             &self.queue,
             &slope_map,
@@ -1939,14 +1933,22 @@ impl Renderer {
 
     /// Time each pass of the frame on the GPU, where it can be (the dev
     /// overlay and `--gpu-times`). Turning it on starts the averages afresh.
-    pub fn set_gpu_timing(&mut self, on: bool) {
-        if on
-            && !self.timing
-            && let Some(t) = &mut self.timer
-        {
-            t.reset();
+    /// With `splits`, the world pass's parts are timed too where the GPU
+    /// can (a few more timestamps inside the pass; for the overlay).
+    pub fn set_gpu_timing(&mut self, on: bool, splits: bool) {
+        if let Some(t) = &mut self.timer {
+            if on && !self.timing {
+                t.reset();
+            }
+            t.splits = splits;
         }
         self.timing = on;
+    }
+
+    /// Frames timed since timing was turned on or `reset_gpu_times`; 0
+    /// where the GPU cannot time passes.
+    pub fn gpu_frames(&self) -> u32 {
+        self.timer.as_ref().map_or(0, timing::GpuTimer::frames)
     }
 
     /// The average GPU time of each pass since timing was turned on (or
@@ -2365,10 +2367,19 @@ impl Renderer {
                 multiview_mask: None,
             });
             if !bare {
+                // Nor is the world composed under the bottom bar.
+                let (width, height) = (self.config.width, self.config.height);
+                let rows = ((height as f32 * (1.0 - self.cut())).ceil() as u32).clamp(1, height);
+                if rows < height {
+                    pass.set_scissor_rect(0, 0, width, rows);
+                }
                 pass.set_pipeline(&self.post.composite);
                 pass.set_bind_group(0, &self.post_targets.composite_group, &[]);
                 pass.draw(0..3, 0..1);
                 draw_calls += 1;
+                if rows < height {
+                    pass.set_scissor_rect(0, 0, width, height);
+                }
             }
             if ui_visible {
                 pass.set_pipeline(&self.ui.pipeline);

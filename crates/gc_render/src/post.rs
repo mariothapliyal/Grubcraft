@@ -351,11 +351,14 @@ impl PostGpu {
                         from: &wgpu::BindGroup,
                         to: &wgpu::TextureView,
                         load| {
-            let timestamp_writes = span.map(|(set, first, last)| wgpu::RenderPassTimestampWrites {
-                query_set: set,
-                beginning_of_pass_write_index: (index == 0).then_some(first),
-                end_of_pass_write_index: (index + 1 == passes).then_some(last),
-            });
+            let (first_pass, last_pass) = (index == 0, index + 1 == passes);
+            let timestamp_writes =
+                span.filter(|_| first_pass || last_pass)
+                    .map(|(set, first, last)| wgpu::RenderPassTimestampWrites {
+                        query_set: set,
+                        beginning_of_pass_write_index: first_pass.then_some(first),
+                        end_of_pass_write_index: last_pass.then_some(last),
+                    });
             index += 1;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("glow"),
@@ -369,9 +372,7 @@ impl PostGpu {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: timestamp_writes.filter(|w| {
-                    w.beginning_of_pass_write_index.is_some() || w.end_of_pass_write_index.is_some()
-                }),
+                timestamp_writes,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });

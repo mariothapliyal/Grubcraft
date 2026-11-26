@@ -1,9 +1,10 @@
 //! GPU timings: how long each pass of a frame takes on the GPU, from
-//! timestamp queries, for the dev overlay (F11) and `--gpu-times`. Off
-//! unless asked for, and only where the GPU can write timestamps
-//! (`Features::TIMESTAMP_QUERY`). Where it can also write them inside a pass
-//! (Vulkan and Direct 3D 12, not Metal) the world pass is split into what it
-//! draws: terrain, scenery, soldiers and the rest.
+//! timestamp queries, for the game's automatic resolution, the dev overlay
+//! (F11) and `--gpu-times`. Taken only while one of those wants them, and
+//! only where the GPU can write timestamps (`Features::TIMESTAMP_QUERY`).
+//! Where it can also write them inside a pass (Vulkan and Direct 3D 12, not
+//! Metal), and the splits are asked for, the world pass is split into what
+//! it draws: terrain, scenery, soldiers and the rest.
 //!
 //! Results come back a few frames late: each frame's timestamps are copied
 //! to one of a ring of readable buffers, and read once the GPU is done with
@@ -30,7 +31,7 @@ struct Slot {
     buffer: wgpu::Buffer,
     sections: Vec<Section>,
     /// Where the slot is: `FREE` to `COPIED` to `MAPPING` to `READY` (or
-    /// `FAILED`) and back.
+    /// straight back to `FREE` if the read failed) and back.
     state: Arc<AtomicU8>,
 }
 
@@ -39,7 +40,6 @@ const FREE: u8 = 0;
 const COPIED: u8 = 1;
 const MAPPING: u8 = 2;
 const READY: u8 = 3;
-const FAILED: u8 = 4;
 
 pub(crate) struct GpuTimer {
     set: wgpu::QuerySet,
@@ -48,12 +48,15 @@ pub(crate) struct GpuTimer {
     /// Nanoseconds a timestamp tick.
     period: f64,
     /// Whether timestamps can be written inside a pass.
-    pub inside: bool,
+    inside: bool,
+    /// Whether to split the world pass (`split`), where `inside`.
+    pub splits: bool,
     /// This frame's sections and the next free query.
     sections: Vec<Section>,
     next: u32,
-    /// The pass a split is taken in: its first query, and the last split.
-    open: Option<(u32, u32)>,
+    /// In a pass that splits are taken in: the query of its start or of
+    /// its last split.
+    open: Option<u32>,
     /// Whether this frame writes timestamps (none are left for it in the
     /// ring, or timing is off).
     on: bool,
@@ -121,6 +124,7 @@ impl GpuTimer {
             slots,
             period: f64::from(queue.get_timestamp_period()),
             inside: features.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
+            splits: false,
             sections: Vec::new(),
             next: 0,
             open: None,
@@ -164,7 +168,7 @@ impl GpuTimer {
         name: &'static str,
     ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
         let (from, to) = self.take(name)?;
-        self.open = Some((from, from));
+        self.open = Some(from);
         Some(wgpu::RenderPassTimestampWrites {
             query_set: &self.set,
             beginning_of_pass_write_index: Some(from),
@@ -188,7 +192,7 @@ impl GpuTimer {
     /// can be written inside a pass): it runs from the pass's start or the
     /// last split to here. The pass's own section stays its whole time.
     pub fn split(&mut self, pass: &mut wgpu::RenderPass<'_>, name: &'static str) {
-        let Some((_, last)) = self.open.filter(|_| self.inside && self.on) else {
+        let Some(last) = self.open.filter(|_| self.inside && self.splits && self.on) else {
             return;
         };
         if self.next + 1 > MAX_QUERIES {
@@ -202,9 +206,7 @@ impl GpuTimer {
             from: last,
             to: at,
         });
-        if let Some(open) = &mut self.open {
-            open.1 = at;
-        }
+        self.open = Some(at);
     }
 
     /// Copy this frame's timestamps out for reading, after its last pass.
@@ -223,7 +225,9 @@ impl GpuTimer {
         };
         encoder.resolve_query_set(&self.set, 0..self.next, &self.resolve, 0);
         encoder.copy_buffer_to_buffer(&self.resolve, 0, &slot.buffer, 0, u64::from(self.next) * 8);
-        slot.sections = std::mem::take(&mut self.sections);
+        // Swapped, so both keep their room and no frame allocates.
+        std::mem::swap(&mut slot.sections, &mut self.sections);
+        self.sections.clear();
         slot.state.store(COPIED, Ordering::Release);
     }
 
@@ -238,26 +242,27 @@ impl GpuTimer {
                 slot.buffer
                     .slice(..)
                     .map_async(wgpu::MapMode::Read, move |r| {
-                        state.store(if r.is_ok() { READY } else { FAILED }, Ordering::Release);
+                        state.store(if r.is_ok() { READY } else { FREE }, Ordering::Release);
                     });
             }
         }
         // Run the callbacks of any reads the GPU has finished; never wait.
         let _ = device.poll(wgpu::PollType::Poll);
         for slot in &mut self.slots {
-            match slot.state.load(Ordering::Acquire) {
-                READY => {
-                    if let Ok(data) = slot.buffer.slice(..).get_mapped_range() {
-                        let ticks: &[u64] = bytemuck::cast_slice(&data);
-                        self.totals.add(&slot.sections, ticks, self.period);
-                    }
-                    slot.buffer.unmap();
-                    slot.state.store(FREE, Ordering::Release);
+            if slot.state.load(Ordering::Acquire) == READY {
+                if let Ok(data) = slot.buffer.slice(..).get_mapped_range() {
+                    let ticks: &[u64] = bytemuck::cast_slice(&data);
+                    self.totals.add(&slot.sections, ticks, self.period);
                 }
-                FAILED => slot.state.store(FREE, Ordering::Release),
-                _ => {}
+                slot.buffer.unmap();
+                slot.state.store(FREE, Ordering::Release);
             }
         }
+    }
+
+    /// Frames averaged since the last `reset`.
+    pub fn frames(&self) -> u32 {
+        self.totals.frames
     }
 
     /// The averages since the last `reset`.

@@ -1123,14 +1123,16 @@ struct Running {
     /// When the next frame may start under Settings' frame cap (see
     /// [`Running::next_frame_due`]); `None` when uncapped.
     frame_due: Option<Instant>,
+    /// When the screen's refresh rate was last asked for, and the rate
+    /// (0 when the OS does not say).
+    refresh: Option<(Instant, u32)>,
     /// Whether the dev overlay is showing.
     overlay: bool,
     /// `--gpu-times`: GPU timings are taken all along and printed at exit.
     opts_gpu_times: bool,
-    /// The world's resolution as the graphics preset picks it, unless
-    /// `--world-scale` fixed it (`fixed_world_scale`).
-    auto_resolution: resolution::AutoResolution,
-    fixed_world_scale: bool,
+    /// The world's resolution as the graphics preset picks it; `None` when
+    /// `--world-scale` or `--gpu-times` fixed it.
+    auto_resolution: Option<resolution::AutoResolution>,
     /// Whether the AI lens is showing (L).
     lens: bool,
     /// Marks over ground no regiment can cross, and whether to show them (G).
@@ -1788,9 +1790,6 @@ impl App {
             ))
         })?;
         self.memory_timeline.mark("gpu device + pipelines");
-        // GPU timings feed the automatic resolution and the dev overlay;
-        // they cost a few dozen timestamps a frame.
-        renderer.set_gpu_timing(true);
         if let Some(scale) = opts.world_scale {
             renderer.set_world_scale(scale);
         }
@@ -2120,8 +2119,8 @@ impl App {
             },
             overlay: opts.overlay,
             opts_gpu_times: opts.gpu_times,
-            auto_resolution: resolution::AutoResolution::default(),
-            fixed_world_scale: opts.world_scale.is_some(),
+            auto_resolution: (opts.world_scale.is_none() && !opts.gpu_times)
+                .then(resolution::AutoResolution::default),
             lens: false,
             blocked_marks,
             show_blocked: false,
@@ -2150,6 +2149,7 @@ impl App {
             hidden_check: None,
             resume_at: None,
             frame_due: None,
+            refresh: None,
             seed: opts.seed,
             capacities,
             menu,
@@ -2756,19 +2756,16 @@ impl ApplicationHandler for App {
             if r.quit {
                 event_loop.exit();
             }
-            match r.resume_at {
-                Some(at) if Instant::now() < at => {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(at));
-                }
-                _ => {
+            // The next frame waits for the later of the pause after a
+            // skipped frame and Settings' frame cap (no frames nobody asked
+            // for).
+            let wait = (r.resume_at.into_iter().chain(r.frame_due))
+                .max()
+                .filter(|&at| Instant::now() < at);
+            match wait {
+                Some(at) => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
+                None => {
                     r.resume_at = None;
-                    // Settings' frame cap: wait out the rest of the frame
-                    // rather than draw frames nobody asked for.
-                    if let Some(due) = r.frame_due.filter(|&due| Instant::now() < due) {
-                        r.resume_at = Some(due);
-                        event_loop.set_control_flow(ControlFlow::WaitUntil(due));
-                        return;
-                    }
                     event_loop.set_control_flow(ControlFlow::Poll);
                     r.window.request_redraw();
                 }
@@ -2794,23 +2791,30 @@ impl Running {
         });
     }
 
-    /// When the frame after one starting `now` may start, under Settings'
-    /// frame cap (30, 60 or 120 a second, or none): a frame drawn faster than
-    /// the cap only heats the GPU. `None` when uncapped, or when V-sync on a
-    /// screen no faster than the cap already holds the frames to it. Each
-    /// frame is due a whole period after the last was, so oversleeping does
-    /// not drift the rate down; a frame later than that starts the count
-    /// again from now.
-    fn next_frame_due(&self, now: Instant) -> Option<Instant> {
+    /// The frames a second the game draws at: `(rate, held)`, where `held`
+    /// says V-sync on a screen no faster than Settings' frame cap already
+    /// holds the frames to the screen's rate. The rate is 0 when neither a
+    /// cap nor V-sync limits it.
+    fn frame_rate(&self) -> (u32, bool) {
         let settings = self.menu.settings();
         let cap = u32::from(settings.frame_cap);
-        if cap == 0 || self.opts_gpu_times {
-            return None;
+        let refresh = self.refresh.map_or(0, |(_, hz)| hz);
+        if settings.vsync && refresh > 0 && (cap == 0 || refresh <= cap + 1) {
+            (refresh, true)
+        } else {
+            (cap, false)
         }
-        let refresh = (self.window.current_monitor())
-            .and_then(|m| m.refresh_rate_millihertz())
-            .map_or(0, |mhz| mhz.div_ceil(1000));
-        if settings.vsync && refresh > 0 && refresh <= cap + 1 {
+    }
+
+    /// When the frame after one starting `now` may start, under Settings'
+    /// frame cap (30, 60 or 120 a second, or none): a frame drawn faster than
+    /// the cap only heats the GPU. `None` when uncapped, or when V-sync
+    /// already holds the frames (see `frame_rate`). Each frame is due a whole
+    /// period after the last was, so oversleeping does not drift the rate
+    /// down; a frame later than that starts the count again from now.
+    fn next_frame_due(&self, now: Instant) -> Option<Instant> {
+        let (cap, held) = self.frame_rate();
+        if cap == 0 || held || self.opts_gpu_times {
             return None;
         }
         let period = Duration::from_secs(1) / cap;
@@ -2820,37 +2824,39 @@ impl Running {
         })
     }
 
-    /// The time each frame has to be drawn in, in milliseconds: the frame
-    /// cap's, or the screen's refresh with V-sync on if that is slower (60
-    /// a second where neither is known).
+    /// The time each frame has to be drawn in, in milliseconds (a 60th of
+    /// a second where nothing limits the rate).
     fn frame_budget_ms(&self) -> f32 {
-        let settings = self.menu.settings();
-        let refresh = (self.window.current_monitor())
-            .and_then(|m| m.refresh_rate_millihertz())
-            .map_or(0, |mhz| mhz.div_ceil(1000));
-        let mut rate = u32::from(settings.frame_cap);
-        if settings.vsync && refresh > 0 && (rate == 0 || refresh < rate) {
-            rate = refresh;
-        }
+        let (rate, _) = self.frame_rate();
         1000.0 / if rate == 0 { 60.0 } else { rate as f32 }
     }
 
     /// Every half second, set the world's resolution from the GPU's time
     /// for the frames since (see `resolution`), unless `--world-scale` or
-    /// `--gpu-times` fixed it.
+    /// `--gpu-times` fixed it. The GPU is timed only while something reads
+    /// the times: this, the dev overlay or `--gpu-times`.
     fn choose_resolution(&mut self) {
-        if self.fixed_world_scale || self.opts_gpu_times {
+        let aim = resolution::aim(self.menu.settings().graphics);
+        let shown = self.overlay || self.opts_gpu_times;
+        let auto = self.auto_resolution.is_some() && aim.is_some();
+        self.renderer.set_gpu_timing(shown || auto, shown);
+        let budget = self.frame_budget_ms();
+        let Some(auto_resolution) = &mut self.auto_resolution else {
+            return;
+        };
+        if aim.is_none() {
+            // High: full resolution, at once.
+            let scale = auto_resolution.update(0.0, 0.0, None);
+            self.renderer.set_world_scale(scale);
+            return;
+        }
+        if self.renderer.gpu_frames() < resolution::WINDOW_FRAMES {
             return;
         }
         let Some(times) = self.renderer.gpu_times() else {
             return;
         };
-        if times.frames < resolution::WINDOW_FRAMES {
-            return;
-        }
-        let aim = resolution::aim(self.menu.settings().graphics);
-        let budget = self.frame_budget_ms();
-        let scale = self.auto_resolution.update(times.total, budget, aim);
+        let scale = auto_resolution.update(times.total, budget, aim);
         self.renderer.set_world_scale(scale);
         self.renderer.reset_gpu_times();
     }
@@ -4379,6 +4385,17 @@ impl Running {
         }
         let dt = gap.min(Duration::from_millis(250));
         self.last_frame = now;
+        // The screen's refresh rate, asked of the OS once a second (it is a
+        // display mode query on a Mac), for the frame cap and the budget.
+        if self
+            .refresh
+            .is_none_or(|(at, _)| now.duration_since(at) >= Duration::from_secs(1))
+        {
+            let hz = (self.window.current_monitor())
+                .and_then(|m| m.refresh_rate_millihertz())
+                .map_or(0, |mhz| mhz.div_ceil(1000));
+            self.refresh = Some((now, hz));
+        }
         self.frame_due = self.next_frame_due(now);
         let vsync = self.menu.settings().vsync;
         self.renderer.set_vsync(vsync);
@@ -5215,7 +5232,7 @@ impl Running {
             let offer = self.surrender_offer();
             self.menu.set_surrender(offer);
             self.run_menu();
-        } else if self.match_started && self.showroom.is_none() {
+        } else if self.hud_drawn() {
             self.run_hud();
         } else {
             self.hud.hover_own = None;

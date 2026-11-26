@@ -140,6 +140,8 @@ const SHAFT_HIGH: f32 = 2.2;
 // How much a world drawn at a lower resolution is sharpened as it is scaled
 // up, at the lowest scale (less nearer full size).
 const SHARPEN: f32 = 0.9;
+// The lowest scale (`MIN_WORLD_SCALE` in lib.rs).
+const MIN_SCALE: f32 = 0.5;
 
 // The world drawn at `scale` of the screen's resolution, at `uv`: the filtered
 // texel, sharpened against its four neighbours to give back the edges the
@@ -154,7 +156,7 @@ fn upscaled(uv: vec2<f32>, scale: f32) -> vec3<f32> {
     let e = textureSampleLevel(src, src_sampler, uv + vec2<f32>(t.x, 0.0), 0.0).rgb;
     let lo = min(c, min(min(n, s), min(w, e)));
     let hi = max(c, max(max(n, s), max(w, e)));
-    let amount = SHARPEN * clamp((1.0 - scale) / (1.0 - 0.5), 0.0, 1.0);
+    let amount = SHARPEN * clamp((1.0 - scale) / (1.0 - MIN_SCALE), 0.0, 1.0);
     return clamp(c + (c - (n + s + w + e) * 0.25) * amount, lo, hi);
 }
 
