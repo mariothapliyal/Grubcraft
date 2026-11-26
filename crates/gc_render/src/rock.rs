@@ -32,6 +32,10 @@ pub(crate) fn world_source() -> String {
     for (name, value) in crate::GROUND_CLASSES {
         head.push_str(&format!("const GROUND_{name}: u32 = {value}u;\n"));
     }
+    // TEMP(dev): GC_WORLD_WGSL reads the shader from a file, to time variants.
+    if let Some(path) = std::env::var_os("GC_WORLD_WGSL") {
+        return head + &std::fs::read_to_string(path).unwrap();
+    }
     head + include_str!("shaders/world.wgsl")
 }
 

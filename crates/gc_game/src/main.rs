@@ -538,6 +538,8 @@ const DEPLOY_REPLAY_SPEED: u32 = 8;
 /// Most ticks run in one frame, so a slow frame can't snowball (4x speed at
 /// 30 fps needs about 3).
 const MAX_TICKS_PER_FRAME: u32 = 8;
+/// Ticks a frame plays while `GC_PLAY_FROM` hurries a match on.
+const PLAY_FROM_TICKS_PER_FRAME: u32 = 200;
 /// How long a frame may spend simulating when an online match is catching
 /// up after a rejoin.
 const CATCH_UP_BUDGET: Duration = Duration::from_millis(25);
@@ -558,6 +560,9 @@ struct Options {
     map: Option<gc_map::MapDef>,
     /// Start on an empty field with nobody moving on their own.
     sandbox: bool,
+    /// Time each pass on the GPU and print the averages at exit
+    /// (`--gpu-times`, with `--frames`).
+    gpu_times: bool,
     frames: Option<u64>,
     /// Leave the last this many of the `--frames` undrawn, as for a hidden
     /// window (`--hidden-frames N`; see `Running::hide_window_for_check`).
@@ -636,6 +641,7 @@ fn parse_args() -> Options {
         frames: None,
         hidden_frames: None,
         overlay: false,
+        gpu_times: false,
         menu: None,
         audio: true,
         battle: None,
@@ -670,6 +676,10 @@ fn parse_args() -> Options {
     while let Some(flag) = args.next() {
         if flag == "--overlay" {
             opts.overlay = true;
+            continue;
+        }
+        if flag == "--gpu-times" {
+            opts.gpu_times = true;
             continue;
         }
         if flag == "--menu" || flag == "--no-menu" {
@@ -1098,8 +1108,13 @@ struct Running {
     /// When the next frame is due after one that drew nothing (see
     /// [`SKIPPED_FRAME_PAUSE`]).
     resume_at: Option<Instant>,
+    /// When the next frame may start under Settings' frame cap (see
+    /// [`Running::next_frame_due`]); `None` when uncapped.
+    frame_due: Option<Instant>,
     /// Whether the dev overlay is showing.
     overlay: bool,
+    /// `--gpu-times`: GPU timings are taken all along and printed at exit.
+    opts_gpu_times: bool,
     /// Whether the AI lens is showing (L).
     lens: bool,
     /// Marks over ground no regiment can cross, and whether to show them (G).
@@ -1156,6 +1171,15 @@ struct Running {
     /// The battle being recorded, or the replay being watched.
     recording: Option<Recording>,
     watching: Option<Watching>,
+    /// `GC_PLAY_FROM` (seconds, a dev knob like `GC_WATCH_FROM`): play a
+    /// live match's first ticks up to this one as fast as the game can, then
+    /// turn the director camera on, to measure a match's busy middle.
+    play_from: Option<u32>,
+    /// `GC_STILL_AT` (a frame number, a dev knob): hold that frame on screen
+    /// for a few seconds, so a script can grab the same frame from two runs
+    /// to compare them; and run the picture's clock (the wind, the water,
+    /// the film grain) by frames, a 30th of a second each, so the two match.
+    still_at: Option<u64>,
     /// The news line's word on the weather and nearby fires.
     sky_news: sky_news::SkyNews,
     /// The tick the news last told of debris striking our troops.
@@ -1638,6 +1662,8 @@ struct HiddenCheck {
 /// `Renderer::skip`). A 60th of a second keeps the match (and an online
 /// game's turns) going at the same pace.
 const SKIPPED_FRAME_PAUSE: Duration = Duration::from_millis(16);
+/// The frame `--gpu-times` starts its averages from.
+const GPU_TIMES_FROM: u64 = 20;
 
 impl MemoryTimeline {
     /// Also logged as it happens, so a run that hangs shows how far it got.
@@ -1746,6 +1772,7 @@ impl App {
             ))
         })?;
         self.memory_timeline.mark("gpu device + pipelines");
+        renderer.set_gpu_timing(opts.gpu_times || opts.overlay);
         // The game opens on the map a two-player battle from a new lobby
         // would be on, or on one opened with `--map`.
         let first_key = battle_map(
@@ -2071,6 +2098,7 @@ impl App {
                 ai_time: Duration::ZERO,
             },
             overlay: opts.overlay,
+            opts_gpu_times: opts.gpu_times,
             lens: false,
             blocked_marks,
             show_blocked: false,
@@ -2098,6 +2126,7 @@ impl App {
             memory_timeline: std::mem::take(&mut self.memory_timeline),
             hidden_check: None,
             resume_at: None,
+            frame_due: None,
             seed: opts.seed,
             capacities,
             menu,
@@ -2110,6 +2139,13 @@ impl App {
             online: None,
             recording: None,
             watching: None,
+            still_at: std::env::var("GC_STILL_AT")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok()),
+            play_from: std::env::var("GC_PLAY_FROM")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .map(|s| s.saturating_mul(gc_sim::TICKS_PER_SECOND)),
             sky_news: sky_news::SkyNews::default(),
             debris_told: None,
             jam_told: None,
@@ -2448,6 +2484,8 @@ impl ApplicationHandler for App {
                         KeyCode::F8 if down && !event.repeat => r.toggle_director(),
                         KeyCode::F11 | KeyCode::Backquote if down && !event.repeat => {
                             r.overlay = !r.overlay;
+                            let timing = r.overlay || r.opts_gpu_times;
+                            r.renderer.set_gpu_timing(timing);
                             r.refresh_overlay();
                             r.memory_timeline.print();
                             print_memory(&r.renderer);
@@ -2655,10 +2693,24 @@ impl ApplicationHandler for App {
                         check.halfway = gc_platform::memory::process_memory().current;
                     }
                 }
+                // `GC_STILL_AT`: hold that frame on screen for a few seconds.
+                if r.still_at == Some(r.stats.frames) {
+                    r.renderer.wait_idle();
+                    println!("still at frame {}", r.stats.frames);
+                    std::thread::sleep(Duration::from_secs(8));
+                }
+                // GPU timings count from the 20th frame, past the match's
+                // first uploads.
+                if r.opts_gpu_times && r.stats.frames == GPU_TIMES_FROM {
+                    r.renderer.reset_gpu_times();
+                }
                 if limit.is_some_and(|n| r.stats.frames >= n) {
                     // Log what the driver said about the last frame too: the
                     // smoke run fails on any GPU error in the log.
                     r.check_devices();
+                    if r.opts_gpu_times {
+                        r.print_gpu_times();
+                    }
                     r.memory_timeline.mark("exit");
                     r.print_hidden_window_check();
                     println!("{}", r.stats_line());
@@ -2689,6 +2741,13 @@ impl ApplicationHandler for App {
                 }
                 _ => {
                     r.resume_at = None;
+                    // Settings' frame cap: wait out the rest of the frame
+                    // rather than draw frames nobody asked for.
+                    if let Some(due) = r.frame_due.filter(|&due| Instant::now() < due) {
+                        r.resume_at = Some(due);
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(due));
+                        return;
+                    }
                     event_loop.set_control_flow(ControlFlow::Poll);
                     r.window.request_redraw();
                 }
@@ -2712,6 +2771,58 @@ impl Running {
             before: gc_platform::memory::process_memory().current,
             halfway: None,
         });
+    }
+
+    /// When the frame after one starting `now` may start, under Settings'
+    /// frame cap (30, 60 or 120 a second, or none): a frame drawn faster than
+    /// the cap only heats the GPU. `None` when uncapped, or when V-sync on a
+    /// screen no faster than the cap already holds the frames to it. Each
+    /// frame is due a whole period after the last was, so oversleeping does
+    /// not drift the rate down; a frame later than that starts the count
+    /// again from now.
+    fn next_frame_due(&self, now: Instant) -> Option<Instant> {
+        let settings = self.menu.settings();
+        let cap = u32::from(settings.frame_cap);
+        if cap == 0 || self.opts_gpu_times {
+            return None;
+        }
+        let refresh = (self.window.current_monitor())
+            .and_then(|m| m.refresh_rate_millihertz())
+            .map_or(0, |mhz| mhz.div_ceil(1000));
+        if settings.vsync && refresh > 0 && refresh <= cap + 1 {
+            return None;
+        }
+        let period = Duration::from_secs(1) / cap;
+        Some(match self.frame_due {
+            Some(due) if now < due + period => due + period,
+            _ => now + period,
+        })
+    }
+
+    /// `--gpu-times`: each pass's average GPU time, at exit.
+    fn print_gpu_times(&self) {
+        let info = self.renderer.adapter_info();
+        match self.renderer.gpu_times() {
+            Some(t) => {
+                let rs = self.renderer.stats();
+                let size = self.window.inner_size();
+                println!(
+                    "gpu times on {} via {:?}, {}x{}: {} draw calls, {} soldiers, {} scenery, {}k triangles",
+                    info.name,
+                    info.backend,
+                    size.width,
+                    size.height,
+                    rs.draw_calls,
+                    rs.soldiers_drawn,
+                    rs.scenery_drawn,
+                    rs.triangles / 1000
+                );
+                for line in t.lines() {
+                    println!("{line}");
+                }
+            }
+            None => println!("gpu times: this GPU cannot time passes"),
+        }
     }
 
     fn print_hidden_window_check(&self) {
@@ -4212,6 +4323,9 @@ impl Running {
         }
         let dt = gap.min(Duration::from_millis(250));
         self.last_frame = now;
+        self.frame_due = self.next_frame_due(now);
+        let vsync = self.menu.settings().vsync;
+        self.renderer.set_vsync(vsync);
         self.update_camera(dt.as_secs_f32());
         self.stage_siege();
         self.stage_gate_march();
@@ -4256,7 +4370,19 @@ impl Running {
                 }
             }
         }
-        while self.sim_clock >= TICK && ticks_this_frame < MAX_TICKS_PER_FRAME {
+        let mut max_ticks = MAX_TICKS_PER_FRAME;
+        if let Some(until) = self.play_from.filter(|_| {
+            self.match_started && !self.menu_open && self.watching.is_none() && self.online.is_none()
+        }) {
+            let left = until.saturating_sub(self.world.tick_count());
+            max_ticks = left.min(PLAY_FROM_TICKS_PER_FRAME);
+            self.sim_clock = TICK * max_ticks;
+            if left <= PLAY_FROM_TICKS_PER_FRAME {
+                self.play_from = None;
+                self.director.start(&self.camera);
+            }
+        }
+        while self.sim_clock >= TICK && ticks_this_frame < max_ticks {
             self.sim_clock -= TICK;
             self.pending.clear();
             let tick = self.world.tick_count();
@@ -4328,6 +4454,11 @@ impl Running {
         // texels on what is near it.
         self.renderer
             .set_shadow_range(self.ride.is_some().then_some(camera::RIDE_SHADOW_RANGE));
+
+        // The bottom bar hides the field's foot: the world under it is
+        // left undrawn.
+        let covered = self.hud_cover();
+        self.renderer.set_covered(covered);
 
         self.instances.clear();
         self.boxed.clear();
@@ -5591,7 +5722,10 @@ impl Running {
         let frame = FrameParams {
             view_proj,
             camera_pos: eye,
-            time_seconds: self.started.elapsed().as_secs_f32(),
+            time_seconds: match self.still_at {
+                Some(_) => self.stats.frames as f32 / 30.0,
+                None => self.started.elapsed().as_secs_f32(),
+            },
         };
         let outcome = {
             profile::zone!("render");
@@ -7943,6 +8077,12 @@ impl Running {
             String::new()
         };
         let info = self.renderer.adapter_info();
+        let gpu_times = self.renderer.gpu_times().map_or(String::new(), |t| {
+            let parts: Vec<String> = (t.parts.iter())
+                .map(|(name, ms)| format!("{name} {ms:.2}"))
+                .collect();
+            format!("\ngpu ms  {:.2} a frame: {}", t.total, parts.join("  "))
+        });
         let text = format!(
             "GRUBCRAFT DEV OVERLAY                          ` or F11 hides\n\
              frame   {fps:5.0} fps   {frame_avg:6.2} ms avg   {:6.2} ms worst\n\
@@ -7955,7 +8095,7 @@ impl Running {
              heap    {}\n\
              data    {}\n\
              audio   {}\n\
-             gpu     {} via {:?}",
+             gpu     {} via {:?}{gpu_times}",
             ms(self.stats.frame_max),
             self.world.tick_count(),
             ms(self.stats.tick_max),

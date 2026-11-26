@@ -333,12 +333,28 @@ impl PostGpu {
     }
 
     /// Build the glow chain from the drawn HDR image. Returns the passes run.
-    pub fn glow(&self, encoder: &mut wgpu::CommandEncoder, t: &PostTargets) -> u32 {
-        let pass = |encoder: &mut wgpu::CommandEncoder,
-                    pipeline: &wgpu::RenderPipeline,
-                    from: &wgpu::BindGroup,
-                    to: &wgpu::TextureView,
-                    load| {
+    pub fn glow(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        t: &PostTargets,
+        timer: Option<&mut crate::timing::GpuTimer>,
+    ) -> u32 {
+        // The chain is timed as one: from the start of its first pass to the
+        // end of its last.
+        let passes = (t.levels.len() * 2).saturating_sub(1);
+        let span = timer.and_then(|timer| timer.span("glow"));
+        let mut index = 0;
+        let mut pass = |encoder: &mut wgpu::CommandEncoder,
+                        pipeline: &wgpu::RenderPipeline,
+                        from: &wgpu::BindGroup,
+                        to: &wgpu::TextureView,
+                        load| {
+            let timestamp_writes = span.map(|(set, first, last)| wgpu::RenderPassTimestampWrites {
+                query_set: set,
+                beginning_of_pass_write_index: (index == 0).then_some(first),
+                end_of_pass_write_index: (index + 1 == passes).then_some(last),
+            });
+            index += 1;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("glow"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -351,7 +367,9 @@ impl PostGpu {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: timestamp_writes.filter(|w| {
+                    w.beginning_of_pass_write_index.is_some() || w.end_of_pass_write_index.is_some()
+                }),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });

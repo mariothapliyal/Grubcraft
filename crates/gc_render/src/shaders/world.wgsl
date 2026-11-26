@@ -138,6 +138,10 @@ fn ghost_shade(clip: vec4<f32>, n: vec3<f32>, world: vec3<f32>, tint: vec3<f32>)
 // level alone. Read without a sampler, so every stage can (soldiers are
 // stood in a compute pass).
 @group(0) @binding(19) var river_map: texture_2d<f32>;
+// The ground's slope at each height sample: the height a sample before less
+// the one after, across and down, in tiles (`ground_slopes` in lib.rs).
+// Filtered, it gives the smooth ground's normal from one sample.
+@group(0) @binding(20) var ground_slope: texture_2d<f32>;
 
 fn river_texel(p: vec2<i32>) -> vec2<f32> {
     let size = vec2<i32>(textureDimensions(river_map));
@@ -1112,13 +1116,12 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let hz = relief_at(pz, height_at(pz), cliff_weight(pz), mass, warp, relief_parts(pz));
         n = normalize(vec3<f32>(ground - hx, e, ground - hz));
     } else {
-        // Smooth ground keeps its old normal.
+        // Smooth ground: the height a sample to either side, differenced,
+        // from the slope map (the same as four bilinear heights).
         let e = 1.0 / g.map.x;
-        let hl = height_at(xz - vec2<f32>(e, 0.0));
-        let hr = height_at(xz + vec2<f32>(e, 0.0));
-        let hu = height_at(xz - vec2<f32>(0.0, e));
-        let hd = height_at(xz + vec2<f32>(0.0, e));
-        n = normalize(vec3<f32>(hl - hr, 2.0 * e, hu - hd));
+        let size = vec2<f32>(textureDimensions(ground_slope));
+        let d = textureSampleLevel(ground_slope, soft_sampler, (xz * g.map.x + 0.5) / size, 0.0).xy;
+        n = normalize(vec3<f32>(d.x, 2.0 * e, d.y));
     }
     let h = h0 / g.map.y;
     let slope = 1.0 - n.y;

@@ -23,6 +23,7 @@ mod scenery;
 mod shadows;
 mod soldiers;
 mod surface;
+mod timing;
 mod upload;
 
 use std::num::NonZeroU64;
@@ -71,6 +72,7 @@ pub use look::{KNOBS, Knob, LandAir, Look, LookPreset, Weather};
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
 pub use particles::{MAX_PARTICLES, Particle, Shape, flags as particle_flags};
 pub use post::Cinema;
+pub use timing::GpuTimes;
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
 pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
@@ -192,6 +194,15 @@ pub const GROUND_STRAW: u8 = 9;
 pub const GROUND_LITTER: u8 = 10;
 pub const GROUND_BONE: u8 = 11;
 pub const GROUND_MOSS: u8 = 12;
+
+/// The most of the window's height [`Renderer::set_covered`] takes as
+/// covered.
+const MAX_COVERED: f32 = 0.9;
+/// How much less than the covered share the world pass leaves undrawn, as a
+/// share of the window's height: the screen shake moves the picture by up to
+/// 0.7% and zooms it by up to 1.4%, and the tilt-shift blur and the glow
+/// read a few texels past what shows.
+const COVER_MARGIN: f32 = 0.03;
 
 /// How the renderer is set up. The draw switches exist to measure what each
 /// part of the frame costs on real machines.
@@ -447,6 +458,13 @@ pub struct Renderer {
     /// Skip every frame as a hidden window does (see
     /// [`Renderer::pretend_hidden`]).
     hidden: bool,
+    /// GPU timings per pass, where the GPU can take them; written only
+    /// while `timing` is on (see [`Renderer::set_gpu_timing`]).
+    timer: Option<timing::GpuTimer>,
+    timing: bool,
+    /// The share of the window's height that opaque interface covers at its
+    /// foot (see [`Renderer::set_covered`]).
+    covered: f32,
 }
 
 /// How many driver messages are kept between two looks at them, and how
@@ -561,7 +579,8 @@ impl Renderer {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("grubcraft"),
-                required_features: adapter.features() & wanted,
+                required_features: (adapter.features() & wanted)
+                    | timing::GpuTimer::features(adapter.features()),
                 required_limits: wgpu::Limits {
                     // Soldier and building materials take three layers
                     // each: ask for all the GPU has (2,048 on every desktop
@@ -847,6 +866,16 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 20,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1034,6 +1063,7 @@ impl Renderer {
         let overlay = make_overlay(&device, &queue, format, MAX_OVERLAY_CHARS);
         let ui = make_overlay(&device, &queue, format, MAX_UI_QUADS);
         let adapter_info = adapter.get_info();
+        let timer = timing::GpuTimer::new(&device, &queue);
         let world_targets = make_world_targets(
             &device,
             &config,
@@ -1106,6 +1136,9 @@ impl Renderer {
             last_frame_time: None,
             ui,
             hidden: false,
+            timer,
+            timing: false,
+            covered: 0.0,
         })
     }
 
@@ -1171,12 +1204,52 @@ impl Renderer {
 
     /// What a frame seen through `view_proj` will draw, for [`Cull::sees`].
     pub fn cull(&self, view_proj: Mat4) -> Cull {
+        let seen = self.seen(view_proj);
         let sun = self
             .terrain
             .as_ref()
-            .and_then(|t| self.sun_view(view_proj, t))
+            .and_then(|t| self.sun_view(seen, t))
             .map(|(m, _)| m);
-        Cull::new(view_proj, sun)
+        Cull::new(seen, sun)
+    }
+
+    /// Tell the renderer that opaque interface (the match's bottom bar)
+    /// covers this share of the window's height at its foot, from the next
+    /// [`Renderer::cull`] on: the world under it is neither drawn nor shaded,
+    /// nothing only it would show is drawn, and the sun's shadow map covers
+    /// only the ground left in view (so its texels are finer). 0 for none.
+    pub fn set_covered(&mut self, share: f32) {
+        self.covered = if share.is_finite() && std::env::var_os("GC_NO_COVER").is_none() {
+            share.clamp(0.0, MAX_COVERED)
+        } else {
+            0.0
+        };
+    }
+
+    /// The part of `view_proj`'s view that is drawn: its foot cut off where
+    /// the interface covers it (less a margin for the screen shake and the
+    /// picture's blurs, which read a little past what shows), as a view whose
+    /// clip space spans just that part. The view itself when nothing covers it.
+    fn seen(&self, view_proj: Mat4) -> Mat4 {
+        let cut = (self.covered - COVER_MARGIN).max(0.0);
+        if cut <= 0.0 {
+            return view_proj;
+        }
+        // Clip-space y runs from -1 at the window's foot to 1 at its top;
+        // the drawn part starts at `low`. Stretch it to fill -1 to 1.
+        let low = -1.0 + 2.0 * cut;
+        let a = 2.0 / (1.0 - low);
+        let b = -(1.0 + low) / (1.0 - low);
+        let stretch = Mat4::from_cols(Vec4::X, Vec4::new(0.0, a, 0.0, 0.0), Vec4::Z, Vec4::new(0.0, b, 0.0, 1.0));
+        stretch * view_proj
+    }
+
+    /// The rows of the frame the world pass draws, from the top: all but
+    /// what [`Renderer::seen`] cuts off.
+    fn drawn_rows(&self) -> u32 {
+        let cut = (self.covered - COVER_MARGIN).max(0.0);
+        let h = self.config.height;
+        ((h as f32 * (1.0 - cut)).ceil() as u32).clamp(1, h)
     }
 
     /// The sun's view and projection, and the size of one shadow texel in
@@ -1355,6 +1428,30 @@ impl Renderer {
             },
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // The ground's slope at each height sample, for its normal (see
+        // `ground_slopes`).
+        let slope_map = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ground slope"),
+            size: wgpu::Extent3d {
+                width: t.size,
+                height: t.size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rg16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        Self::write_tile_map(
+            &self.queue,
+            &slope_map,
+            t.size,
+            4,
+            bytemuck::cast_slice(&ground_slopes(t.heights, t.size, t.max_height)),
+        );
+        let slope_view = slope_map.create_view(&wgpu::TextureViewDescriptor::default());
         // The ground tint; a single clear texel when there is none, which the
         // shader reads as "plain palette".
         let (tint_side, tint): (u32, &[[u8; 4]]) = if t.tint.is_empty() {
@@ -1541,6 +1638,10 @@ impl Renderer {
                         binding: 19,
                         resource: wgpu::BindingResource::TextureView(&river_view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 20,
+                        resource: wgpu::BindingResource::TextureView(&slope_view),
+                    },
                 ],
             })
         };
@@ -1562,7 +1663,7 @@ impl Renderer {
         self.visible_chunks = ChunkList::with_capacity(chunk_count as usize);
         self.sun_chunks = ChunkList::with_capacity(chunk_count as usize);
         self.chunk_levels = vec![0; chunk_count as usize];
-        self.terrain_gpu_bytes = t.heights.len() as u64 * 2
+        self.terrain_gpu_bytes = t.heights.len() as u64 * (2 + 4)
             + u64::from(tint_side * tint_side) * 4
             + u64::from(tiles * tiles) * (1 + 4 + 4 + 4)
             + u64::from(look_side * look_side) * 4
@@ -1778,6 +1879,44 @@ impl Renderer {
         self.hidden = hidden;
     }
 
+    /// Wait for the screen's refresh before showing each frame (on), or
+    /// show it as soon as it is drawn (off; tearing where the system allows
+    /// it). Settings' V-sync.
+    pub fn set_vsync(&mut self, on: bool) {
+        let mode = if on {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+        if self.config.present_mode != mode {
+            self.config.present_mode = mode;
+            self.surface.configure(&self.device, &self.config);
+        }
+    }
+
+    /// Time each pass of the frame on the GPU, where it can be (the dev
+    /// overlay and `--gpu-times`). Turning it on starts the averages afresh.
+    pub fn set_gpu_timing(&mut self, on: bool) {
+        if on && !self.timing
+            && let Some(t) = &mut self.timer
+        {
+            t.reset();
+        }
+        self.timing = on;
+    }
+
+    /// The average GPU time of each pass since timing was turned on (or
+    /// `reset_gpu_times`); `None` where the GPU cannot time passes.
+    pub fn gpu_times(&self) -> Option<GpuTimes> {
+        self.timer.as_ref().map(timing::GpuTimer::times)
+    }
+
+    pub fn reset_gpu_times(&mut self) {
+        if let Some(t) = &mut self.timer {
+            t.reset();
+        }
+    }
+
     /// Draw a frame: the terrain, `soldiers` drawn by `batches` (each names
     /// a model and a run of `soldiers`), and `boxes`.
     pub fn render(
@@ -1825,7 +1964,7 @@ impl Renderer {
         let haze = look.hdr(look.haze);
         let shadows = self.options.shadows;
         let (sun_view_proj, texel) = self
-            .sun_view(frame.view_proj, terrain)
+            .sun_view(self.seen(frame.view_proj), terrain)
             .unwrap_or((Mat4::IDENTITY, 0.0));
         let mut globals = Globals {
             view_proj: frame.view_proj.to_cols_array_2d(),
@@ -1893,7 +2032,7 @@ impl Renderer {
         // Pick each chunk's level of detail from its distance to the eye,
         // then frustum-cull on the CPU and upload only the visible chunks:
         // those the camera sees, then those the sun sees.
-        let planes = frustum_planes(frame.view_proj);
+        let planes = frustum_planes(self.seen(frame.view_proj));
         let sun_planes = frustum_planes(sun_view_proj);
         let n = terrain.chunks_per_side;
         let size = CHUNK_TILES as f32;
@@ -1996,6 +2135,11 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame"),
             });
+        // Taken out for the frame, so the passes below can write to it.
+        let mut timer = if self.timing { self.timer.take() } else { None };
+        if let Some(t) = &mut timer {
+            t.begin();
+        }
         let mut draw_calls = 0;
         let draw_boxes = |pass: &mut wgpu::RenderPass<'_>, pipeline| {
             if boxes.is_empty() {
@@ -2038,7 +2182,8 @@ impl Renderer {
         };
         // Pose the soldiers once for both passes below.
         if !bare {
-            self.soldiers.skin(&mut encoder, &terrain.bind_group);
+            self.soldiers
+                .skin(&mut encoder, &terrain.bind_group, timer.as_mut());
         }
         if shadows && !bare {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2052,7 +2197,7 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: timer.as_mut().and_then(|t| t.render_pass("shadow")),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -2096,12 +2241,23 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: timer.as_mut().and_then(|t| t.render_pass("world")),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            let mut split = |pass: &mut wgpu::RenderPass<'_>, name| {
+                if let Some(t) = &mut timer {
+                    t.split(pass, name);
+                }
+            };
+            // Nothing under the bottom bar is shaded.
+            let rows = self.drawn_rows();
+            if rows < self.config.height {
+                pass.set_scissor_rect(0, 0, self.config.width, rows);
+            }
             pass.set_bind_group(0, &terrain.bind_group, &[]);
             draw_calls += draw_terrain(&mut pass, false);
+            split(&mut pass, "world/terrain");
             let (calls, scenery_instances, scenery_tris) = if self.options.draw_blocks {
                 self.scenery.draw(&mut pass, false)
             } else {
@@ -2109,20 +2265,26 @@ impl Renderer {
             };
             draw_calls += calls;
             scenery_drawn = scenery_instances;
+            split(&mut pass, "world/scenery");
             let (calls, drawn, tris) = self.soldiers.draw(&mut pass, false);
             draw_calls += calls;
             soldiers_drawn = drawn;
             triangles = tris + scenery_tris;
+            split(&mut pass, "world/soldiers");
             draw_calls += draw_boxes(&mut pass, &self.block_pipeline);
             draw_calls += self.soldiers.draw_contacts(&mut pass);
             // The sky last, at the far plane: only pixels nothing covered.
             pass.set_pipeline(&self.sky_pipeline);
             pass.draw(0..3, 0..1);
             draw_calls += 1;
+            split(&mut pass, "world/boxes+sky");
             // Particles over the finished world and sky.
             draw_calls += self.particles.draw(&mut pass);
+            split(&mut pass, "world/particles");
             drop(pass);
-            draw_calls += self.post.glow(&mut encoder, &self.post_targets);
+            draw_calls += self
+                .post
+                .glow(&mut encoder, &self.post_targets, timer.as_mut());
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2144,7 +2306,7 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: timer.as_mut().and_then(|t| t.render_pass("screen")),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -2169,8 +2331,15 @@ impl Renderer {
                 draw_calls += 1;
             }
         }
+        if let Some(t) = &mut timer {
+            t.resolve(&mut encoder);
+        }
         self.queue.submit([encoder.finish()]);
         self.queue.present(surface_texture);
+        if let Some(mut t) = timer {
+            t.after_submit(&self.device);
+            self.timer = Some(t);
+        }
         if reconfigure {
             self.surface.configure(&self.device, &self.config);
         }
@@ -2187,6 +2356,31 @@ impl Renderer {
         };
         FrameOutcome::Presented
     }
+}
+
+/// The ground's slope at each of the `size` x `size` `heights` (row by row,
+/// 0 to 65,535 for 0 to `max_height` tiles), as half floats: the height one
+/// sample before less the one after, in tiles, across (x) and down (z), the
+/// edge sample standing in for those past the edge. Sampled with bilinear
+/// filtering it is exactly what the terrain shader got from four bilinear
+/// heights for its normal (bilinear filtering and a whole-sample step
+/// commute), from one sample instead of sixteen.
+fn ground_slopes(heights: &[u16], size: u32, max_height: f32) -> Vec<[u16; 2]> {
+    let n = size as usize;
+    let scale = max_height / 65535.0;
+    let h = |x: usize, z: usize| f32::from(heights[z * n + x]) * scale;
+    let mut out = Vec::with_capacity(n * n);
+    for z in 0..n {
+        let (up, down) = (z.saturating_sub(1), (z + 1).min(n - 1));
+        for x in 0..n {
+            let (left, right) = (x.saturating_sub(1), (x + 1).min(n - 1));
+            out.push([
+                gc_assets::model::f16_bits(h(left, z) - h(right, z)),
+                gc_assets::model::f16_bits(h(x, up) - h(x, down)),
+            ]);
+        }
+    }
+    out
 }
 
 /// Each tile's own water level over the map's `line`, in tiles, from
@@ -2683,6 +2877,48 @@ fn srgb_to_linear(c: f32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The slope map, filtered, gives the smooth ground's normal as the
+    /// terrain shader used to work it out: from the bilinear height a sample
+    /// to either side (edge samples standing in past the edge).
+    #[test]
+    fn filtered_slopes_match_differenced_bilinear_heights() {
+        let size = 9usize;
+        let max_height = 12.0;
+        let heights: Vec<u16> = (0..size * size)
+            .map(|i| ((i * 7919 + (i / size) * 104_729) % 65_536) as u16)
+            .collect();
+        let slopes = ground_slopes(&heights, size as u32, max_height);
+        let sample = |x: i32, z: i32| {
+            let c = |v: i32| v.clamp(0, size as i32 - 1) as usize;
+            f32::from(heights[c(z) * size + c(x)]) * max_height / 65535.0
+        };
+        let bilinear = |f: &dyn Fn(i32, i32) -> f32, s: [f32; 2]| {
+            let (i, j) = (s[0].floor() as i32, s[1].floor() as i32);
+            let (fx, fz) = (s[0].fract(), s[1].fract());
+            let top = f(i, j) * (1.0 - fx) + f(i + 1, j) * fx;
+            let bottom = f(i, j + 1) * (1.0 - fx) + f(i + 1, j + 1) * fx;
+            top * (1.0 - fz) + bottom * fz
+        };
+        let slopes = &slopes;
+        let slope = |k: usize| {
+            move |x: i32, z: i32| {
+                let c = |v: i32| v.clamp(0, size as i32 - 1) as usize;
+                gc_assets::model::f16_value(slopes[c(z) * size + c(x)][k])
+            }
+        };
+        for s in [[0.0, 0.0], [3.25, 4.5], [7.9, 0.1], [8.0, 8.0], [5.5, 2.75]] {
+            let height = |x, z| sample(x, z);
+            let across = bilinear(&height, [s[0] - 1.0, s[1]]) - bilinear(&height, [s[0] + 1.0, s[1]]);
+            let down = bilinear(&height, [s[0], s[1] - 1.0]) - bilinear(&height, [s[0], s[1] + 1.0]);
+            let (sx, sz) = (slope(0), slope(1));
+            // Half floats keep 11 bits: each slope is within 1/2048 of
+            // itself, so a blend of them within that of the steepest.
+            let near = |a: f32, b: f32| (a - b).abs() <= 2.0 * max_height / 2048.0;
+            assert!(near(bilinear(&sx, s), across), "{s:?}: {} vs {across}", bilinear(&sx, s));
+            assert!(near(bilinear(&sz, s), down), "{s:?}: {} vs {down}", bilinear(&sz, s));
+        }
+    }
 
     #[test]
     fn half_floats_match_the_standard() {
