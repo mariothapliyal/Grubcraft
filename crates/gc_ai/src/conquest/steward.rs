@@ -1531,9 +1531,7 @@ impl Steward {
     /// to order another ([`Strategy::train_gap`]).
     fn spacing(&self, s: &Sense, h: StructureHandle) -> bool {
         let gap = s.plan.train_gap;
-        gap > 0
-            && (self.trained.iter())
-                .any(|&(b, at)| b == h && s.now < at.saturating_add(gap))
+        gap > 0 && (self.trained.iter()).any(|&(b, at)| b == h && s.now < at.saturating_add(gap))
     }
 
     /// Whether it must build up its army before anything else: for a level
