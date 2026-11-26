@@ -121,7 +121,7 @@ mod tests {
     fn a_gpu_that_falls_behind_draws_the_world_smaller_but_not_below_the_floor() {
         let mut r = AutoResolution::default();
         let first = r.update(20.0, 16.7, BALANCED);
-        assert!(first < 1.0 && first >= 0.85, "{first}");
+        assert!((0.85..1.0).contains(&first), "{first}");
         for _ in 0..20 {
             r.update(40.0, 16.7, BALANCED);
         }

@@ -267,7 +267,7 @@ impl GpuTimer {
 
     /// The averages since the last `reset`.
     pub fn times(&self) -> GpuTimes {
-        let n = self.totals.frames.max(1) as f64;
+        let n = f64::from(self.totals.frames.max(1));
         let parts: Vec<(&'static str, f32)> = self
             .totals
             .ms
