@@ -1817,14 +1817,14 @@ impl<N: Network> Menu<N> {
             note_y,
             1,
             theme::INK_MUTED,
-            "Working: name, colour, faction, UI scale, Clarity, Tilt-shift, Full blood, shake, Master, Music.",
+            "Graphics: High is always sharp; Balanced eases resolution only if the GPU lags.",
         );
         ui.label(
             panel.x + 24,
             note_y + 16,
             1,
             theme::INK_MUTED,
-            "The other audio, graphics and accessibility choices are saved for later.",
+            "Not working yet: Effects, Unit voices, Interface, palette, banners, hints.",
         );
         let back = Rect::new(panel.x + 24, panel.bottom() - 52, 140, 44);
         let done = ui.button(back, "Back", ButtonStyle::Primary, true);

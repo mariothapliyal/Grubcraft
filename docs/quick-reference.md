@@ -72,7 +72,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 **Command-line flags** [crates/gc_game/src/main.rs]
 - `--sandbox`; `--conquest ribcage_pass|four_teeth|land-random|land-mixed|...`; `--battle recruit|veteran|general|warlord` (`--players 3` for a three-way free-for-all, 2 to 6); `--host`; `--join ADDRESS`; `--password PW`; `--menu`/`--no-menu`; `--map NAME-or-FILE`; `--seed N`.
 - `--showroom all|buildings|NAME[,NAME]`; `--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel`; `--viewer NAME|start`; `--siege`; `--gate-march N` (a regiment through each gate, looking at the Nth); `--bridge-scene` (a Conquest match with a two-lane Timber Bridge over the nearest crossing from your start and a regiment marching over it); `--watch REPLAY`.
-- Look and display: `--time-of-day`, `--sky`, `--look`, `--weather`, `--air`, `--no-audio`, `--no-shadows`, `--no-aa`, `--no-glow`, `--draw`, `--lod`, `--render-scale`, `--latency`, `--overlay`.
+- Look and display: `--time-of-day`, `--sky`, `--look`, `--weather`, `--air`, `--no-audio`, `--no-shadows`, `--no-aa`, `--no-glow`, `--draw`, `--lod`, `--render-scale`, `--world-scale 0.5..1` (fix the 3D world's resolution), `--gpu-times` (with `--frames`: each pass's GPU time at exit), `--latency`, `--overlay`.
 
 **Network battles** (match kit)
 - `Enter` chats to your team, `Shift+Enter` to everyone; `Tab` switches while typing, `Enter` sends, `Esc` closes. Lines are cut at 120 characters; the last six show at the lower left for 10 s. While the box is open no hotkey fires. With the wall tool armed, `Enter` is still the ring's close key.
@@ -201,6 +201,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
   - Points budget 2,000, 4,000 (default) or 8,000. A regiment costs 3 points a Grub and 6 a Marrow of its roster price, times its faction's Field share: Clans 100%, Brood 128%, Choir 78%, Concord 110% (Yari Ashigaru 360). Build your army in the lobby (Pick for me is available). 90 s deployment, then Ready. The first side left holding the field (fighting regiments, no enemy fighting regiments in its sight) for 10 seconds wins (`gc_sim/src/verdict.rs`); there is no time limit or victory points yet. Champions before battle is on by default.
 - **Sandbox:** main menu Sandbox or `--sandbox`. Place any troops and buildings for any side (section 1).
 - **Online:** Host a game (map, mode, Tempo, victory), add AI in any slot, then Start. Join lists games on your network, or type (or paste, Cmd+V or Ctrl+V) an address or join code; the host's lobby has a **Copy** button for the code to send friends. Version mismatches are shown in the lobby. A player who drops: with On drop Wait the match pauses up to 90 s (host P carries on); once it plays on without them, the host's computer (General) plays their side until they rejoin and catch up, then hands it back (`gc_match::cover`). To rejoin: Play, then **Rejoin** (the last game joined; type the password again if it had one); a "Rejoining: catching up, N%" banner shows until caught up.
+- **Settings, graphics** [docs/12-performance.md#gpu-work]: the **Graphics** preset sets how the 3D world's resolution is chosen (the interface is always sharp). **High**: always full resolution. **Balanced** (default): full resolution while the GPU keeps up with the frame rate; only while it cannot, the world is drawn smaller (down to 70%) and sharpened as it is scaled up, so integrated graphics keep a steady frame rate. **Battery**: keeps the GPU about half idle, down to 50%. The preset also thins dust, sparks and smoke (all, three quarters, a third). **Frame cap** (30, 60 default, 120, Off) and **V-sync** work since 2026-11-26: a 120 Hz screen draws 60 frames a second at the default cap, half the GPU work.
 - **Replays:** main menu. **Unit viewer:** main menu or `--viewer`. **Guide:** `U` or main-menu button (Quick Start, Buildings, Troops tabs).
 
 ## 8. Built vs not yet built
@@ -226,7 +227,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - Parley panel (planned, M4). Campaign (planned, after M4). Co-op Siege, Naval maps, King of the Corpse (later). Drowned Tide and Feathered Republic (set aside).
 - Tutorial "First Harvest", faction primers, Codex, contextual hints.
 - Ping wheel, text chat, key rebinding, alternate grid layouts.
-- Settings saved but not acted on: V-sync, frame cap, effects, unit voices, interface volumes, colour-blind palette, high-contrast banners, hints, most of the graphics preset.
+- Settings saved but not acted on: effects, unit voices, interface volumes, colour-blind palette, high-contrast banners, hints.
 - World: fire spreading to buildings, computer players planning for seasons, the Highland's own snowy weather (its peaks already show lying snow, as a look only).
 - Commander: a command to move the general to another regiment.
 

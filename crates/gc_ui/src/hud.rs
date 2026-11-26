@@ -730,7 +730,13 @@ impl Hud {
     ) {
         let layout = HudLayout::new(screen);
         self.tip = None;
-        draw.rect(layout.bar, theme::LINEN);
+        // A pixel past the foot: where the UI scale does not divide the
+        // window's height, the rows below the last whole UI pixel would show
+        // the screen's clear colour, as the world is not drawn under the bar.
+        draw.rect(
+            Rect::new(layout.bar.x, layout.bar.y, layout.bar.w, layout.bar.h + 1),
+            theme::LINEN,
+        );
         draw.rect(Rect::new(0, layout.bar.y, layout.bar.w, 3), theme::INK);
         draw.stitch_row(0, layout.bar.y + 5, layout.bar.w, 2);
         self.minimap(draw, &layout, input, &data.minimap, events);

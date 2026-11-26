@@ -692,6 +692,22 @@ impl Running {
         })
     }
 
+    /// Whether the HUD is drawn this frame (rather than the guide, the
+    /// menu or nothing).
+    pub fn hud_drawn(&self) -> bool {
+        self.guide.is_none() && !self.menu_open && self.match_started && self.showroom.is_none()
+    }
+
+    /// The share of the window's height the HUD's opaque bottom bar covers
+    /// this frame, 0 when it is not drawn.
+    pub fn hud_cover(&self) -> f32 {
+        let (screen, _) = self.ui_screen();
+        if !self.hud_drawn() || screen.1 <= 0 {
+            return 0.0;
+        }
+        gc_ui::hud::HudLayout::new(screen).bar.h as f32 / screen.1 as f32
+    }
+
     /// Whether a mouse click now belongs to the HUD, not the battlefield.
     pub fn hud_wants_mouse(&self) -> bool {
         self.match_started
