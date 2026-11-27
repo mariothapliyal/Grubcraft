@@ -3370,7 +3370,7 @@ impl World {
             // One a brigade steers has not arrived when it gets to the
             // point it was given to walk at: its brigade sends it on
             // (see `Brigades::step`).
-            let led = self.brigades.steers(i);
+            let led = self.brigades.steers(regs, i);
             if let Some(hunt) = plan.hunt {
                 // A beaten foe is left to run.
                 if let Some(t) = regs.attack_target[i]
@@ -3440,7 +3440,8 @@ impl World {
             orders::Step::Move {
                 brigade, target, ..
             } if brigade != 0 => {
-                let ahead = (self.brigades.heading(i)).unwrap_or((target - here).normalized());
+                let ahead =
+                    (self.brigades.heading(regs, i)).unwrap_or((target - here).normalized());
                 (ahead != FxVec2::ZERO).then_some((ahead, brigade))
             }
             _ => None,
@@ -4107,7 +4108,7 @@ impl World {
     /// last of them.
     pub fn route(&self, h: RegimentHandle) -> &[FxVec2] {
         match self.regiments.resolve(h) {
-            Some(i) => match self.brigades.way(i) {
+            Some(i) => match self.brigades.way(&self.regiments, i) {
                 Some(way) => way,
                 None => self.nav.route_ahead(i, self.regiments.target[i]),
             },
@@ -4120,7 +4121,7 @@ impl World {
     /// has nowhere to go.
     pub fn goal(&self, h: RegimentHandle) -> Option<FxVec2> {
         let i = self.regiments.resolve(h)?;
-        match self.brigades.of(i) {
+        match self.brigades.of(&self.regiments, i) {
             Some((_, end)) => Some(end),
             None => self.regiments.target[i],
         }

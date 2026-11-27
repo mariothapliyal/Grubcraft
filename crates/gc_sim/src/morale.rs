@@ -496,11 +496,20 @@ fn rout(
     regs.attack_target[i] = None;
     regs.target_facing[i] = None;
     regs.charge[i] = 0;
-    // Running men keep no ranks, stand fast for nobody and step back for
-    // nobody; on rallying they form up as wide as when raised.
+    // Running men keep no ranks, set no points against a charge, stand
+    // fast for nobody and step back for nobody; on rallying they form up
+    // as wide as when raised. Their spears are down from this tick, so a
+    // charge arriving next tick runs them down rather than onto braced
+    // points (`Combat::before_move` only clears it when it reaches them).
     regs.break_formation(i, files);
+    regs.braced[i] = false;
     regs.hold[i] = false;
     regs.backing[i] = 0;
+    // Nor do they keep the place they stood aside from for marching
+    // friends (see `Combat::make_way`): rallied, they would walk back
+    // to it unbidden, often towards the fight that broke them.
+    regs.home[i] = None;
+    regs.way_wait[i] = 0;
     regs.pace[i] = Fx::from_raw(regs.speed[i].raw() * ROUT_PACE_PERCENT / 100);
     // A march is for regiments that take orders.
     regs.march_left[i] = 0;
@@ -614,4 +623,84 @@ fn flee(
     }
     regs.target[i] = (target != p).then_some(target);
     regs.target_facing[i] = None;
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    use gc_fixed::FxVec2;
+
+    use super::rout;
+    use crate::nav::CELLS_PER_TILE;
+    use crate::scenario::{DRILL_UNITS, NORTH};
+    use crate::{Capacities, Command, Ground, MatchSetup, PlayerCommand, RegimentHandle, World};
+
+    const MAP: u32 = 128;
+
+    fn world() -> World {
+        let side = (MAP as usize) * CELLS_PER_TILE as usize;
+        let nav = vec![1u8; side * side];
+        World::new(&MatchSetup {
+            seed: 3,
+            capacities: Capacities { regiments: 16 },
+            units: &DRILL_UNITS,
+            map_tiles: MAP,
+            nav: &nav,
+            teams: &[],
+            ground: Ground::FLAT,
+            champions: false,
+            sky: crate::Sky::STILL,
+            generals: false,
+        })
+    }
+
+    fn spawn(w: &mut World, player: u8, x: i32, y: i32) -> RegimentHandle {
+        let before: Vec<_> = w.regiments.iter().map(|r| r.handle).collect();
+        let command = Command::SpawnRegiment {
+            unit: 0,
+            position: FxVec2::from_ints(x, y),
+            facing: NORTH,
+        };
+        w.tick(&[PlayerCommand { player, command }]);
+        (w.regiments.iter().map(|r| r.handle))
+            .find(|h| !before.contains(h))
+            .unwrap()
+    }
+
+    /// Men who break set no points and keep no place they stood aside
+    /// from: a charge arriving the next tick (before `before_move` gets to
+    /// them) must not stop on braced spears, and once rallied they must
+    /// not walk back to where they made way from.
+    #[test]
+    fn a_rout_lowers_the_spears_and_forgets_the_place_made_way_from() {
+        let mut w = world();
+        let h = spawn(&mut w, 0, 60, 60);
+        let i = w.regiments.resolve(h).unwrap();
+        w.regiments.braced[i] = true;
+        w.regiments.home[i] = Some(FxVec2::from_ints(64, 60));
+        w.regiments.way_wait[i] = 7;
+        let files = w.regiments.files[i];
+        rout(
+            &mut w.regiments,
+            &w.combat,
+            &w.stances,
+            &w.vision,
+            i,
+            w.tick,
+            w.map_tiles,
+            files,
+        );
+        assert!(w.regiments.morale_state[i].broken());
+        assert!(!w.regiments.braced[i], "still braced while running");
+        assert_eq!(
+            w.regiments.home[i], None,
+            "still keeps a place to go back to"
+        );
+        assert_eq!(w.regiments.way_wait[i], 0);
+        let view = w.regiments.get(h).unwrap();
+        assert!(!view.braced);
+        assert_eq!(view.made_way, None);
+    }
 }

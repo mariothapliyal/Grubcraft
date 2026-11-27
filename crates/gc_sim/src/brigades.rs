@@ -535,7 +535,10 @@ pub(crate) struct Brigades {
     live: u16,
     /// Per regiment slot. The brigade it marches in: its place in `pool`
     /// plus one, or 0 for none. (On its own, not in [`Member`]: every
-    /// brigade looks through all of these every tick.)
+    /// brigade looks through all of these every tick.) Until the next
+    /// [`Brigades::step`] it may still name the brigade of a regiment that
+    /// has died since, whose slot may already hold a new one: read it
+    /// through [`Brigades::slot`], which checks the generation.
     of: Vec<u8>,
     /// Per regiment slot: how it stands in its brigade. Means nothing
     /// with none.
@@ -638,17 +641,27 @@ impl Brigades {
         }
     }
 
+    /// The place in `pool` of the brigade regiment slot `i` marches in, if
+    /// it marches in one. Not the brigade of one that died in the slot
+    /// since the last step, which a regiment raised there in the meantime
+    /// (slots are given out again at once) is no member of.
+    fn slot(&self, regs: &Regiments, i: usize) -> Option<usize> {
+        let tag = *self.of.get(i)?;
+        (tag != 0 && regs.alive[i] && self.members[i].generation == regs.generation[i])
+            .then(|| usize::from(tag) - 1)
+    }
+
     /// The number of the brigade regiment slot `i` marches in, and where
     /// it is going with it (not the point ahead it walks at now).
-    pub(crate) fn of(&self, i: usize) -> Option<(u16, FxVec2)> {
-        let slot = *self.of.get(i)?;
-        (slot != 0).then(|| (self.pool[usize::from(slot) - 1].number, self.members[i].end))
+    pub(crate) fn of(&self, regs: &Regiments, i: usize) -> Option<(u16, FxVec2)> {
+        let slot = self.slot(regs, i)?;
+        Some((self.pool[slot].number, self.members[i].end))
     }
 
     /// How regiment slot `i` stands in its brigade, if it marches in one.
     pub(crate) fn view(&self, regs: &Regiments, i: usize) -> Option<BrigadeView> {
-        let (number, goal) = self.of(i)?;
-        let b = &self.pool[usize::from(self.of[i]) - 1];
+        let (number, goal) = self.of(regs, i)?;
+        let b = &self.pool[self.slot(regs, i)?];
         let marching = b.phase == Phase::Marching && self.members[i].mode != Mode::Plain;
         Some(BrigadeView {
             number,
@@ -664,9 +677,8 @@ impl Brigades {
     /// once the brigade steers it: not the way's end (the middle of where
     /// the body will stand), from the last turn each goes to its own
     /// place.
-    pub(crate) fn way(&self, i: usize) -> Option<&[FxVec2]> {
-        let slot = usize::from(*self.of.get(i)?).checked_sub(1)?;
-        let b = &self.pool[slot];
+    pub(crate) fn way(&self, regs: &Regiments, i: usize) -> Option<&[FxVec2]> {
+        let b = &self.pool[self.slot(regs, i)?];
         if b.phase != Phase::Marching || self.members[i].mode == Mode::Plain {
             return None;
         }
@@ -694,7 +706,7 @@ impl Brigades {
         pace: Fx,
         hunt: bool,
     ) -> bool {
-        self.of(i).is_some_and(|(n, end)| {
+        self.of(regs, i).is_some_and(|(n, end)| {
             let d = end - target;
             let faces = match (self.members[i].facing, facing) {
                 (None, None) => true,
@@ -713,9 +725,8 @@ impl Brigades {
 
     /// The way the attack-move brigade regiment slot `i` marches in goes
     /// about where it is, if it marches in one.
-    pub(crate) fn heading(&self, i: usize) -> Option<FxVec2> {
-        let slot = usize::from(*self.of.get(i)?).checked_sub(1)?;
-        let b = &self.pool[slot];
+    pub(crate) fn heading(&self, regs: &Regiments, i: usize) -> Option<FxVec2> {
+        let b = &self.pool[self.slot(regs, i)?];
         (b.hunt && b.phase == Phase::Marching && b.len >= 2).then(|| b.at(b.arc).1)
     }
 
@@ -723,8 +734,8 @@ impl Brigades {
     /// point its brigade gives it, not to where its order sent it (it may
     /// get to that point and stand a tick with nowhere to go, which is
     /// not the end of its march).
-    pub(crate) fn steers(&self, i: usize) -> bool {
-        self.of.get(i).is_some_and(|&t| t != 0) && self.members[i].mode != Mode::Plain
+    pub(crate) fn steers(&self, regs: &Regiments, i: usize) -> bool {
+        self.slot(regs, i).is_some() && self.members[i].mode != Mode::Plain
     }
 
     /// Regiment slot `i` has just been sent on a move with brigade
@@ -747,7 +758,9 @@ impl Brigades {
             return;
         };
         let tag = slot as u8 + 1;
-        if self.of[i] != tag {
+        // (A slot still tagged for a regiment that died in it is not
+        // that brigade's member: this one starts afresh in it.)
+        if self.slot(regs, i) != Some(slot) {
             let members = self.of.iter().filter(|&&t| t == tag).count();
             self.leave(regs, i);
             // (Nothing of a march it was on before comes with it.)
@@ -1916,5 +1929,95 @@ impl Brigades {
             h.u8(regs.step_with[i]);
             h.u16(regs.files_floor[i]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    use gc_fixed::{Fx, FxVec2};
+
+    use crate::nav::CELLS_PER_TILE;
+    use crate::scenario::{DRILL_UNITS, NORTH};
+    use crate::{Capacities, Command, Ground, MatchSetup, PlayerCommand, RegimentHandle, World};
+
+    const MAP: u32 = 128;
+
+    fn world() -> World {
+        let side = (MAP as usize) * CELLS_PER_TILE as usize;
+        let nav = vec![1u8; side * side];
+        World::new(&MatchSetup {
+            seed: 3,
+            capacities: Capacities { regiments: 16 },
+            units: &DRILL_UNITS,
+            map_tiles: MAP,
+            nav: &nav,
+            teams: &[],
+            ground: Ground::FLAT,
+            champions: false,
+            sky: crate::Sky::STILL,
+            generals: false,
+        })
+    }
+
+    fn spawn(w: &mut World, x: i32, y: i32) -> RegimentHandle {
+        let before: Vec<_> = w.regiments.iter().map(|r| r.handle).collect();
+        let command = Command::SpawnRegiment {
+            unit: 0,
+            position: FxVec2::from_ints(x, y),
+            facing: NORTH,
+        };
+        w.tick(&[PlayerCommand { player: 0, command }]);
+        (w.regiments.iter().map(|r| r.handle))
+            .find(|h| !before.contains(h))
+            .unwrap()
+    }
+
+    /// A regiment raised in the slot of a brigade member that died the
+    /// same tick (slots are given out again at once) is of no brigade,
+    /// before the next step forgets the dead one as well as after.
+    #[test]
+    fn a_regiment_raised_in_a_dead_members_slot_is_of_no_brigade() {
+        let mut w = world();
+        let a = spawn(&mut w, 40, 100);
+        let b = spawn(&mut w, 52, 100);
+        let moves: Vec<_> = [(a, 40), (b, 52)]
+            .into_iter()
+            .map(|(regiment, x)| PlayerCommand {
+                player: 0,
+                command: Command::MoveTo {
+                    regiment,
+                    target: FxVec2::from_ints(x, 30),
+                    facing: Some(NORTH),
+                    files: 0,
+                    pace: Fx::ZERO,
+                    brigade: 1,
+                },
+            })
+            .collect();
+        w.tick(&moves);
+        for _ in 0..10 {
+            w.tick(&[]);
+        }
+        assert!(w.brigade(b).is_some(), "never marched in a brigade");
+        let old = w.regiments.resolve(b).unwrap();
+        assert!(w.brigades.steers(&w.regiments, old));
+        // Killed, and another raised in its slot, before the brigades step.
+        assert!(w.regiments.despawn(b));
+        let stats = DRILL_UNITS[0].sanitized();
+        let raised = (w.regiments)
+            .spawn(0, 0, FxVec2::from_ints(52, 100), NORTH, &stats)
+            .unwrap();
+        let i = w.regiments.resolve(raised).unwrap();
+        assert_eq!(i, old, "the slot was not given out again");
+        assert!(w.brigade(raised).is_none());
+        assert_eq!(w.goal(raised), None);
+        assert!(w.route(raised).is_empty());
+        assert!(!w.brigades.steers(&w.regiments, i));
+        assert_eq!(w.brigades.of(&w.regiments, i), None);
+        // Its friend still marches in the brigade.
+        assert!(w.brigade(a).is_some());
     }
 }

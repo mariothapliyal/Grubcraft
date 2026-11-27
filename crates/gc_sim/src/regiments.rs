@@ -592,9 +592,10 @@ regiment_fields! {
     /// Crowded out, under orders to attack: going round its foe to a less
     /// crowded side (see `combat::Round`).
     round: Option<core::num::NonZeroU8> = None,
-    /// Turns in a row it was locked in a fight with nobody able to strike
-    /// (no room on the foe's side, or only a corner touching); while going
-    /// round, ticks spent on the way.
+    /// Turns in a row it was locked in one fight with nobody able to strike
+    /// (no room on the foe's side, or only a corner touching) and free to
+    /// go round (see `combat::crowded_out`); while going round, ticks spent
+    /// on the way. Back to 0 whenever its fight or its going round ends.
     crowded: u8 = 0,
     /// Spears or pikes set against a charge (see [`Regiments::brace`]):
     /// standing until given another order.
@@ -1481,7 +1482,10 @@ impl Regiments {
         if self.attack_target[i] != Some(target) {
             // Going round only the foe it was going round (see
             // `combat::Round`): an order repeated keeps it on its way.
+            // The ticks spent going round are not crowded turns of the
+            // next fight.
             self.round[i] = None;
+            self.crowded[i] = 0;
         }
         self.set_seeks_place(i, false);
         self.attack_target[i] = Some(target);
@@ -1521,6 +1525,10 @@ impl Regiments {
         self.target[i] = Some(to);
         self.set_seeks_place(i, false);
         self.target_facing[i] = Some(self.facing[i]);
+        // Backing away is at half pace (see `step_movement`), not the
+        // drilled pace of a short move it may have been on: a drilled
+        // step sideways or off straight back would go faster.
+        self.drill[i] = false;
         self.attack_target[i] = None;
         self.braced[i] = false;
         self.hold[i] = false;
@@ -2940,5 +2948,45 @@ mod tests {
                 .regiments
                 .spawn(0, 0, FxVec2::ZERO, Angle::ZERO, &stats)
         );
+    }
+
+    /// Falling back is at half pace, whatever the order before it: a block
+    /// still on a short drilled move must not back away at drilled pace
+    /// (full ahead, three quarters sideways).
+    #[test]
+    fn falling_back_ends_a_drilled_move() {
+        let mut regs = Regiments::with_capacity(4);
+        let stats = DRILL_UNITS[0].sanitized();
+        let h = (regs.spawn(0, 0, FxVec2::from_ints(50, 50), Angle::ZERO, &stats)).unwrap();
+        let i = regs.resolve(h).unwrap();
+        let order = Order {
+            target: FxVec2::from_ints(52, 50),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+        };
+        assert!(regs.order(h, order));
+        assert!(regs.drill[i], "a short move is drilled");
+        assert!(regs.fall_back(h, FxVec2::from_ints(50, 56)));
+        assert!(!regs.drill[i], "falls back at drilled pace");
+    }
+
+    /// An attack on another foe calls off going round the last one, and
+    /// its ticks on the way with it: they are not crowded turns.
+    #[test]
+    fn a_new_attack_leaves_no_crowded_turns() {
+        let mut regs = Regiments::with_capacity(4);
+        let stats = DRILL_UNITS[0].sanitized();
+        let at = |x| FxVec2::from_ints(x, 50);
+        let me = (regs.spawn(0, 0, at(50), Angle::ZERO, &stats)).unwrap();
+        let old = (regs.spawn(1, 0, at(60), Angle::ZERO, &stats)).unwrap();
+        let new = (regs.spawn(1, 0, at(70), Angle::ZERO, &stats)).unwrap();
+        let i = regs.resolve(me).unwrap();
+        assert!(regs.attack(me, old));
+        regs.round[i] = core::num::NonZeroU8::new(1);
+        regs.crowded[i] = 30;
+        assert!(regs.attack(me, new));
+        assert_eq!(regs.round[i], None);
+        assert_eq!(regs.crowded[i], 0);
     }
 }
