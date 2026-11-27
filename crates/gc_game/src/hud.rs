@@ -316,6 +316,14 @@ impl HudState {
         self.right_held = false;
     }
 
+    /// The HUD is not run this frame (a guide or menu over it, or the HUD
+    /// hidden): forget what the mouse rests on, so a tooltip or hover card
+    /// waits its full delay again when the HUD comes back.
+    pub fn forget_hover(&mut self) {
+        self.hud.forget_hover();
+        self.hover_own = None;
+    }
+
     pub fn wants(&self, screen: (i32, i32), mouse: (i32, i32)) -> bool {
         self.hud.wants(screen, mouse)
     }

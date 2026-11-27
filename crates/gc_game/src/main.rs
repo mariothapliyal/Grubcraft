@@ -2247,15 +2247,17 @@ impl App {
                             None => r.start_match(MatchKind::Replay(Box::new(replay))),
                             Some(why) => {
                                 logln!("grubcraft: can't watch {}: {why}", path.display());
-                                r.menu.tell(why);
+                                // Main clears the message: tell it once the menu is open.
                                 r.open_menu();
+                                r.menu.tell(why);
                             }
                         }
                     }
                     Err(e) => {
                         logln!("grubcraft: can't open {}: {e}", path.display());
-                        r.menu.tell(format!("Can't open that replay: {e}"));
+                        // Main clears the message: tell it once the menu is open.
                         r.open_menu();
+                        r.menu.tell(format!("Can't open that replay: {e}"));
                     }
                 }
             }
@@ -5303,10 +5305,10 @@ impl Running {
         }
 
         if self.guide.is_some() {
-            self.hud.hover_own = None;
+            self.hud.forget_hover();
             self.run_guide();
         } else if self.menu_open {
-            self.hud.hover_own = None;
+            self.hud.forget_hover();
             // A network battle goes on behind the menu.
             let offer = self.surrender_offer();
             self.menu.set_surrender(offer);
@@ -5314,7 +5316,7 @@ impl Running {
         } else if self.hud_drawn() {
             self.run_hud();
         } else {
-            self.hud.hover_own = None;
+            self.hud.forget_hover();
             self.renderer.clear_ui();
         }
 

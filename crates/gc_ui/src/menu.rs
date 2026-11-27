@@ -1385,8 +1385,11 @@ impl<N: Network> Menu<N> {
             "Pick your faction and colour, then tick Ready."
         };
         ui.label(panel.x + 24, footer_y + 22, 1, theme::INK, todo);
-        // Why Start is greyed out, right beside it.
-        // Or why Start just failed, until the screen changes.
+        // Why Start is greyed out, right beside it. Or why Start just
+        // failed, until a live reason comes up to say why it is greyed out.
+        if blocker.is_some() {
+            self.message = None;
+        }
         let (why, color) = match (&self.message, &blocker) {
             (Some((text, _)), _) => (text.as_str(), theme::BAD_INK),
             (None, Some(why)) if mismatch => (why.as_str(), theme::BAD_INK),
@@ -3119,6 +3122,27 @@ mod tests {
         h.frame(UiInput::default());
         assert!(h.has("The match has already started."));
         assert!(!h.has("Everyone is ready."));
+    }
+
+    #[test]
+    fn a_failed_start_gives_way_to_a_live_blocker() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        h.click("Add AI");
+        h.menu.tell("The match has already started.".into());
+        h.frame(UiInput::default());
+        assert!(h.has("The match has already started."));
+        // The lobby changes under it: the line says why Start is greyed
+        // out now, and the old failure does not come back after.
+        h.click("Remove");
+        h.frame(UiInput::default());
+        assert!(h.has("Add at least one more player"));
+        assert!(!h.has("The match has already started."));
+        h.click("Add AI");
+        h.frame(UiInput::default());
+        assert!(h.has("Everyone is ready."));
+        assert!(!h.has("The match has already started."));
     }
 
     /// A network that takes every join and notes where it went.
