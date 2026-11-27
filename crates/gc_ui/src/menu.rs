@@ -148,6 +148,35 @@ struct MapPreview {
     starts: Vec<[f32; 2]>,
 }
 
+/// The saved replays: still being looked for, or found. The page on screen
+/// goes with the list it pages through.
+enum ReplayShelf {
+    Loading,
+    Loaded {
+        /// Newest first.
+        entries: Vec<ReplayEntry>,
+        page: usize,
+    },
+}
+
+/// The Army screen's copy of your army: it exists only while the screen is
+/// open, and starts again from the lobby's slot each time it opens.
+enum ArmyDraft {
+    Closed,
+    Open(Vec<u16>),
+}
+
+impl ArmyDraft {
+    /// The draft, if there is one. The screen puts it back each frame it
+    /// stays open.
+    fn take(&mut self) -> Option<Vec<u16>> {
+        match std::mem::replace(self, ArmyDraft::Closed) {
+            ArmyDraft::Open(army) => Some(army),
+            ArmyDraft::Closed => None,
+        }
+    }
+}
+
 /// What the map code box says when the host types something that isn't a
 /// map code.
 const NOT_A_CODE: &str = "Not a map code (16 hex digits)";
@@ -179,12 +208,9 @@ pub struct Menu<N: Network = LocalNetwork> {
     /// The regiment types the army builder offers.
     roster: Vec<RosterUnit>,
     /// The Army screen's copy of your army while it is open.
-    army_draft: Option<Vec<u16>>,
-    /// The saved replays, newest first, and the page of them on screen.
-    replays: Vec<ReplayEntry>,
-    replay_page: usize,
-    /// The game is still reading the replay folder.
-    replays_loading: bool,
+    army_draft: ArmyDraft,
+    /// The saved replays, or the wait for them.
+    replays: ReplayShelf,
     /// What the map code box holds: the code of the map seed, or what the
     /// host is typing.
     code_entry: String,
@@ -249,10 +275,11 @@ impl<N: Network> Menu<N> {
             surrender: SurrenderItem::Hidden,
             surrender_sure: false,
             roster: Vec::new(),
-            army_draft: None,
-            replays: Vec::new(),
-            replay_page: 0,
-            replays_loading: false,
+            army_draft: ArmyDraft::Closed,
+            replays: ReplayShelf::Loaded {
+                entries: Vec::new(),
+                page: 0,
+            },
             code_entry: String::new(),
             code_for: None,
             code_note: None,
@@ -314,9 +341,10 @@ impl<N: Network> Menu<N> {
 
     /// The saved replays for the Replays screen, newest first.
     pub fn set_replays(&mut self, replays: Vec<ReplayEntry>) {
-        self.replays = replays;
-        self.replay_page = 0;
-        self.replays_loading = false;
+        self.replays = ReplayShelf::Loaded {
+            entries: replays,
+            page: 0,
+        };
     }
 
     /// The list is on its way: the Replays screen says so instead of
@@ -324,8 +352,7 @@ impl<N: Network> Menu<N> {
     pub fn replays_loading(&mut self) {
         // The old list would be stale, and a click on it could land on a
         // different replay once the new one arrives.
-        self.replays.clear();
-        self.replays_loading = true;
+        self.replays = ReplayShelf::Loading;
     }
 
     /// Show a problem on the current screen (the Replays screen shows why
@@ -357,6 +384,9 @@ impl<N: Network> Menu<N> {
         self.screen = screen;
         self.message = None;
         self.copied = None;
+        // The draft belongs to one visit to the Army screen, and every way
+        // onto that screen comes through here.
+        self.army_draft = ArmyDraft::Closed;
         self.forget_code_entry();
     }
 
@@ -490,6 +520,7 @@ impl<N: Network> Menu<N> {
                 NetEvent::Left(why) => {
                     self.screen = Screen::Play;
                     self.message = Some((why, true));
+                    self.army_draft = ArmyDraft::Closed;
                     self.forget_code_entry();
                 }
             }
@@ -1578,7 +1609,7 @@ impl<N: Network> Menu<N> {
         if done || escape {
             self.go(ui, Screen::Lobby);
         } else {
-            self.army_draft = Some(army);
+            self.army_draft = ArmyDraft::Open(army);
         }
         MenuAction::None
     }
@@ -1598,22 +1629,33 @@ impl<N: Network> Menu<N> {
         let top = panel.y + sp(64);
         let bottom = panel.bottom() - 64;
         let per_page = (((bottom - top) / (row_h + sp(8))).max(1)) as usize;
-        let pages = self.replays.len().div_ceil(per_page).max(1);
-        self.replay_page = self.replay_page.min(pages - 1);
+        let (pages, mut page) = match &self.replays {
+            ReplayShelf::Loading => (1, 0),
+            ReplayShelf::Loaded { entries, page } => {
+                let pages = entries.len().div_ceil(per_page).max(1);
+                (pages, (*page).min(pages - 1))
+            }
+        };
         let mut action = MenuAction::None;
-        if self.replays.is_empty() {
-            let text = if self.replays_loading {
-                "Looking for replays..."
-            } else {
-                "No replays yet. Play a battle and it will be here to watch."
-            };
+        let mut shown: &[ReplayEntry] = &[];
+        let empty_text = match &self.replays {
+            ReplayShelf::Loading => Some("Looking for replays..."),
+            ReplayShelf::Loaded { entries, .. } if entries.is_empty() => {
+                Some("No replays yet. Play a battle and it will be here to watch.")
+            }
+            ReplayShelf::Loaded { entries, .. } => {
+                shown = entries;
+                None
+            }
+        };
+        if let Some(text) = empty_text {
             // An empty shelf: the message sits in the middle of the cloth.
             let middle = Rect::new(panel.x + 24, top, panel.w - 48, (bottom - top) / 2);
             ui.label_centered(middle, 1, theme::INK_MUTED, text);
         }
-        let first = self.replay_page * per_page;
+        let first = page * per_page;
         let mut y = top;
-        for entry in self.replays.iter().skip(first).take(per_page) {
+        for entry in shown.iter().skip(first).take(per_page) {
             let row = Rect::new(panel.x + 24, y, panel.w - 48, row_h);
             ui.draw.rect(row, theme::CLOTH);
             let chars = ((row.w - 160) / 8).max(8) as usize;
@@ -1662,24 +1704,27 @@ impl<N: Network> Menu<N> {
                 Rect::new(panel.x + 24 + 148, btn_y, 120, 44),
                 "Newer",
                 ButtonStyle::Normal,
-                self.replay_page > 0,
+                page > 0,
             ) {
-                self.replay_page -= 1;
+                page -= 1;
             }
             ui.label_centered(
                 Rect::new(panel.x + 24 + 148 + 128, btn_y, 120, 44),
                 1,
                 theme::INK_MUTED,
-                &format!("{} of {pages}", self.replay_page + 1),
+                &format!("{} of {pages}", page + 1),
             );
             if ui.button(
                 Rect::new(panel.x + 24 + 148 + 256, btn_y, 120, 44),
                 "Older",
                 ButtonStyle::Normal,
-                self.replay_page + 1 < pages,
+                page + 1 < pages,
             ) {
-                self.replay_page += 1;
+                page += 1;
             }
+        }
+        if let ReplayShelf::Loaded { page: stored, .. } = &mut self.replays {
+            *stored = page;
         }
         let back = ui.button(
             Rect::new(panel.x + 24, btn_y, 140, 44),
@@ -2440,6 +2485,34 @@ mod tests {
         ui.end_frame();
         assert!(find_text(&ui.draw, "Victory: Annihilation").is_some());
         assert!(find_text(&ui.draw, "Tempo: Standard").is_some());
+    }
+
+    #[test]
+    fn a_new_lobby_starts_the_army_screen_from_its_own_army() {
+        let mut h = Harness::new();
+        h.menu.set_roster(vec![RosterUnit {
+            name: "Yari Ashigaru".into(),
+            faction: Faction::EmberClans,
+            points: 400,
+        }]);
+        h.menu.settings.faction = Faction::EmberClans;
+        h.click("Play");
+        h.click_last("Host");
+        h.click_last("Army");
+        let (x, y) = find_all(&h.ui.draw, "+")[0];
+        h.click_at(x, y);
+        assert!(h.has("1 regiments, 400 of 4,000 points"));
+        // The match starts (or the host drops) while the screen is open, so
+        // it never sees Done. Later menus start again, in a new lobby.
+        h.menu.net().leave();
+        h.menu.show(Screen::Main);
+        h.frame(UiInput::default());
+        h.click("Play");
+        h.click_last("Host");
+        h.click_last("Army");
+        assert_eq!(h.menu.screen(), Screen::Army);
+        assert!(h.has("the Balanced mix will be picked for you"));
+        assert!(!h.has("1 regiments"), "the old lobby's draft");
     }
 
     #[test]
