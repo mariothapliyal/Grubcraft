@@ -338,12 +338,12 @@ struct ClientGame {
     rush: u32,
     outbox: Vec<PlayerCommand>,
     /// Joined a match already under way (a rejoin after a restart), and
-    /// still replaying it: set until this machine has kept up for
+    /// still replaying it: the turns in a row played so far without being
+    /// behind. `None` once this machine has kept up for
     /// [`CAUGHT_UP_TURNS`] turns in a row (the turns arrive in bursts, so
-    /// a replay outrunning a burst for a moment isn't caught up yet).
-    rejoining: bool,
-    /// Turns in a row played without being behind, while rejoining.
-    kept_up: u32,
+    /// a replay outrunning a burst for a moment isn't caught up yet), and
+    /// from the start for a player who joined in the lobby.
+    rejoining: Option<u32>,
 }
 
 struct Client {
@@ -618,7 +618,7 @@ impl Lan {
             Role::Client(c) => c
                 .game
                 .as_ref()
-                .filter(|g| g.rejoining)
+                .filter(|g| g.rejoining.is_some())
                 .map(|g| (g.next_turn, g.next_turn + g.ready.len() as u32)),
             _ => None,
         }
@@ -1208,8 +1208,7 @@ impl Lan {
                     outbox: Vec::new(),
                     // A rejoiner gets the start without a lobby place
                     // first (no Welcome): the match is already under way.
-                    rejoining: c.slot.is_none(),
-                    kept_up: 0,
+                    rejoining: c.slot.is_none().then_some(0),
                 });
                 self.events.push(NetEvent::Started(MatchStart {
                     settings,
@@ -2477,13 +2476,13 @@ fn client_turn(g: &mut ClientGame, now: Instant, length: Duration) -> Option<Vec
             g.reset_spare();
         }
     }
-    if g.rejoining {
-        g.kept_up = if waiting > g.delay + 1 {
+    if let Some(kept_up) = g.rejoining {
+        let kept_up = if waiting > g.delay + 1 {
             0
         } else {
-            g.kept_up + 1
+            kept_up + 1
         };
-        g.rejoining = g.kept_up < CAUGHT_UP_TURNS;
+        g.rejoining = (kept_up < CAUGHT_UP_TURNS).then_some(kept_up);
     }
     turn
 }
