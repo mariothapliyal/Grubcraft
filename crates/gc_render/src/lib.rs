@@ -425,11 +425,18 @@ pub struct Renderer {
     /// does not sway), kept between frames and copied into the shadow map
     /// before what moves is drawn over it, and what it was drawn for. Most
     /// of the sun's work is the ground and the rocks, which only need
-    /// drawing again when the camera, the sun or the land moves.
+    /// drawing again when the camera, the sun or the land moves. It is
+    /// kept only once that key holds for two frames running (`still_seen`
+    /// is last frame's): while the camera moves, one pass draws everything
+    /// straight into the shadow map, as without it.
     shadow_still: wgpu::Texture,
     shadow_still_view: wgpu::TextureView,
     still_drawn: Option<StillKey>,
-    still_chunks: ChunkList,
+    still_seen: Option<StillKey>,
+    /// Last frame's chunks the sun saw, and a count of the frames they
+    /// differed from the one before.
+    sun_chunks_before: ChunkList,
+    chunk_changes: u64,
     /// Counts the ground's reshapings (`set_terrain`, `set_river_water`),
     /// which the kept shadow map is drawn again after.
     land_changes: u64,
@@ -1158,7 +1165,9 @@ impl Renderer {
             shadow_still,
             shadow_still_view,
             still_drawn: None,
-            still_chunks: ChunkList::default(),
+            still_seen: None,
+            sun_chunks_before: ChunkList::default(),
+            chunk_changes: 0,
             land_changes: 0,
             shadow_sampler,
             soft_sampler,
@@ -2232,24 +2241,27 @@ impl Renderer {
             }
         }
 
-        // The kept shadow map is drawn again only when what it holds may
-        // have changed: the sun's square, the ground under it, the chunks
-        // it is drawn with, or the still scenery on it.
+        // What the kept shadow map would hold: the sun's square, the ground
+        // under it, the chunks it is drawn with and the still scenery on it.
+        if self.sun_chunks != self.sun_chunks_before {
+            self.chunk_changes += 1;
+            self.sun_chunks_before.clone_from(&self.sun_chunks);
+        }
         let still_key = StillKey {
             sun: sun_view_proj.to_cols_array().map(f32::to_bits),
             land: self.land_changes,
             water: terrain.water_level.to_bits(),
+            chunks: self.chunk_changes,
+            scenery: self.scenery.still_version(),
         };
-        let still_moved = self.scenery.take_still_changed();
-        let redraw_still = shadows
-            && !bare
-            && (still_moved
-                || self.still_drawn != Some(still_key)
-                || self.still_chunks != self.sun_chunks);
+        let kept = self.still_drawn == Some(still_key);
+        let settled = self.still_seen == Some(still_key);
+        self.still_seen = Some(still_key);
+        let redraw_still = shadows && !bare && !kept && settled;
         if redraw_still {
             self.still_drawn = Some(still_key);
-            self.still_chunks.clone_from(&self.sun_chunks);
         }
+        let use_still = kept || redraw_still;
 
         let view = surface_texture
             .texture
@@ -2309,10 +2321,26 @@ impl Renderer {
             self.soldiers
                 .skin(&mut encoder, &terrain.bind_group, timer.as_mut());
         }
-        if shadows && !bare {
-            // What holds still, when it may have changed; then a copy of it
-            // with what moves drawn over. Depth keeps the nearest caster
-            // whatever the order, so the map is the one a single pass draws.
+        if shadows && !bare && !use_still {
+            let mut pass = depth_pass(
+                &mut encoder,
+                "sun shadow",
+                &self.shadow_map,
+                wgpu::LoadOp::Clear(1.0),
+                timer.as_mut().and_then(|t| t.render_pass("shadow")),
+            );
+            pass.set_bind_group(0, &terrain.shadow_bind_group, &[]);
+            draw_calls += draw_terrain(&mut pass, true);
+            if self.options.draw_blocks {
+                draw_calls += self.scenery.draw(&mut pass, Part::Shadow).0;
+            }
+            draw_calls += self.soldiers.draw(&mut pass, true).0;
+            draw_calls += draw_boxes(&mut pass, &self.block_shadow_pipeline);
+        }
+        if shadows && !bare && use_still {
+            // What holds still, when it has changed; then a copy of it with
+            // what moves drawn over. Depth keeps the nearest caster whatever
+            // the order, so the map is the one a single pass draws.
             if redraw_still {
                 let mut pass = depth_pass(
                     &mut encoder,
@@ -2959,8 +2987,9 @@ fn chunk_instance(levels: &[u8], chunks_per_side: u32, chunk: [u32; 2]) -> [u32;
     [x, z, own | west << 2 | east << 4 | north << 6 | south << 8]
 }
 
-/// What the kept shadow map of what holds still was drawn for, besides its
-/// chunks and scenery (`Renderer::shadow_still`).
+/// What the kept shadow map of what holds still was drawn for
+/// (`Renderer::shadow_still`): everything the terrain and still scenery
+/// shadow shaders read that can change. A new input to them goes here too.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct StillKey {
     /// The sun's view and projection, bit for bit.
@@ -2969,6 +2998,10 @@ struct StillKey {
     land: u64,
     /// The water line, which scenery standing in water is set on.
     water: u32,
+    /// `Renderer::chunk_changes`.
+    chunks: u64,
+    /// `SceneryGpu::still_version`.
+    scenery: u64,
 }
 
 /// A pass that draws only into the depth map `view` (the sun's), named

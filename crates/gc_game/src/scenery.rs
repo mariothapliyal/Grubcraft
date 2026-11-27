@@ -961,11 +961,12 @@ impl Scenery {
         for (bin, &count) in counts.iter().enumerate() {
             cursor[bin] = at;
             if count > 0 {
+                let (model, lod, on_screen) = unbin(bin);
                 batches.push(SceneryBatch {
-                    model: (bin / BINS) as u16,
-                    lod: (bin % BINS / 2) as u8,
-                    shadow: models.info[bin / BINS].shadow,
-                    on_screen: bin % 2 == 0,
+                    model: model as u16,
+                    lod,
+                    shadow: models.info[model].shadow,
+                    on_screen,
                     first: at,
                     count,
                 });
@@ -982,7 +983,7 @@ impl Scenery {
                 facing: facings[usize::from(n.turn)],
                 scale: n.scale,
                 tint: [r, g, b, n.phase],
-                kind: models.info[bin / BINS].detail
+                kind: models.info[unbin(bin).0].detail
                     | u32::from(n.lean) << 8
                     | u32::from(n.fall) << 16,
             };
@@ -999,7 +1000,7 @@ impl Scenery {
                     facing: facings[usize::from(p.angle)],
                     scale: f32::from(p.scale) / 100.0,
                     tint: p.tint,
-                    kind: models.info[bin / BINS].detail,
+                    kind: models.info[unbin(bin).0].detail,
                 };
             });
         }
@@ -1015,6 +1016,11 @@ const BINS: usize = LODS * 2;
 /// The bin for `model` at level `lod`, on screen or not.
 fn bin(model: usize, lod: u8, on_screen: bool) -> usize {
     model * BINS + usize::from(lod) * 2 + usize::from(!on_screen)
+}
+
+/// The model, level and whether on screen of a [`bin`].
+fn unbin(bin: usize) -> (usize, u8, bool) {
+    (bin / BINS, (bin % BINS / 2) as u8, bin.is_multiple_of(2))
 }
 
 /// The level of detail for a class of model `eye` tiles from the camera.
@@ -1763,10 +1769,8 @@ mod tests {
             for lod in 0..LODS as u8 {
                 for on_screen in [true, false] {
                     let b = bin(model, lod, on_screen);
-                    assert!(seen.insert(b));
-                    assert_eq!(b / BINS, model);
-                    assert_eq!(b % BINS / 2, usize::from(lod));
-                    assert_eq!(b % 2 == 0, on_screen);
+                    assert!(seen.insert(b) && b < (model + 1) * BINS);
+                    assert_eq!(unbin(b), (model, lod, on_screen));
                 }
             }
         }

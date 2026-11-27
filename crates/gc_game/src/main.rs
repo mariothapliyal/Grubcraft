@@ -1123,8 +1123,8 @@ struct Running {
     /// When the next frame may start under Settings' frame cap (see
     /// [`Running::next_frame_due`]); `None` when uncapped.
     frame_due: Option<Instant>,
-    /// Settings' Fullscreen as last applied; `None` before the first frame.
-    fullscreen: Option<bool>,
+    /// Whether the window was last made fullscreen (it opens windowed).
+    fullscreen: bool,
     /// When the screen's refresh rate was last asked for, and the rate
     /// (0 when the OS does not say).
     refresh: Option<(Instant, u32)>,
@@ -2154,7 +2154,7 @@ impl App {
             resume_at: None,
             frame_due: None,
             refresh: None,
-            fullscreen: None,
+            fullscreen: false,
             seed: opts.seed,
             capacities,
             menu,
@@ -2332,6 +2332,13 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 r.renderer.resize(size.width, size.height);
                 r.camera.aspect = r.renderer.aspect_ratio();
+                // Fullscreen left or entered with the system's own controls:
+                // Settings follows the window.
+                let fullscreen = r.window.fullscreen().is_some();
+                if fullscreen != r.fullscreen {
+                    r.fullscreen = fullscreen;
+                    r.menu.set_fullscreen(fullscreen);
+                }
             }
             WindowEvent::Focused(f) => {
                 r.input.focused = f;
@@ -2812,18 +2819,13 @@ impl Running {
     /// Follow Settings' Fullscreen when it changes: borderless over the
     /// whole screen (its own space on a Mac), where the system can show the
     /// game's frames without composing them with the desktop, which saves
-    /// the GPU a copy of every frame. Leaving fullscreen with the system's
-    /// own controls leaves the setting as it was.
+    /// the GPU a copy of every frame.
     fn apply_fullscreen(&mut self) {
         let want = self.menu.settings().fullscreen;
-        if self.fullscreen == Some(want) {
-            return;
-        }
-        self.fullscreen = Some(want);
-        let mode = want.then_some(winit::window::Fullscreen::Borderless(None));
-        // A window that was never fullscreen needs no call at start.
-        if want || self.window.fullscreen().is_some() {
-            self.window.set_fullscreen(mode);
+        if self.fullscreen != want {
+            self.fullscreen = want;
+            self.window
+                .set_fullscreen(want.then_some(winit::window::Fullscreen::Borderless(None)));
         }
     }
 
