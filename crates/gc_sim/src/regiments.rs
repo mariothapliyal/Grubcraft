@@ -595,12 +595,11 @@ regiment_fields! {
     /// Turns in a row it was locked in one fight with nobody able to strike
     /// (no room on the foe's side, or only a corner touching) and free to
     /// go round (see `combat::crowded_out`); while going round, ticks spent
-    /// on the way. Back to 0 whenever its foe changes in `Combat::before_move`
-    /// (a new fight, or none) while it is not going round, and whenever its going round ends (see
+    /// on the way. Back to 0 when it has no foe left in `Combat::before_move`
+    /// (not going round) and whenever its going round ends (see
     /// [`Regiments::end_round`]), so no fight inherits the turns of
-    /// another. A fight left elsewhere (falling back, swept off, onto a
-    /// wall) keeps the count until the next fight starts, which then resets
-    /// it before counting.
+    /// another; turning from one foe to the next in the same press keeps
+    /// them.
     crowded: u8 = 0,
     /// Spears or pikes set against a charge (see [`Regiments::brace`]):
     /// standing until given another order.

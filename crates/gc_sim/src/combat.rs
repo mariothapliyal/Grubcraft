@@ -1677,16 +1677,16 @@ impl Combat {
                 generation: regs.generation[j],
             });
             if engaged != previous {
-                // A new fight, or none: who is winning starts afresh, and
-                // so do its crowded turns (they count in a row, in one
-                // fight; see `crowded_out`). On the way round the count is
-                // its ticks going round instead, and leaving the fight is
-                // part of going round: that count runs on, or the round
-                // would never time out.
+                // A new fight, or none: who is winning starts afresh.
                 regs.pressing[i] = 0;
                 regs.pressed[i] = 0;
                 regs.giving[i] = 0;
-                if regs.round[i].is_none() {
+                // A fight over leaves no crowded turns for the next one
+                // (`crowded_out`). Turning from one foe to the next in the
+                // same press keeps them: in a crush the nearest foe changes
+                // often, and a block behind would never go round. On the way
+                // round the count is its ticks going round, which run on.
+                if engaged.is_none() && regs.round[i].is_none() {
                     regs.crowded[i] = 0;
                 }
             }
