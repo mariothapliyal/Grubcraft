@@ -117,7 +117,7 @@
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the map seed the Host a game card and a `--battle` start on; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
-//! `--hidden-frames N` leaves the last N of them undrawn, as for a hidden window,
+//! `--hidden-frames N` (2 or more) leaves the last N of them undrawn, as for a hidden window,
 //! and prints how much the process grew meanwhile;
 //! `--map NAME|FILE` opens on a shipped map (`ribcage_pass`, `four_teeth`) or
 //! a map file instead of the seeded map, to look round it in the sandbox
@@ -641,46 +641,97 @@ struct Options {
     render: RendererOptions,
 }
 
+impl Options {
+    /// What a launch with no flags gets.
+    fn new() -> Options {
+        Options {
+            seed: gc_ui::lobby::DEFAULT_MAP_SEED,
+            map: None,
+            sandbox: false,
+            frames: None,
+            hidden_frames: None,
+            overlay: false,
+            gpu_times: false,
+            world_scale: None,
+            menu: None,
+            audio: true,
+            battle: None,
+            players: 2,
+            time_of_day: None,
+            sky: None,
+            conquest: None,
+            host: false,
+            join: None,
+            password: String::new(),
+            crash_test: false,
+            lod: None,
+            showroom: None,
+            watch: None,
+            showroom_clip: None,
+            viewer: None,
+            look: None,
+            weather: None,
+            season: None,
+            air: None,
+            distance: None,
+            fx: None,
+            siege: false,
+            gate_march: None,
+            wall_scene: false,
+            bridge_scene: false,
+            fell_demo: false,
+            hamlet_demo: false,
+            render: RendererOptions::default(),
+        }
+    }
+
+    /// The flags that start a match (or a scene in one) at launch.
+    fn starts_a_match(&self) -> bool {
+        self.sandbox
+            || self.battle.is_some()
+            || self.conquest.is_some()
+            || self.watch.is_some()
+            || self.siege
+            || self.wall_scene
+            || self.bridge_scene
+            || self.gate_march.is_some()
+    }
+
+    /// Why the flags given cannot go together, if they cannot.
+    fn conflict(&self) -> Option<&'static str> {
+        // The hidden frames are the last of `--frames`, after at least one
+        // drawn, and there are two of them at least: one reading is taken as
+        // the window hides and another halfway through.
+        if let Some(n) = self.hidden_frames
+            && (n < 2 || self.frames.is_none_or(|frames| n >= frames))
+        {
+            return Some("--hidden-frames N needs N of 2 or more and --frames greater than N");
+        }
+        // The showroom is not a match: nothing to fight, host or join.
+        if self.showroom.is_some()
+            && (self.sandbox
+                || self.battle.is_some()
+                || self.conquest.is_some()
+                || self.host
+                || self.join.is_some())
+        {
+            return Some("--showroom starts no match");
+        }
+        // The viewer is over the menu: it is not a match, or the showroom.
+        if self.viewer.is_some()
+            && (self.starts_a_match()
+                || self.host
+                || self.join.is_some()
+                || self.showroom.is_some())
+        {
+            return Some("--viewer opens over the main menu, not a match or the showroom");
+        }
+        None
+    }
+}
+
 fn parse_args() -> Options {
-    let mut opts = Options {
-        seed: gc_ui::lobby::DEFAULT_MAP_SEED,
-        map: None,
-        sandbox: false,
-        frames: None,
-        hidden_frames: None,
-        overlay: false,
-        gpu_times: false,
-        world_scale: None,
-        menu: None,
-        audio: true,
-        battle: None,
-        players: 2,
-        time_of_day: None,
-        sky: None,
-        conquest: None,
-        host: false,
-        join: None,
-        password: String::new(),
-        crash_test: false,
-        lod: None,
-        showroom: None,
-        watch: None,
-        showroom_clip: None,
-        viewer: None,
-        look: None,
-        weather: None,
-        season: None,
-        air: None,
-        distance: None,
-        fx: None,
-        siege: false,
-        gate_march: None,
-        wall_scene: false,
-        bridge_scene: false,
-        fell_demo: false,
-        hamlet_demo: false,
-        render: RendererOptions::default(),
-    };
+    let mut opts = Options::new();
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         if flag == "--overlay" {
@@ -903,37 +954,13 @@ fn parse_args() -> Options {
     if opts.showroom_clip.is_some() && opts.showroom.is_none() {
         usage();
     }
-    // The hidden frames are the last of `--frames`, after at least one drawn.
-    if let Some(n) = opts.hidden_frames
-        && opts.frames.is_none_or(|frames| n >= frames)
-    {
-        eprintln!("--hidden-frames N needs --frames greater than N");
-        usage();
-    }
-    // The showroom is not a match: nothing to fight, host or join.
-    if opts.showroom.is_some()
-        && (opts.sandbox
-            || opts.battle.is_some()
-            || opts.conquest.is_some()
-            || opts.host
-            || opts.join.is_some())
-    {
+    if let Some(why) = opts.conflict() {
+        eprintln!("{why}");
         usage();
     }
     if opts.showroom.is_some() {
         // The showroom goes straight into the field.
         opts.menu = Some(false);
-    }
-    // The viewer is over the menu: it is not a match, or the showroom.
-    if opts.viewer.is_some()
-        && (opts.sandbox
-            || opts.battle.is_some()
-            || opts.conquest.is_some()
-            || opts.host
-            || opts.join.is_some()
-            || opts.showroom.is_some())
-    {
-        usage();
     }
     if opts.viewer.is_some() {
         opts.menu = Some(true);
@@ -1683,6 +1710,20 @@ struct Watching {
     /// developer's convenience for looking at a late moment of a long
     /// match).
     jump_to: Option<u32>,
+}
+
+impl Watching {
+    /// Whether the world at `tick` has played the whole recording.
+    fn over(&self, tick: u32) -> bool {
+        tick >= self.replay.ticks
+    }
+}
+
+/// What P leaves `paused` as offline. A replay played to its end stays
+/// paused: there is nothing left to play, and the frame loop would only
+/// pause it again a tick later.
+fn pause_key_offline(paused: bool, replay_over: bool) -> bool {
+    replay_over || !paused
 }
 
 /// Process memory recorded at startup milestones, to see what each costs.
@@ -2563,7 +2604,9 @@ impl ApplicationHandler for App {
                             print_memory(&r.renderer);
                         }
                         KeyCode::KeyP | KeyCode::Pause if down && !event.repeat => {
-                            r.paused = !r.paused;
+                            let tick = r.world.tick_count();
+                            let over = r.watching.as_ref().is_some_and(|w| w.over(tick));
+                            r.paused = pause_key_offline(r.paused, over);
                             r.sandbox.dirty = true;
                         }
                         KeyCode::Minus | KeyCode::NumpadSubtract if down => {
@@ -3154,6 +3197,11 @@ impl Running {
                 self.input.right_down = None;
             }
             _ => {}
+        }
+        // A Clear or Fell drag ends with the button, whether or not its
+        // release gave the order (one let go over the bar does not).
+        if (button, state) == (MouseButton::Left, ElementState::Released) {
+            self.input.clear_from = None;
         }
     }
 
@@ -4542,11 +4590,7 @@ impl Running {
             self.sim_clock -= TICK;
             self.pending.clear();
             let tick = self.world.tick_count();
-            if self
-                .watching
-                .as_ref()
-                .is_some_and(|w| tick >= w.replay.ticks)
-            {
+            if self.watching.as_ref().is_some_and(|w| w.over(tick)) {
                 self.sim_clock = Duration::ZERO;
                 self.paused = true;
                 self.sandbox.dirty = true;
@@ -6456,6 +6500,13 @@ impl Running {
         }
         self.guide_scroll = 0.0;
         self.reset_ui_input();
+        // The Guide takes the mouse's releases, so a press half-made on the
+        // bar or the field would be left held down when it closes.
+        self.input.left_down = None;
+        self.input.right_down = None;
+        self.input.middle_down = None;
+        self.input.clear_from = None;
+        self.hud.reset();
     }
 
     /// Draw this frame's Guide and close it when asked.
@@ -10319,7 +10370,7 @@ impl Running {
         }
         if let Some(w) = &self.watching {
             let tick = self.world.tick_count();
-            lines.push(if tick >= w.replay.ticks {
+            lines.push(if w.over(tick) {
                 format!(
                     "REPLAY  {}   over at {}   Esc: menu",
                     w.title,
@@ -11026,6 +11077,68 @@ mod lod_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `--viewer` opens over the main menu, so it refuses every flag that
+    /// starts a match or a scene in one (a match would leave the camera on
+    /// the viewer's model).
+    #[test]
+    fn the_viewer_refuses_every_flag_that_starts_a_match() {
+        let viewer = || Options {
+            viewer: Some("start".into()),
+            ..Options::new()
+        };
+        assert_eq!(viewer().conflict(), None);
+        let starts: [fn(&mut Options); 8] = [
+            |o| o.sandbox = true,
+            |o| o.battle = Some(0),
+            |o| o.conquest = Some(0),
+            |o| o.watch = Some("a.gcreplay".into()),
+            |o| o.siege = true,
+            |o| o.wall_scene = true,
+            |o| o.bridge_scene = true,
+            |o| o.gate_march = Some(0),
+        ];
+        for start in starts {
+            let mut alone = Options::new();
+            start(&mut alone);
+            assert!(alone.starts_a_match());
+            assert_eq!(alone.conflict(), None);
+            let mut both = viewer();
+            start(&mut both);
+            assert!(both.conflict().is_some());
+        }
+    }
+
+    /// The hidden-window check reads memory as the window hides and again
+    /// halfway through, so it needs two hidden frames and one drawn.
+    #[test]
+    fn hidden_frames_are_two_or_more_and_fewer_than_the_frames() {
+        let check = |hidden, frames| Options {
+            hidden_frames: Some(hidden),
+            frames: Some(frames),
+            ..Options::new()
+        };
+        assert!(check(0, 10).conflict().is_some());
+        assert!(check(1, 10).conflict().is_some());
+        assert_eq!(check(2, 10).conflict(), None);
+        assert_eq!(check(600, 900).conflict(), None);
+        assert!(check(10, 10).conflict().is_some());
+        let no_frames = Options {
+            hidden_frames: Some(600),
+            ..Options::new()
+        };
+        assert!(no_frames.conflict().is_some());
+    }
+
+    /// P toggles the pause, except after a replay has played to its end,
+    /// where it stays paused.
+    #[test]
+    fn p_leaves_a_finished_replay_paused() {
+        assert!(pause_key_offline(false, false));
+        assert!(!pause_key_offline(true, false));
+        assert!(pause_key_offline(true, true));
+        assert!(pause_key_offline(false, true));
+    }
 
     #[test]
     fn grid_codes_are_the_grids_keys() {
