@@ -215,6 +215,7 @@ mod roster;
 mod sandbox;
 mod scars;
 mod scenery;
+mod selection;
 mod showroom;
 mod siege;
 mod sky_news;
@@ -264,6 +265,7 @@ use camera::{ActiveCamera, FollowCamera, RideTarget, RtsCamera};
 use gc_map::{FieldMap, Map};
 use models::Action;
 use puppets::{Block, Fighter, Puppets, Soldier};
+use selection::Selection;
 
 #[global_allocator]
 static ALLOC: TaggedAlloc = TaggedAlloc;
@@ -1075,9 +1077,9 @@ struct Running {
     /// The game data as built, which Conquest matches are set up from.
     data: gc_data::GameData<'static>,
     sandbox: Sandbox,
-    selected: Vec<RegimentHandle>,
-    /// The building selected, when no regiment is (Conquest).
-    selected_structure: Option<StructureHandle>,
+    /// The regiments selected, or the building selected when no regiment is
+    /// (Conquest).
+    selected: Selection,
     /// The idle worker F1 last picked, to go on from there.
     idle_from: Option<u32>,
     /// The formation F last ordered, for which selection and on which tick:
@@ -1456,9 +1458,8 @@ impl Sandbox {
             building_tool: false,
             building_turn: 0,
             building: 0,
-            tuning: false,
+            page: SandboxPage::Panel,
             row: 0,
-            credits: false,
             message: None,
             dirty: true,
         }
@@ -1576,14 +1577,23 @@ struct Sandbox {
     /// from one placing to the next).
     building_turn: u8,
     building: BuildingId,
-    /// The stats panel is open (T), with this row chosen.
-    tuning: bool,
+    /// What the panel shows: its own text, the stats panel (T) or the
+    /// credits (C).
+    page: SandboxPage,
+    /// The row chosen on the stats panel, kept from one opening to the next.
     row: usize,
-    /// The credits are showing (C), in place of the overlay text.
-    credits: bool,
     message: Option<(String, Instant)>,
     /// The panel needs redrawing.
     dirty: bool,
+}
+
+/// The page the sandbox panel is on. Only the stats page takes the arrow
+/// keys; the credits take the place of the panel's text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SandboxPage {
+    Panel,
+    Tuning,
+    Credits,
 }
 
 /// The sandbox's and the drill's four sides, named by colour.
@@ -2091,8 +2101,7 @@ impl App {
             sandbox: Sandbox {
                 ..Sandbox::new(opts.sandbox)
             },
-            selected: Vec::with_capacity(64),
-            selected_structure: None,
+            selected: Selection::default(),
             idle_from: None,
             formation_pick: None,
             shown_formation: None,
@@ -2427,7 +2436,7 @@ impl ApplicationHandler for App {
                     {
                         return;
                     }
-                    if r.sandbox.tuning && down && r.tune_key(code) {
+                    if down && r.tuning_shown() && r.tune_key(code) {
                         return;
                     }
                     let reload_key = code == KeyCode::KeyR && r.input.shift;
@@ -2573,7 +2582,10 @@ impl ApplicationHandler for App {
                             r.delete_key();
                         }
                         KeyCode::KeyT if down && !event.repeat => {
-                            r.sandbox.tuning = !r.sandbox.tuning;
+                            r.sandbox.page = match r.sandbox.page {
+                                SandboxPage::Tuning => SandboxPage::Panel,
+                                _ => SandboxPage::Tuning,
+                            };
                             r.input.arrows = [false; 4];
                             r.sandbox.dirty = true;
                         }
@@ -2634,7 +2646,10 @@ impl ApplicationHandler for App {
                             r.sandbox.dirty = true;
                         }
                         KeyCode::KeyC if down && !event.repeat => {
-                            r.sandbox.credits = !r.sandbox.credits;
+                            r.sandbox.page = match r.sandbox.page {
+                                SandboxPage::Credits => SandboxPage::Panel,
+                                _ => SandboxPage::Credits,
+                            };
                             r.sandbox.dirty = true;
                         }
                         KeyCode::KeyH
@@ -2690,14 +2705,12 @@ impl ApplicationHandler for App {
                                 && (r.sandbox.placing
                                     || r.hud.placer
                                     || r.sandbox.building_tool
-                                    || r.sandbox.tuning
-                                    || r.sandbox.credits) =>
+                                    || r.sandbox.page != SandboxPage::Panel) =>
                         {
                             r.sandbox.placing = false;
                             r.hud.placer = false;
                             r.sandbox.building_tool = false;
-                            r.sandbox.tuning = false;
-                            r.sandbox.credits = false;
+                            r.sandbox.page = SandboxPage::Panel;
                             r.sandbox.dirty = true;
                         }
                         KeyCode::Escape if down && !event.repeat => r.open_menu(),
@@ -3012,17 +3025,16 @@ impl Running {
                 self.input.left_down = None;
             }
             (MouseButton::Left, ElementState::Released) => {
-                if !self.input.shift {
+                if self.input.shift {
+                    self.selected.drop_structure();
+                } else {
                     self.selected.clear();
                 }
-                self.selected_structure = None;
                 if let Some(rect) = self.selection_box() {
                     self.regiments_in_box(rect);
                     for i in 0..self.boxed.len() {
                         let h = self.boxed[i];
-                        if !self.selected.contains(&h) {
-                            self.selected.push(h);
-                        }
+                        self.selected.add(h);
                     }
                 } else {
                     // A click on one of your buildings picks it, unless one
@@ -3039,10 +3051,14 @@ impl Running {
                     let reach = if building.is_some() { 1.5 } else { 6.0 };
                     match self.own_regiment_at_cursor(reach) {
                         Some(h) => self.toggle_selected(h),
-                        None => self.selected_structure = building,
+                        None => {
+                            if let Some(b) = building {
+                                self.selected.select_structure(b);
+                            }
+                        }
                     }
                 }
-                if !self.selected.is_empty() || self.selected_structure.is_some() {
+                if !matches!(self.selected, Selection::Nothing) {
                     self.ui_sound(sounds::UiSound::Select);
                 }
                 self.input.left_down = None;
@@ -3120,11 +3136,11 @@ impl Running {
                 if ordered && !queue && !self.world.deploying() {
                     let now = Instant::now();
                     let again = (self.last_right.take())
-                        .is_some_and(|(t, who)| now - t < DOUBLE_TAP && who == self.selected);
+                        .is_some_and(|(t, who)| now - t < DOUBLE_TAP && *who == *self.selected);
                     if again {
                         self.run();
                     } else {
-                        self.last_right = Some((now, self.selected.clone()));
+                        self.last_right = Some((now, self.selected.to_vec()));
                     }
                 }
                 self.input.right_down = None;
@@ -3395,12 +3411,7 @@ impl Running {
 
     /// Add `h` to the selection, or take it out if it is already in.
     fn toggle_selected(&mut self, h: RegimentHandle) {
-        match self.selected.iter().position(|&s| s == h) {
-            Some(i) => {
-                self.selected.swap_remove(i);
-            }
-            None => self.selected.push(h),
-        }
+        self.selected.toggle(h);
     }
 
     /// Fill `self.group` with the selection as group orders see it, each
@@ -3611,12 +3622,10 @@ impl Running {
         let (regiments, side) = (&self.world.regiments, self.sandbox.side);
         self.control_groups[n].retain(|&h| regiments.get(h).is_some_and(|r| r.owner == side));
         if !self.input.shift {
-            self.selected.clear();
+            self.selected.clear_regiments();
         }
         for &h in &self.control_groups[n] {
-            if !self.selected.contains(&h) {
-                self.selected.push(h);
-            }
+            self.selected.add(h);
         }
         if !self.selected.is_empty() {
             self.ui_sound(sounds::UiSound::Select);
@@ -3738,7 +3747,7 @@ impl Running {
         self.armies[n] = Some(army);
         self.control_groups[n].extend_from_slice(&newcomers);
         let k = newcomers.len();
-        self.selected = newcomers;
+        self.selected = Selection::from(newcomers);
         self.send_planned(false, false);
         self.say(format!(
             "Sent {k} {} to join army {}.",
@@ -3969,7 +3978,7 @@ impl Running {
         // may not have landed yet), else from where it stands now: a shield
         // regiment's formation, since the rest stand in Tight for its wall.
         let current = match &self.formation_pick {
-            Some((selection, f, at)) if *selection == self.selected && tick < at + 40 => *f,
+            Some((selection, f, at)) if **selection == *self.selected && tick < at + 40 => *f,
             _ => ready().find(shielded).unwrap_or(first).formation,
         };
         let wedges = |r: &gc_sim::RegimentView| units[r.unit as usize].can_wedge();
@@ -4001,7 +4010,7 @@ impl Running {
                 },
             });
         }
-        self.formation_pick = Some((self.selected.clone(), next, tick));
+        self.formation_pick = Some((self.selected.to_vec(), next, tick));
         self.ui_sound(sounds::UiSound::Move);
         let note = if closed_up {
             " (Tight for those without shields)"
@@ -4230,7 +4239,7 @@ impl Running {
             return;
         }
         let before = self.human_orders.len();
-        for &regiment in &self.selected {
+        for &regiment in self.selected.iter() {
             if self.world.regiments.owner(regiment).is_some() {
                 self.human_orders.push(PlayerCommand {
                     player: self.sandbox.side,
@@ -6614,6 +6623,8 @@ impl Running {
         // comes back.
         if let Some(w) = self.watching.take() {
             self.units.stats = w.stats_before;
+            // The replay lifted the fog itself; a sandbox does not inherit that.
+            self.reveal_all = false;
         }
         // Conquest plays with its own regiment types.
         let conquest = match &kind {
@@ -6846,7 +6857,6 @@ impl Running {
         self.pending.clear();
         self.human_orders.clear();
         self.selected.clear();
-        self.selected_structure = None;
         self.idle_from = None;
         self.hud.forget_readout();
         self.boxed.clear();
@@ -8259,7 +8269,7 @@ impl Running {
         // The menu covers the field, so the sandbox panel waits behind it.
         let mut text = if self.menu_open {
             String::new()
-        } else if self.sandbox.credits {
+        } else if self.sandbox.page == SandboxPage::Credits {
             credits::lines().join("\n")
         } else if self.showroom.is_some() {
             String::new()
@@ -8318,7 +8328,6 @@ impl Running {
         // The ridden regiment may be one the new side can't see.
         self.leave_ride();
         self.selected.clear();
-        self.selected_structure = None;
         if let Some(drill) = &mut self.drill {
             drill.skip_player = Some(self.sandbox.side);
         }
@@ -10082,14 +10091,22 @@ impl Running {
         let doomed: Vec<RegimentHandle> = if all {
             self.world.regiments.iter().map(|r| r.handle).collect()
         } else {
-            std::mem::take(&mut self.selected)
+            self.selected.take_regiments()
         };
         self.human_orders
             .extend(doomed.into_iter().map(|regiment| PlayerCommand {
                 player: side,
                 command: gc_sim::Command::RemoveRegiment { regiment },
             }));
-        self.selected.clear();
+        self.selected.clear_regiments();
+    }
+
+    /// The stats panel (T) is on screen, which is when the arrows tune. A
+    /// replay and the showroom show no panel, so the arrows keep panning there.
+    fn tuning_shown(&self) -> bool {
+        self.sandbox.page == SandboxPage::Tuning
+            && self.watching.is_none()
+            && self.showroom.is_none()
     }
 
     /// Up and Down pick a stat, Left and Right change it (Shift: ten steps).
@@ -10296,7 +10313,7 @@ impl Running {
                 ));
             }
         }
-        if sb.tuning && self.watching.is_none() {
+        if self.tuning_shown() {
             let on_field = self
                 .world
                 .regiments

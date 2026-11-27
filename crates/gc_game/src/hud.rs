@@ -568,7 +568,7 @@ impl Running {
             .generals()
             .find(|g| g.party == side && g.fell.is_none())
             .map(|g| g.regiment);
-        for &h in &self.selected {
+        for &h in self.selected.iter() {
             let Some(r) = self.world.regiments.get(h).filter(|r| r.owner == side) else {
                 continue;
             };
@@ -724,14 +724,11 @@ impl Running {
         self.selected
             .retain(|&h| self.world.regiments.get(h).is_some());
         self.drop_stale_power();
-        // A building stays selected while it stands and is ours, and until
-        // a regiment is.
-        if !self.selected.is_empty()
-            || self
-                .selected_structure
-                .is_some_and(|h| self.world.structures().and_then(|s| s.owner(h)) != Some(side))
+        // A building stays selected while it stands and is ours.
+        if (self.selected.structure())
+            .is_some_and(|h| self.world.structures().and_then(|s| s.owner(h)) != Some(side))
         {
-            self.selected_structure = None;
+            self.selected.drop_structure();
         }
         let tick = self.world.tick_count();
         if self
@@ -914,7 +911,7 @@ impl Running {
         let mut chevrons: Vec<([i32; 2], u8)> = Vec::new();
         if self.ride.is_none() {
             let field = gc_ui::hud::HudLayout::new(screen).field;
-            for &h in &self.selected {
+            for &h in self.selected.iter() {
                 let (Some(r), Some(f)) = (
                     self.world.regiments.get(h),
                     self.world.regiments.feedback(h),
@@ -1458,8 +1455,7 @@ impl Running {
                 if add {
                     self.toggle_selected(h);
                 } else {
-                    self.selected.clear();
-                    self.selected.push(h);
+                    self.selected.select_only(h);
                 }
                 self.ui_sound(sounds::UiSound::Select);
             }
@@ -1696,7 +1692,7 @@ impl Running {
 
     /// The selected building: only while no regiment is selected.
     pub fn picked_structure(&self) -> Option<StructureHandle> {
-        self.selected_structure.filter(|_| self.selected.is_empty())
+        self.selected.structure()
     }
 
     /// F1: select the next idle worker and look at it.
@@ -1713,9 +1709,7 @@ impl Running {
             return;
         };
         self.idle_from = Some(h.index);
-        self.selected.clear();
-        self.selected.push(h);
-        self.selected_structure = None;
+        self.selected.select_only(h);
         if let Some(p) = self.world.regiments.position(h) {
             self.look_at(from_fx_vec(p));
         }

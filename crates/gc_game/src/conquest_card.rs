@@ -20,6 +20,7 @@ use gc_ui::hud::{GRID_SLOTS, SlotState};
 use glam::Vec2;
 
 use crate::hud::Armed;
+use crate::selection::Selection;
 use crate::{Running, buildings, from_fx_vec, fx_vec, sounds};
 
 /// A worker's Build button: F, the special slot.
@@ -786,7 +787,7 @@ impl Running {
         // the wall), else a move. Those orders go to the selection, so it
         // is the rest for them.
         if let Some(at) = at.filter(|_| !rest.is_empty()) {
-            let selected = std::mem::replace(&mut self.selected, rest);
+            let selected = std::mem::replace(&mut self.selected, Selection::from(rest));
             if !self.conquest_right_click(at) {
                 self.issue_group_order(crate::hud::move_order(at));
             }
@@ -867,7 +868,7 @@ impl Running {
             structure: wall,
         }));
         if !rest.is_empty() {
-            let selected = std::mem::replace(&mut self.selected, rest);
+            let selected = std::mem::replace(&mut self.selected, Selection::from(rest));
             self.issue_siege(wall);
             self.selected = selected;
         }
