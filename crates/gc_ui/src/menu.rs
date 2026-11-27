@@ -598,15 +598,18 @@ impl<N: Network> Menu<N> {
         if ui.button(stack.next(button_h), quit, ButtonStyle::Normal, true) {
             action = MenuAction::Quit;
         }
-        ui.label(
-            12,
-            h - 24,
-            1,
-            theme::MUTED,
-            &format!("Grubcraft {}", self.version),
-        );
+        let version = format!("Grubcraft {}", self.version);
+        ui.label(12, h - 24, 1, theme::MUTED, &version);
         let hint = "Esc closes menus";
         ui.label_right(w - 12, h - 24, 1, theme::MUTED, hint);
+        // Why a button did nothing (the unit viewer without its models),
+        // on the bottom line between the version and the hint.
+        if let Some((text, _)) = &self.message {
+            let side = 12 + text_width(&version, 1).max(text_width(hint, 1)) + 16;
+            let room = ((w - 2 * side) / 8).max(8) as usize;
+            let line = Rect::new(0, h - 24, w, 16);
+            ui.label_centered(line, 1, theme::BAD_INK, &fit(text, room));
+        }
         if escape && self.in_match {
             if self.surrender_sure {
                 // Esc first takes the question back.
@@ -1169,7 +1172,12 @@ impl<N: Network> Menu<N> {
             ("", "Sky")
         };
         // A map code note takes the code row's right end while it shows,
-        // over the steppers that share that row.
+        // over the steppers that share that row. A note about another map
+        // (New map was pressed under it last frame) is gone: the code box
+        // below would drop it before drawing, and the steppers must show.
+        if self.code_for != Some(settings.map_seed) {
+            self.code_note = None;
+        }
         let noting = lobby.is_host && self.code_note.is_some();
         if noting && !two_rows {
         } else if lobby.is_host {
@@ -1378,10 +1386,12 @@ impl<N: Network> Menu<N> {
         };
         ui.label(panel.x + 24, footer_y + 22, 1, theme::INK, todo);
         // Why Start is greyed out, right beside it.
-        let (why, color) = match &blocker {
-            Some(why) if mismatch => (why.as_str(), theme::BAD_INK),
-            Some(why) => (why.as_str(), theme::INK),
-            None => ("Everyone is ready.", theme::GOOD_INK),
+        // Or why Start just failed, until the screen changes.
+        let (why, color) = match (&self.message, &blocker) {
+            (Some((text, _)), _) => (text.as_str(), theme::BAD_INK),
+            (None, Some(why)) if mismatch => (why.as_str(), theme::BAD_INK),
+            (None, Some(why)) => (why.as_str(), theme::INK),
+            (None, None) => ("Everyone is ready.", theme::GOOD_INK),
         };
         let room = ((panel.w - 48 - text_width(todo, 1) - 24) / 8).max(0) as usize;
         let why = fit(why, room);
@@ -3060,6 +3070,55 @@ mod tests {
         h.click("not a code");
         type_text(&mut h, "x");
         assert!(!h.has("Not a map code"));
+    }
+
+    #[test]
+    fn new_map_under_a_map_code_note_keeps_the_sky_steppers() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        assert!(h.has("Weather"));
+        clear_code_box(&mut h);
+        type_text(&mut h, "not a code");
+        h.frame(UiInput {
+            enter: true,
+            ..Default::default()
+        });
+        h.frame(UiInput::default());
+        assert!(h.has("Not a map code") && !h.has("Weather"));
+        // The frame after New map: the note was about the old map, so the
+        // steppers are back at once rather than one frame later.
+        h.click("New map");
+        assert!(!h.has("Not a map code"));
+        assert!(h.has("Weather"));
+    }
+
+    #[test]
+    fn the_main_menu_says_why_the_unit_viewer_did_not_open() {
+        let mut h = Harness::new();
+        h.click("Unit viewer");
+        // The click's frame asked for the viewer; the game says no.
+        let why = "The unit viewer needs the 3D models, which did not load.";
+        h.menu.tell(why.into());
+        h.frame(UiInput::default());
+        assert_eq!(h.menu.screen(), Screen::Main);
+        assert!(h.has(why));
+        h.click("Settings");
+        h.click("Back");
+        assert!(!h.has(why));
+    }
+
+    #[test]
+    fn the_lobby_says_why_start_failed() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        h.click("Add AI");
+        assert!(h.has("Everyone is ready."));
+        h.menu.tell("The match has already started.".into());
+        h.frame(UiInput::default());
+        assert!(h.has("The match has already started."));
+        assert!(!h.has("Everyone is ready."));
     }
 
     /// A network that takes every join and notes where it went.
