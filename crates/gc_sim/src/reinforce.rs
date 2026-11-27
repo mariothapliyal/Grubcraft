@@ -33,9 +33,8 @@ use alloc::vec::Vec;
 use gc_fixed::{Fx, FxVec2};
 
 use crate::conquest::{Conquest, ConquestUnit};
-use crate::hash::StateHasher;
 use crate::regiments::Regiments;
-use crate::state::State;
+use crate::state::packed_state;
 use crate::structures::{POWERS_FIELD, Role, Structures, nearest_point};
 use crate::veins::within;
 use crate::{PlayerId, UnitStats};
@@ -91,21 +90,11 @@ impl Refill {
     }
 }
 
-impl State for Refill {
-    fn write(&self, out: &mut Vec<u8>) {
-        self.byte().write(out);
-    }
-    fn read(input: &mut &[u8]) -> Option<Self> {
-        Some(match u8::read(input)? {
-            0 => Refill::Idle,
-            REFILL_SHORT => Refill::Short,
-            seconds => Refill::Counting(seconds),
-        })
-    }
-    fn hash(&self, h: &mut StateHasher) {
-        self.byte().hash(h);
-    }
-}
+packed_state!(Refill: u8, Refill::byte, |byte| Some(match byte {
+    0 => Refill::Idle,
+    REFILL_SHORT => Refill::Short,
+    seconds => Refill::Counting(seconds),
+}));
 
 /// Which building types reinforce, by building id: main buildings,
 /// outposts, and every building that trains a unit (or is a tier upgrade
@@ -353,7 +342,7 @@ mod tests {
     use super::*;
     use crate::nav::CELLS_PER_TILE;
     use crate::scenario::{DRILL_UNITS, NORTH};
-    use crate::state::written;
+    use crate::state::{State, written};
     use crate::structures::{Armour, Trap, WallTwist};
     use crate::{
         BuildingStats, Capacities, Command, ConquestSetup, MAX_PARTIES, MatchSetup, PlayerCommand,
@@ -374,6 +363,7 @@ mod tests {
         }
     }
 
+    /// A check that [`Refill`] counts as the old field did.
     #[test]
     fn refill_counts_as_the_old_byte_did() {
         for b in 0..=u8::MAX {

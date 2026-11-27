@@ -9,7 +9,7 @@ use crate::morale::{self, MoraleState};
 use crate::nav::{self, Nav};
 use crate::orders::{NO_PLAN, Plan, PlanIndex, Plans, Queue, Step};
 use crate::reinforce::Refill;
-use crate::state::State;
+use crate::state::{State, packed_state};
 use crate::terrain::Terrain;
 use crate::{Formation, PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
 
@@ -175,21 +175,11 @@ impl Stuck {
     }
 }
 
-impl State for Stuck {
-    fn write(&self, out: &mut Vec<u8>) {
-        self.byte().write(out);
-    }
-    fn read(input: &mut &[u8]) -> Option<Self> {
-        Some(match u8::read(input)? {
-            0 => Stuck::Free,
-            ticks @ 1..GHOST => Stuck::Kept(ticks),
-            byte => Stuck::Through(byte - GHOST),
-        })
-    }
-    fn hash(&self, h: &mut StateHasher) {
-        self.byte().hash(h);
-    }
-}
+packed_state!(Stuck: u8, Stuck::byte, |byte| Some(match byte {
+    0 => Stuck::Free,
+    ticks @ 1..GHOST => Stuck::Kept(ticks),
+    byte => Stuck::Through(byte - GHOST),
+}));
 /// It looks for friends to keep its spacing from at most every this
 /// many ticks, keeping up its last step aside in between.
 const KEEP_EVERY: u8 = 4;
@@ -290,22 +280,12 @@ impl Stride {
     }
 }
 
-impl State for Stride {
-    fn write(&self, out: &mut Vec<u8>) {
-        self.bytes().write(out);
-    }
-    fn read(input: &mut &[u8]) -> Option<Self> {
-        Some(match <[u8; 2]>::read(input)? {
-            [0, 0] => Stride::Fresh,
-            [run, 0] => Stride::Running(run),
-            [0, winded] => Stride::Winded(winded),
-            _ => return None,
-        })
-    }
-    fn hash(&self, h: &mut StateHasher) {
-        self.bytes().hash(h);
-    }
-}
+packed_state!(Stride: [u8; 2], Stride::bytes, |bytes| match bytes {
+    [0, 0] => Some(Stride::Fresh),
+    [run, 0] => Some(Stride::Running(run)),
+    [0, winded] => Some(Stride::Winded(winded)),
+    _ => None,
+});
 
 /// How near (tiles, along each axis) the next waypoint of a block's route
 /// is looked at for a narrows to narrow to fit beforehand (see `squeeze`).
@@ -2737,6 +2717,7 @@ mod tests {
         }
     }
 
+    /// A check that [`Stride`] counts as the old fields did.
     #[test]
     fn a_stride_wears_and_ends_as_the_old_counts_did() {
         // The old `wear_orders` and `end_run`, on `run_left` and
@@ -2795,6 +2776,7 @@ mod tests {
         }
     }
 
+    /// A check that [`Stuck`] counts as the old field did.
     #[test]
     fn stuck_counts_as_the_old_byte_did() {
         for b in 0..=u8::MAX {
