@@ -82,7 +82,16 @@ impl Structures {
     }
 
     /// Set building slot `i`'s gate (the caller has checked it is one).
+    /// A new setting drops any hold left over from the last time it stood
+    /// on Auto: Locked and Open never count the hold down, so a gate
+    /// locked just after its side went through would otherwise stand open
+    /// to everyone for that hold the moment it is set back to Auto, with
+    /// no one of its side near it. Its first Auto tick holds it open again
+    /// if its side is still about.
     pub(crate) fn set_gate(&mut self, i: usize, mode: GateMode) {
+        if self.gate[i] != mode {
+            self.gate_hold[i] = 0;
+        }
         self.gate[i] = mode;
     }
 

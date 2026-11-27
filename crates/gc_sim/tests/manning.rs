@@ -10,9 +10,9 @@ use gc_sim::nav::CELLS_PER_TILE;
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::structures::{Armour, LINE, Refusal, Role, TowerAttack};
 use gc_sim::{
-    BuildingStats, Capacities, Command, ConquestSetup, ConquestUnit, Cover, Ground, Growth,
-    MatchSetup, PlayerCommand, RegimentHandle, RegimentView, StructureHandle, TICKS_PER_SECOND,
-    UnitStats, World,
+    BuildingStats, Capacities, Command, ConquestSetup, ConquestUnit, Cover, Formation, Ground,
+    Growth, MatchSetup, PlayerCommand, RegimentHandle, RegimentView, StructureHandle,
+    TICKS_PER_SECOND, UnitStats, World,
 };
 
 const WORKER: u16 = 0;
@@ -448,6 +448,28 @@ fn it_comes_down_in_the_shape_it_climbed_in() {
     assert_ne!(view(&w, ours).unwrap().frontage, frontage);
     assert!(move_to(&mut w, 0, ours, 10, 24));
     assert_eq!(view(&w, ours).unwrap().frontage, frontage);
+}
+
+#[test]
+fn a_column_down_off_the_wall_still_widens_to_its_old_line() {
+    let mut w = world();
+    let ours = spawn(&mut w, 0, FOOT, 14, 24);
+    let line = view(&w, ours).unwrap().frontage;
+    let formation = |formation| Command::SetFormation {
+        regiment: ours,
+        formation,
+    };
+    assert!(order(&mut w, 0, formation(Formation::Column)));
+    let column = view(&w, ours).unwrap().frontage;
+    assert!(column < line, "column {column}, line {line}");
+    assert!(man(&mut w, 0, ours, (WALL_X, 24)));
+    climb(&mut w, ours);
+    assert!(move_to(&mut w, 0, ours, 10, 24));
+    assert_eq!(view(&w, ours).unwrap().frontage, column);
+    // Out of the column it forms the line it stood in before, not one as
+    // narrow as the column.
+    assert!(order(&mut w, 0, formation(Formation::Line)));
+    assert_eq!(view(&w, ours).unwrap().frontage, line);
 }
 
 /// Whether side 0's regiment of `unit` on the wall is still up there

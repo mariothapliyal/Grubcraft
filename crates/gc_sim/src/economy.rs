@@ -270,6 +270,10 @@ pub struct Economy {
     node_at: Vec<FxVec2>,
     node_left: Vec<u32>,
     node_full: Vec<u32>,
+    /// Each pile slot's pile: one more for every pile laid in it, so a
+    /// worker still about the last one can tell a new pile there isn't its
+    /// own (the map's nodes stay at 0).
+    node_gen: Vec<u16>,
     /// Workers filling a load at each node; counted afresh each tick.
     node_busy: Vec<u8>,
     /// The building tuning each node, worked out again whenever the
@@ -295,6 +299,10 @@ pub struct Economy {
     step: Vec<Step>,
     node: Vec<u16>,
     work_gen: Vec<u16>,
+    /// By regiment slot: the [`Economy::node_gen`] of the pile it was sent
+    /// to, so it doesn't go on to whatever pile is laid in the same slot
+    /// once its own is gone.
+    pile_gen: Vec<u16>,
     load: Vec<Option<(Resource, u8)>>,
     clock: Vec<u16>,
     /// By regiment slot, while filling: what it took from the node when it
@@ -339,6 +347,7 @@ impl Economy {
                 .collect(),
             node_left: nodes(|n| n.amount),
             node_full: nodes(|n| n.amount),
+            node_gen: vec![0; slots],
             node_busy: vec![0; slots],
             node_tuner: vec![None; slots],
             node_harmony: vec![0; slots],
@@ -350,6 +359,7 @@ impl Economy {
             step: vec![Step::Idle; n],
             node: vec![0; n],
             work_gen: vec![0; n],
+            pile_gen: vec![0; n],
             load: vec![None; n],
             clock: vec![0; n],
             taking: vec![0; n],
@@ -463,15 +473,24 @@ impl Economy {
         n >= self.real
     }
 
+    /// Whether the node regiment slot `r` was sent to is still the one in
+    /// its slot: a map's node always is; a pile slot may have been cleared
+    /// and laid again with another pile since.
+    fn same_node(&self, r: usize) -> bool {
+        let n = usize::from(self.node[r]);
+        !self.is_pile(n) || self.node_gen[n] == self.pile_gen[r]
+    }
+
     /// Whether the regiment in slot `r` is the one this economy's record
     /// for the slot is about.
     fn ours(&self, regs: &Regiments, r: usize) -> bool {
         regs.alive[r] && regs.generation[r] == self.work_gen[r]
     }
 
-    /// The node regiment slot `r` is working, if it is.
+    /// The node regiment slot `r` is working, if it is (not a new pile in
+    /// the slot of one it emptied: it is only taking its last load home).
     pub(crate) fn work_of(&self, regs: &Regiments, r: usize) -> Option<u16> {
-        (self.step[r].gathers() && self.ours(regs, r)).then_some(self.node[r])
+        (self.step[r].gathers() && self.ours(regs, r) && self.same_node(r)).then_some(self.node[r])
     }
 
     /// What regiment slot `r` carries: how much of what.
@@ -502,6 +521,7 @@ impl Economy {
             Step::ToNode
         };
         self.node[r] = node;
+        self.pile_gen[r] = self.node_gen[usize::from(node)];
         self.work_gen[r] = regs.generation[r];
         self.clock[r] = 0;
         self.set_off(r);
@@ -672,7 +692,8 @@ impl Economy {
                 Step::ToPost | Step::Loading | Step::Hauling => {
                     self.trade_round(regs, &at, r, &mut used);
                 }
-                Step::ToNode if !self.is_live(n) => self.stop(r),
+                // Its pile is gone, even if another lies in its slot now.
+                Step::ToNode if !self.is_live(n) || !self.same_node(r) => self.stop(r),
                 Step::ToNode => self.walk_to_node(regs, r, n, burrows, quick),
                 Step::Filling if self.clock[r] == 0 => self.fill(r, n),
                 Step::Carrying if burrows => self.send_home(regs, kinds, structures, r, &mut used),
@@ -801,7 +822,8 @@ impl Economy {
     /// A burrowed worker's load comes home through the root-veins once it
     /// is at its node and the node is on its owner's veins; else it tries
     /// again in a while. (A worker sent elsewhere with a load takes it to
-    /// its new node first.)
+    /// its new node first.) One whose pile is gone and another laid in its
+    /// slot banks where it stands, not at the new pile.
     fn send_home(
         &mut self,
         regs: &mut Regiments,
@@ -811,10 +833,15 @@ impl Economy {
         used: &mut Option<[u32; MAX_PARTIES]>,
     ) {
         let n = usize::from(self.node[r]);
-        if self.clock[r] > 0 || !self.at_node(regs, r, n) {
+        let at = if self.same_node(r) {
+            self.node_at[n]
+        } else {
+            regs.position[r]
+        };
+        if self.clock[r] > 0 || !self.at_point(regs, r, at, NODE_REACH) {
             return;
         }
-        if !structures.on_veins(regs.owner[r], self.node_at[n]) {
+        if !structures.on_veins(regs.owner[r], at) {
             self.clock[r] = RETRY_TICKS;
             return;
         }
@@ -1000,6 +1027,7 @@ impl Economy {
             h.u32(self.node_left[i]);
             h.u32(self.node_full[i]);
             h.u32(self.tune_clock[i]);
+            h.u16(self.node_gen[i]);
         }
         h.u32(self.posts.len() as u32);
         for at in &self.posts {
@@ -1021,6 +1049,7 @@ impl Economy {
             }
             h.u8(1 + self.step[r] as u8);
             h.u16(self.node[r]);
+            h.u16(self.pile_gen[r]);
             let (kind, amount) = self.load[r].map_or((0, 0), |(k, a)| (k as u8 + 1, a));
             h.u8(kind);
             h.u8(amount);

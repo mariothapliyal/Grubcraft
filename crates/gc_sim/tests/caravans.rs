@@ -754,6 +754,66 @@ fn what_dead_workers_took_goes_back_to_their_pile_before_it_is_cleared() {
 }
 
 #[test]
+fn a_worker_that_emptied_a_pile_leaves_a_new_one_in_its_slot_be() {
+    // Two caravans of player 0's take on cargo and are sent aside, to keep
+    // it; one is lost, and its pile is laid.
+    let mut w = conquest(&[], &[post_east(30)]);
+    let first = base(&mut w);
+    let second = spawn(&mut w, 0, CARAVAN, 11, 8);
+    for c in [first, second] {
+        assert!(trade(&mut w, 0, c, TradePost::Hamlet(0)));
+    }
+    while w.cargo(first).is_none() || w.cargo(second).is_none() {
+        w.tick(&[]);
+    }
+    for (c, y) in [(first, 30), (second, 50)] {
+        assert!(order(
+            &mut w,
+            0,
+            Command::MoveTo {
+                regiment: c,
+                target: FxVec2::from_ints(40, y),
+                facing: None,
+                files: 0,
+                pace: Fx::ZERO,
+                brigade: 0,
+            }
+        ));
+    }
+    run(&mut w, 30 * SECOND);
+    let gone = |c| Command::RemoveRegiment { regiment: c };
+    assert!(order(&mut w, 0, gone(first)));
+    let pile = piles(&w)[0];
+    // Player 2's worker empties it, its granary a long way off.
+    put_up(&mut w, 2, GRANARY, 4, 56);
+    let (px, py) = (pile.at.x.floor_int(), pile.at.y.floor_int());
+    let worker = spawn(&mut w, 2, WORKER, px + 1, py + 1);
+    assert!(order(
+        &mut w,
+        2,
+        Command::Gather {
+            regiment: worker,
+            node: pile.index
+        }
+    ));
+    while !piles(&w).is_empty() {
+        w.tick(&[]);
+    }
+    // While it takes the last load home, the other caravan is lost, and
+    // its pile is laid in the same slot, 20 tiles off.
+    assert!(w.carries(worker).is_some());
+    assert!(order(&mut w, 0, gone(second)));
+    let laid = piles(&w)[0];
+    assert_eq!(laid.index, pile.index);
+    assert!((laid.at - pile.at).length() > Fx::from_int(10));
+    // It banks that load and stops, leaving the new pile alone.
+    run(&mut w, 3 * 60 * SECOND);
+    assert_eq!(grub(&w, 2), 38);
+    assert_eq!(w.gathers_at(worker), None);
+    assert_eq!(piles(&w)[0].left, laid.full);
+}
+
+#[test]
 fn workers_and_caravans_crowd_nobody() {
     // A caravan and a worker stand inside a block of spears: about their
     // own business, they neither throw it out of order nor make it shift

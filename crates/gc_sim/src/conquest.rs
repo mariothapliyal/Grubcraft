@@ -976,9 +976,11 @@ impl Conquest {
     }
 
     /// Regiment slot `r` was given another order: it stops attacking or
-    /// building, and stops gathering or trading. Every order that sets a regiment to
-    /// work calls this first.
+    /// building, gathering or trading, and planting stakes. Every order
+    /// that sets a regiment to work calls this first.
     pub(crate) fn stop_work(&mut self, r: usize) {
+        // By slot: a planting by a regiment gone from the slot is over too.
+        self.planting.retain(|p| p.regiment.index as usize != r);
         self.blueprints.forget(r);
         self.structures.stop(r);
         self.economy.stop(r);

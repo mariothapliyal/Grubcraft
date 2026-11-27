@@ -692,7 +692,8 @@ impl Conquest {
 
     /// Hold `k`'s regiment comes down off the wall to `at` (on the ground
     /// by the wall), and the hold is gone. Its order, if it was given one,
-    /// stands, and it takes back the shape it had before it climbed.
+    /// stands, and it takes back the shape it had before it climbed, the
+    /// width a column or wedge kept to form up at on leaving it included.
     fn come_down(
         &mut self,
         k: usize,
@@ -711,8 +712,15 @@ impl Conquest {
         regs.on_wall[r] = false;
         regs.climber[r] = false;
         regs.loophole[r] = false;
+        // A column (or wedge) still keeps the width it stood at before it
+        // narrowed: it stood in Line up there without touching that, and
+        // setting its frontage back must not record the narrowed width as
+        // the one to widen out to on leaving the column.
+        let kept = regs.width_kept[r];
         regs.formation[r] = o.formation;
-        regs.set_frontage(r, o.frontage);
+        let own = o.formation.own_frontage();
+        regs.set_frontage(r, if kept > 0 && own { kept } else { o.frontage });
+        regs.width_kept[r] = kept;
         let at = nav.settle(regs.owner[r], at, regs.berth(units, r));
         regs.position[r] = at;
     }
