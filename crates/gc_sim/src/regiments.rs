@@ -1527,9 +1527,12 @@ impl Regiments {
         if self.owner[i] == self.owner[t] || self.morale_state[i].broken() {
             return false;
         }
-        if self.attack_target[i] != Some(target) {
+        if self.attack_target[i] != Some(target) && self.round[i].is_some() {
             // Going round only the foe it was going round (see
-            // `combat::Round`): an order repeated keeps it on its way.
+            // `combat::Round`): an order repeated keeps it on its way. Not
+            // going round, its crowded turns are those of the fight it is
+            // locked in, whatever it is ordered onto (`Combat::before_move`
+            // resets them when its foe changes).
             self.end_round(i);
         }
         self.take_on(i, target);
@@ -3016,7 +3019,10 @@ mod tests {
     }
 
     /// An attack on another foe calls off going round the last one, and
-    /// its ticks on the way with it: they are not crowded turns.
+    /// its ticks on the way with it: they are not crowded turns. Not going
+    /// round, a block locked in a fight keeps the crowded turns of that
+    /// fight whatever it is ordered onto (the fight resets them when its
+    /// foe changes).
     #[test]
     fn a_new_attack_leaves_no_crowded_turns() {
         let mut regs = Regiments::with_capacity(4);
@@ -3029,8 +3035,18 @@ mod tests {
         assert!(regs.attack(me, old));
         regs.round[i] = core::num::NonZeroU8::new(1);
         regs.crowded[i] = 30;
+        // The same order again keeps it on its way round.
+        assert!(regs.attack(me, old));
+        assert_eq!(regs.round[i], core::num::NonZeroU8::new(1));
+        assert_eq!(regs.crowded[i], 30);
         assert!(regs.attack(me, new));
         assert_eq!(regs.round[i], None);
         assert_eq!(regs.crowded[i], 0);
+        // Locked with `old` and crowded, not going round: ordered onto
+        // `new`, its turns crowded against `old` stand.
+        assert!(regs.attack(me, old));
+        regs.crowded[i] = 12;
+        assert!(regs.attack(me, new));
+        assert_eq!(regs.crowded[i], 12);
     }
 }

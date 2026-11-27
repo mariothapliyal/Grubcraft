@@ -823,6 +823,10 @@ fn a_worker_that_emptied_a_pile_leaves_a_new_one_in_its_slot_be() {
     let laid = piles(&w)[0];
     assert_eq!(laid.index, pile.index);
     assert!((laid.at - pile.at).length() > Fx::from_int(10));
+    // Taking that load home it is not told as gathering at the new pile.
+    w.tick(&[]);
+    assert!(w.carries(worker).is_some());
+    assert_eq!(w.gathers_at(worker), None);
     // It banks that load and stops, leaving the new pile alone.
     run(&mut w, 3 * 60 * SECOND);
     assert_eq!(grub(&w, 2), 38);
@@ -863,6 +867,8 @@ fn a_burrower_that_emptied_a_pile_does_not_take_its_load_to_a_new_one() {
     let laid = piles(&w)[0];
     assert_eq!(laid.index, pile.index);
     assert!((laid.at - pile.at).length() > Fx::from_int(10));
+    // Holding the old pile's load, it is not burrowed at the new one.
+    assert_eq!(w.burrowed_at(worker), None);
     run(&mut w, 60 * SECOND);
     let now = w.regiments.get(worker).unwrap().position;
     assert!(

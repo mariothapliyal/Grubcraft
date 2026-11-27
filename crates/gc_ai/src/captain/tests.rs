@@ -128,19 +128,79 @@ fn pressing_on_or_stopping_drops_the_wait_behind_the_water() {
     assert!(!c.crossing, "still crossing with no ford to go for");
 }
 
+/// Open ground two tiles high with a river across the whole field, from
+/// 110 to 130 tiles down it, wadeable everywhere.
+fn river_across() -> Terrain {
+    let n = MAP as usize;
+    let heights = (0..n * n)
+        .map(|t| {
+            if (110..130).contains(&(t / n)) {
+                0.0
+            } else {
+                2.0
+            }
+        })
+        .collect();
+    Terrain::open(MAP).with_heights(heights, 1.0)
+}
+
 #[test]
-fn stopping_on_the_way_to_a_ford_of_its_own_finishes_the_crossing() {
-    // It chose a ford and was then sent to attack; the attack ends with
-    // the line perhaps already in the water. It goes on to the far bank
-    // rather than waiting behind the water from the middle of it, and
-    // never waits with a ford still calling it forward.
-    let mut c = Captain::new();
-    c.crossing = true;
-    c.bridgehead = Some((Vec2::ZERO, Vec2::ONE));
-    c.press(true);
-    c.press(false);
-    assert!(c.crossing);
-    assert!(c.bridgehead.is_some());
+fn stopping_on_the_way_to_a_ford_of_its_own_gives_it_up_unless_in_the_water() {
+    // It chose a ford and was then sent to attack; the attack ends. On the
+    // near bank it gives the ford up and waits again, rather than wading
+    // on towards the enemy it was pulled away from; already in the water
+    // it goes on to the far bank rather than halting in the river. Either
+    // way it never waits with a ford still calling it forward.
+    let exit = Vec2::new(128.0, 109.0);
+    let to = exit - Vec2::Y * 5.0;
+    for (at, in_water) in [(160.0, false), (120.0, true)] {
+        let view = field(Vec2::new(128.0, at), Vec2::new(40.0, 40.0));
+        let (ours, _) = sides(&view);
+        let mut mind = Mind::new();
+        mind.terrain = river_across();
+        let mut c = Captain::new();
+        c.started = true;
+        c.posture = Posture::Advance;
+        c.crossing = true;
+        c.bridgehead = Some((to, exit));
+        c.press(true);
+        c.press(false);
+        c.called_back(&mut mind.ctx(&view), &ours);
+        assert_eq!(c.crossing, in_water, "at {at}");
+        assert_eq!(c.bridgehead.is_some(), in_water, "at {at}");
+        if !in_water {
+            assert_eq!(c.posture, Posture::Hold);
+            assert!(c.waiting_behind_water() || c.river.is_none());
+        }
+    }
+}
+
+#[test]
+fn no_bridgehead_by_a_ford_the_water_is_shutting() {
+    // Nobody is watching where the ford comes out, straight ahead.
+    let view = field(Vec2::new(128.0, 160.0), Vec2::new(40.0, 40.0));
+    let (ours, fighting) = sides(&view);
+    let mut mind = Mind::new();
+    for (shut_x, chosen) in [(None, true), (Some(175), true), (Some(148), false)] {
+        let mut c = Captain::new();
+        c.started = true;
+        c.forward = -Vec2::Y;
+        c.anchor = Vec2::new(128.0, 160.0);
+        c.river = Some(ground::Crossing {
+            near: 30.0,
+            far: 50.0,
+        });
+        mind.terrain = river_across().with_shut(shut_x.map(|x| (x, 109)).into_iter().collect());
+        let b = c.bridgehead_at(&mind.ctx(&view), &ours, &fighting);
+        assert_eq!(b.is_some(), chosen, "shut at {shut_x:?}: {b:?}");
+        // One it picks is not called off as soon as it is chosen.
+        if let Some(b) = b {
+            c.bridgehead = Some(b);
+            c.crossing = true;
+            c.hold_bridgehead(&mut mind.ctx(&view), &ours, &fighting);
+            assert!(c.bridgehead.is_some(), "shut at {shut_x:?}");
+        }
+    }
 }
 
 #[test]

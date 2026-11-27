@@ -629,19 +629,16 @@ impl Captain {
     }
 
     /// Whether it is the one attacking: pressing on crosses water as if it
-    /// had decided to, and stopping waits behind it again, unless it is on
+    /// had decided to, and stopping waits behind it again. One stopped on
     /// its way to a bridgehead (which it chose itself: none is chosen while
-    /// crossing anyway). That crossing goes on, as it would have without
-    /// the order, perhaps with the line already in the water;
-    /// `hold_bridgehead` still calls it off if they come to watch the ford
-    /// before anyone is in.
+    /// crossing anyway) gives it up at its next look unless some of the
+    /// line are already in the water or across, when it finishes the
+    /// crossing (see `called_back`): it never waits behind the water with
+    /// a ford still calling it forward, nor halts in the river.
     pub fn press(&mut self, on: bool) {
         if on != self.pressing {
             self.pressing = on;
-            // Never waiting behind the water with a ford to go for: that
-            // ford would keep calling the line forward while the water
-            // halts it, so the posture would flip every few seconds.
-            self.crossing = on || self.bridgehead.is_some();
+            self.crossing = on;
             if on {
                 // Going on regardless: no standing back to tempt them over.
                 self.baiting = false;
@@ -750,6 +747,7 @@ impl Captain {
             self.finish(ctx, &fighting, wants);
             return;
         }
+        self.called_back(ctx, &ours);
         self.choose_posture(ctx, &ours, &fighting);
         self.hold_bridgehead(ctx, &ours, &fighting);
         self.act(ctx, &ours, &fighting, &foes, wants);

@@ -1884,10 +1884,12 @@ impl World {
             .map(|p| (p.owner, p.building, p.tile, p.turn))
     }
 
-    /// The node regiment `h` is gathering at, if any (Conquest only).
+    /// The node regiment `h` is gathering at, if any (Conquest only): not
+    /// a pile laid in the slot of the one it emptied, while it takes that
+    /// one's last load home.
     pub fn gathers_at(&self, h: RegimentHandle) -> Option<u16> {
         let i = self.regiments.resolve(h)?;
-        self.economy()?.work_of(&self.regiments, i)
+        self.economy()?.gathers_from(&self.regiments, i)
     }
 
     /// `player`'s workers with nothing to do (Conquest only): standing

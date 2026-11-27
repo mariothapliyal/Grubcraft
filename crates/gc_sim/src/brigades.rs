@@ -767,9 +767,12 @@ impl Brigades {
         // that brigade's member: this one starts afresh in it.)
         if self.slot(regs, i) != Some(slot) {
             // Counted once its own tag is gone: a dead member's tag left
-            // on this very slot is no place taken.
+            // on this very slot, or on another slot since its last step,
+            // is no place taken.
             self.leave(regs, i);
-            let members = self.of.iter().filter(|&&t| t == tag).count();
+            let members = (0..self.of.len())
+                .filter(|&k| self.of[k] == tag && self.member_current(regs, k))
+                .count();
             // (Nothing of a march it was on before comes with it.)
             self.members[i] = Member::NONE;
             if members >= MAX_MEMBERS {
@@ -2027,6 +2030,45 @@ mod tests {
         brigades.join(&mut regs, i, 1, false);
         assert!(
             brigades.of(&regs, i).is_some(),
+            "turned away from a brigade with a place free"
+        );
+    }
+
+    /// A full brigade that lost a member since its last step has a place
+    /// for a regiment in another slot: the dead member's tag, still on its
+    /// own slot until the step forgets it, does not count as one taken.
+    #[test]
+    fn a_full_brigade_takes_a_joiner_once_a_member_died() {
+        use super::{Brigades, MAX_MEMBERS};
+        use crate::regiments::Regiments;
+        let mut regs = Regiments::with_capacity(MAX_MEMBERS as u32 + 1);
+        let mut brigades = Brigades::new(MAX_MEMBERS + 1);
+        let stats = DRILL_UNITS[0].sanitized();
+        let raise = |regs: &mut Regiments, k: usize| {
+            let at = FxVec2::from_ints(10 + k as i32 * 2, 100);
+            let h = regs.spawn(0, 0, at, NORTH, &stats).unwrap();
+            let i = regs.resolve(h).unwrap();
+            regs.target[i] = Some(FxVec2::from_ints(10 + k as i32 * 2, 30));
+            (h, i)
+        };
+        let mut first = None;
+        for k in 0..MAX_MEMBERS {
+            let (h, i) = raise(&mut regs, k);
+            brigades.join(&mut regs, i, 1, false);
+            assert!(brigades.of(&regs, i).is_some(), "the brigade filled early");
+            first.get_or_insert(h);
+        }
+        let (_, extra) = raise(&mut regs, MAX_MEMBERS);
+        // Full: the extra one marches alone.
+        brigades.join(&mut regs, extra, 1, false);
+        assert!(brigades.of(&regs, extra).is_none(), "joined a full brigade");
+        let dead = first.unwrap();
+        let old = regs.resolve(dead).unwrap();
+        assert!(regs.despawn(dead));
+        assert_ne!(old, extra);
+        brigades.join(&mut regs, extra, 1, false);
+        assert!(
+            brigades.of(&regs, extra).is_some(),
             "turned away from a brigade with a place free"
         );
     }

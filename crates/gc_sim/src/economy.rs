@@ -494,6 +494,14 @@ impl Economy {
         (self.step[r].gathers() && self.ours(regs, r)).then_some(self.node[r])
     }
 
+    /// The node regiment slot `r` works, as those outside the simulation
+    /// see it: as [`Economy::work_of`], but not a pile slot laid again
+    /// since the pile it was sent to (one taking home the last load of
+    /// that pile does not work the new one).
+    pub(crate) fn gathers_from(&self, regs: &Regiments, r: usize) -> Option<u16> {
+        self.work_of(regs, r).filter(|_| self.same_node(r))
+    }
+
     /// Whether regiment slot `r` works `node` itself, not a pile laid in
     /// the slot of one it emptied (to which an order to gather there is a
     /// new one).
@@ -1030,9 +1038,17 @@ impl Economy {
         h.u32(self.gather_percent);
         h.u32(self.real as u32);
         for i in 0..self.node_at.len() {
-            // A free pile slot holds nothing to tell apart.
+            // A free pile slot holds nothing to tell apart but how many
+            // piles it has held: a worker about the last one reads it (see
+            // `same_node`). Never held one, it hashes as it always did.
             if self.is_pile(i) && !self.is_live(i) {
-                h.u8(0);
+                match self.node_gen[i] {
+                    0 => h.u8(0),
+                    held => {
+                        h.u8(u8::MAX);
+                        h.u16(held);
+                    }
+                }
                 continue;
             }
             h.u8(1 + self.node_resource[i] as u8);

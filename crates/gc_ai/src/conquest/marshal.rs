@@ -500,15 +500,14 @@ impl Marshal {
                 HEART_BEATEN
             }
         };
-        // Enemies at its buildings, and (below) whether they keep the army
-        // home: a raid would be called off for the defence in the same
-        // look, its window running down and the stalemate forgotten, so
-        // the raid waits until no threat would keep it home once raiding.
-        let threat = threat_to_home(s, army, home);
+        // The raid is not decided while the army defends its buildings (see
+        // `Marshal::heart_stalemate`). An army on the Heart is not called
+        // home by enemies at an outlying building, but a raid is: one set
+        // off with such a threat about turns to the defence below, which
+        // keeps the building rather than leaving it to fall.
         if enough
             && !holding
             && self.heart_stalemate(s.now, beaten_enough)
-            && keeps_home(threat, false, ready, || HeartNow::see(s, true)).is_none()
             && let Some((t, note)) = raid_target(s, centroid(army))
                 .map(|t| (t, "going to break a base"))
                 .or_else(|| {
@@ -525,6 +524,8 @@ impl Marshal {
             self.set_out_with = self.out.set(army);
         }
         let raiding = s.now < self.raid_until;
+        // Enemies at its buildings, and whether they keep the army home.
+        let threat = threat_to_home(s, army, home);
         // The Heart as this look weighs it (a raid leaves it be, see
         // `HeartNow::see`), worked out when first asked for.
         let seen_heart = OnceCell::new();
@@ -1594,11 +1595,11 @@ mod tests {
     }
 
     /// Enemies at an outlying building leave an army on an open Heart that
-    /// nobody holds be; but a raid would be called home by them at once, so
-    /// it is not set off while they are there (its window would run down in
-    /// the defence and the stalemate be forgotten).
+    /// nobody holds be; but an army out on a raid (which leaves the Heart
+    /// be) goes home to defend it, so a raid set off with such a threat
+    /// about keeps the building rather than leaving it to fall.
     #[test]
-    fn a_raid_waits_while_an_outlying_threat_would_call_it_home() {
+    fn an_outlying_threat_calls_a_raid_home_but_not_an_army_on_the_heart() {
         let open = HeartNow {
             to_take: Some(Vec2::ZERO),
             enemy_holds: false,
