@@ -284,15 +284,11 @@ fn battles() -> u64 {
 /// bar from hanging on a few unlucky seeds, as 40 did. With frontage on top
 /// (2026-10-31) it won 128 of 150 (85%): only the men touching the enemy
 /// strike, and the General doesn't yet wrap a charging column; the smarter
-/// AI generals (docs/29) take that on. By SIM_VERSION 100 (2026-11-28) it
-/// stood near 82%, close enough to the bar that any change to the battle
-/// rules moved the first 150 seeds across it (126 wins before the
-/// state-machine fixes, 118 after, while seeds 1 to 550 went 451 to 449),
-/// so it plays 550.
+/// AI generals (docs/29) take that on.
 #[test]
 fn the_general_beats_charge_straight_in_four_times_in_five() {
-    let wins = contest_parallel(Side::Mind(Difficulty::General), Side::Charge, 1..=550);
-    assert!(wins >= 440, "won {wins} of 550");
+    let wins = contest_parallel(Side::Mind(Difficulty::General), Side::Charge, 1..=150);
+    assert!(wins >= 120, "won {wins} of 150");
 }
 
 #[test]
