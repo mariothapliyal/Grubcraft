@@ -176,7 +176,7 @@ Then on 2026-11-27, the same scene and also its first seconds, where the camera 
 
 | Change | GPU time a frame | Picture |
 |---|---|---|
-| The sun's view of what holds still (the ground, and scenery with no vertex in the wind) kept between frames; each frame copies it and draws the trees, soldiers and boxes over it | still camera: the sun's pass 110 → 69 ms; moving camera: no worse | identical, pixel for pixel |
+| The sun's view of what holds still (the ground, and scenery with no vertex in the wind) kept between frames; each frame copies it and draws the trees, soldiers and boxes over it | still camera: the sun's pass 110 → 69 ms; moving camera: the same as before (it is used only once the camera has held still for a frame) | identical, pixel for pixel |
 | Scenery outside the view that only casts a shadow onto it (the sun sees more than the camera) left out of the world pass, which was clipping it vertex by vertex, and drawn into the shadow map at its coarsest level | still camera: scenery triangles in the world pass 642k → 259k; the sun's pass 69 → 45 ms | identical, pixel for pixel, at noon, golden hour and dusk |
 | Both, still camera, three runs each | 467 ms on main (482, 456, 464), 391 after (394, 389, 389): 16% less; the sun's pass 105 → 46 ms | identical |
 | Both, moving camera, three runs each | 530 ms on main (534, 529, 527), 516 after (520, 514, 515): 3% less | the same up to run-to-run noise |
