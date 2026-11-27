@@ -246,6 +246,9 @@ impl Captain {
         let t = ctx.terrain;
         let river = self.river?;
         let our_c = centroid(ours);
+        // Not by a ford the water is shutting: the crossing would be called
+        // off as soon as chosen (see `hold_bridgehead`).
+        let reach = self.shut_reach();
         let watched = |p: Vec2| {
             fighting
                 .iter()
@@ -261,6 +264,9 @@ impl Captain {
                 if theirs < UNWATCHED || theirs + LEAD < f.exit.distance(our_c) {
                     return None;
                 }
+                if t.ford_shut_near(f.exit, reach) {
+                    return None;
+                }
                 let beyond = f.exit + self.forward * (self.line_depth * 0.5 + 3.0);
                 let at = t.nearest_walkable(beyond, 6.0).unwrap_or(beyond);
                 let score = theirs.min(60.0) - f.entry.distance(our_c) / 3.0;
@@ -271,44 +277,81 @@ impl Captain {
             .map(|(_, b)| b)
     }
 
+    /// How near a bridgehead's exit a shut ford tile calls the crossing off
+    /// (see [`Captain::hold_bridgehead`]): the river's width and a little,
+    /// or [`SHUT_REACH`] at least.
+    fn shut_reach(&self) -> f32 {
+        self.river
+            .map_or(FORD_REACH, |r| r.far - r.near + 4.0)
+            .max(SHUT_REACH)
+    }
+
+    /// Called back on its way to a bridgehead (the attack it was sent on
+    /// is over, see [`Captain::press`]): with nobody in the water or across
+    /// yet it goes back to waiting where it stands, rather than wading on
+    /// towards the enemy it was pulled away from; with some already in or
+    /// over, it finishes the crossing rather than halting in the water.
+    /// Weighed before the posture, so the line never holds in the river.
+    pub(super) fn called_back(&mut self, ctx: &mut Ctx, ours: &[&Seen]) {
+        let Some((b, _)) = self.bridgehead.filter(|_| !self.crossing) else {
+            return;
+        };
+        let (wading, across) = begun(ctx.terrain, ours, b);
+        if wading || across > 0 {
+            self.crossing = true;
+        } else {
+            self.call_off_crossing(ctx, ours, "Called back from that ford: waiting again");
+        }
+    }
+
+    /// The crossing to its bridgehead is off, nobody in the water yet: it
+    /// halts where the line stands, waiting behind the water again unless
+    /// it is sent to attack (`note` says why).
+    fn call_off_crossing(&mut self, ctx: &mut Ctx, ours: &[&Seen], note: &str) {
+        let t = ctx.terrain;
+        self.bridgehead = None;
+        // Only a crossing it chose itself is called off: one sent to
+        // attack still presses on (see `press`), or it would halt at
+        // the bank for good.
+        self.crossing = self.pressing;
+        self.standoff_since = ctx.view.tick;
+        self.posture = Posture::Hold;
+        self.posture_since = ctx.view.tick;
+        self.anchor = t.clamp(line_centre(&self.members, ours, centroid(ours)), 4.0);
+        // The cover it read stood by the ground it was crossing to.
+        self.leave_cover();
+        ctx.journal.note(ctx.view.tick, note.to_string());
+    }
+
     /// Crossing to a bridgehead: the line's place is beyond the ford until
     /// most of the army is across, and it fights on from there.
     /// If the enemy comes to watch the ford before anyone has gone into the
-    /// water, it goes back to waiting.
+    /// water, it goes back to waiting; one sent to attack (see
+    /// [`Captain::press`]) holds a moment and then goes straight on.
     pub(super) fn hold_bridgehead(&mut self, ctx: &mut Ctx, ours: &[&Seen], fighting: &[&Seen]) {
         let Some((b, exit)) = self.bridgehead else {
             return;
         };
         let t = ctx.terrain;
-        // In the water, even where the minds now count it shut.
-        let wading = ours.iter().any(|r| t.water(r.pos));
-        let across = ours
-            .iter()
-            .filter(|r| !t.water(r.pos) && ground::crossing(t, r.pos, b).is_none())
-            .count();
+        let (wading, across) = begun(t, ours, b);
         let watched = fighting
             .iter()
             .any(|f| f.pos.distance(exit) < UNWATCHED * 0.7);
         // The water is shutting the ford before anyone is in it: not across
         // a river that is about to cut them off.
-        let reach = self
-            .river
-            .map_or(FORD_REACH, |r| r.far - r.near + 4.0)
-            .max(SHUT_REACH);
-        let shutting = t.ford_shut_near(exit, reach);
+        let shutting = t.ford_shut_near(exit, self.shut_reach());
         if (watched || shutting) && !wading && across == 0 {
-            self.bridgehead = None;
-            self.crossing = false;
-            self.standoff_since = ctx.view.tick;
-            self.posture = Posture::Hold;
-            self.posture_since = ctx.view.tick;
-            self.anchor = t.clamp(line_centre(&self.members, ours, centroid(ours)), 4.0);
-            let why = if shutting {
-                "The river is rising over that ford: waiting again"
+            let cause = if shutting {
+                "The river is rising over that ford"
             } else {
-                "They have come to watch that ford: waiting again"
+                "They have come to watch that ford"
             };
-            ctx.journal.note(ctx.view.tick, why.to_string());
+            let then = if self.pressing {
+                "pressing on"
+            } else {
+                "waiting again"
+            };
+            self.call_off_crossing(ctx, ours, &format!("{cause}: {then}"));
             return;
         }
         if across as f32 >= ours.len() as f32 * ACROSS_SHARE {
@@ -320,11 +363,25 @@ impl Captain {
             return;
         }
         self.anchor = b;
+        // Off over the water: cover found on this bank stays behind.
+        self.leave_cover();
         if self.posture != Posture::Advance {
             self.posture = Posture::Advance;
             self.posture_since = ctx.view.tick;
         }
     }
+}
+
+/// How far a crossing to the bridgehead at `b` has begun: whether any of
+/// `ours` is in the water (even where the minds now count it shut), and
+/// how many are out of it on the far side.
+fn begun(t: &Terrain, ours: &[&Seen], b: Vec2) -> (bool, usize) {
+    let wading = ours.iter().any(|r| t.water(r.pos));
+    let across = ours
+        .iter()
+        .filter(|r| !t.water(r.pos) && ground::crossing(t, r.pos, b).is_none())
+        .count();
+    (wading, across)
 }
 
 /// The least distance from where a crossing comes out that a shut ford

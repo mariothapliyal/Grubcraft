@@ -312,6 +312,65 @@ fn spearmen_plant_stakes_across_their_front_and_a_move_calls_it_off() {
 }
 
 #[test]
+fn planting_stakes_calls_off_an_attack_on_a_building() {
+    let mut w = world();
+    let hall = (w.structures().unwrap().iter())
+        .find(|v| v.owner == 1 && v.building == HALL)
+        .unwrap()
+        .handle;
+    let hp = |w: &World| w.structures().unwrap().get(hall).unwrap().hp;
+    let spears = spawn(&mut w, 0, SPEARS, 52, 59, 0);
+    assert!(order(
+        &mut w,
+        0,
+        Command::AttackStructure {
+            regiment: spears,
+            structure: hall,
+        }
+    ));
+    let whole = hp(&w);
+    for _ in 0..60 * TICKS_PER_SECOND {
+        if hp(&w) < whole {
+            break;
+        }
+        w.tick(&[]);
+    }
+    assert!(hp(&w) < whole, "it never reached the hall");
+    // Standing at the hall, it is told to plant: it halts and hammers, and
+    // strikes the hall no more.
+    assert!(order(
+        &mut w,
+        0,
+        Command::PlantStakes {
+            regiment: spears,
+            building: STAKES,
+        }
+    ));
+    let struck = hp(&w);
+    for _ in 0..PLANT_TICKS / 2 {
+        w.tick(&[]);
+    }
+    assert_eq!(hp(&w), struck, "it struck the hall while it planted");
+    // Sent at the hall again, it leaves off planting: no stakes go up.
+    assert!(order(
+        &mut w,
+        0,
+        Command::AttackStructure {
+            regiment: spears,
+            structure: hall,
+        }
+    ));
+    for _ in 0..PLANT_TICKS {
+        w.tick(&[]);
+    }
+    assert!(hp(&w) < struck, "back at the hall");
+    let stakes = (w.structures().unwrap().iter())
+        .filter(|v| v.building == STAKES)
+        .count();
+    assert_eq!(stakes, 0, "stakes went up while it attacked");
+}
+
+#[test]
 fn a_barricade_is_a_wall_its_own_side_shelters_behind() {
     let mut w = world();
     line(&mut w, BARRICADE, 20..=28);

@@ -182,8 +182,13 @@ pub(super) struct Engineer {
     works: Option<Works>,
     /// Whether its ring has ever closed (so a gap in it now is a breach).
     closed: bool,
-    /// No ring could be laid out: look again from then.
+    /// No ring could be laid out (or a gate was given up): look again from
+    /// then.
     next_line: u32,
+    /// The last look found no ring to lay out at all, as against a gate
+    /// given up, whose ring is laid out again (with its gate elsewhere) at
+    /// `next_line`. Only the first lets the towers go up without a wall.
+    no_line: bool,
     /// Where it gave a gate up (troops never left its ground, or it was
     /// built on): the next is put somewhere else.
     no_gate: Vec<(i32, i32)>,
@@ -212,11 +217,32 @@ impl Engineer {
     /// Whether its front wall is all drawn (its gate laid and every line
     /// drawn or given up), or it has given up looking for a line: towers
     /// come after the wall, so they don't take its Grub or its ground.
+    /// Waiting to lay the ring out again after giving a gate up is not
+    /// giving up: the new gate comes before the towers.
     pub(super) fn walled(&self, now: u32) -> bool {
         match &self.works {
             Some(w) => w.gate.is_none() && !w.pieces.iter().any(|p| p.round <= FRONT),
-            None => self.next_line > now && now >= TOWERS_ANYWAY,
+            None => self.no_line && self.next_line > now && now >= TOWERS_ANYWAY,
         }
+    }
+
+    /// No ring could be laid out: it looks again in a while, and towers may
+    /// go up meanwhile once it is late enough.
+    fn no_line_fits(&mut self, now: u32) {
+        self.next_line = now + LINE_RETRY;
+        self.no_line = true;
+    }
+
+    /// The gate at `mid` (the middle of its ground) is given up: the ring
+    /// is laid out again shortly, with its gate somewhere else.
+    fn give_up_gate(&mut self, now: u32, mid: (i32, i32)) {
+        if self.no_gate.len() >= NO_GATES {
+            self.no_gate.clear();
+        }
+        self.no_gate.push(mid);
+        self.works = None;
+        self.no_line = false;
+        self.next_line = now + BREACH_RETRY;
     }
 
     /// The ground its buildings keep off: the lines of wall still to
@@ -360,7 +386,7 @@ impl Steward {
         if again {
             let works = lay_works(s, look, home, &self.engineer.no_gate);
             if works.is_none() && self.engineer.works.is_none() {
-                self.engineer.next_line = s.now + LINE_RETRY;
+                self.engineer.no_line_fits(s.now);
             }
             // Raised stretches stay raised: only a new gate's are looked
             // at again.
@@ -402,13 +428,8 @@ impl Steward {
             // Its ground taken meanwhile, or troops that never leave it:
             // the ring is laid out again, with its gate somewhere else.
             if laid.is_err() {
-                if self.engineer.no_gate.len() >= NO_GATES {
-                    self.engineer.no_gate.clear();
-                }
                 let mid = (tile.0 + i32::from(turn == 1), tile.1 + i32::from(turn == 0));
-                self.engineer.no_gate.push(mid);
-                self.engineer.works = None;
-                self.engineer.next_line = s.now + BREACH_RETRY;
+                self.engineer.give_up_gate(s.now, mid);
                 return None;
             }
             let w = self.builder_at(s, look, tile)?;
@@ -1162,6 +1183,23 @@ mod tests {
         // Never off the map, at either corner.
         assert_eq!(clear_run(&[(0, 0)], 64), Some(((0, 0), (1, 1))));
         assert_eq!(clear_run(&[(63, 63)], 64), Some(((62, 62), (63, 63))));
+    }
+
+    #[test]
+    fn towers_wait_for_a_gate_given_up_to_be_laid_again() {
+        let late = TOWERS_ANYWAY + 1;
+        let mut e = Engineer::default();
+        // No ring fits at all, late in the game: the towers go up anyway.
+        e.no_line_fits(late);
+        assert!(e.walled(late + 1));
+        // A gate given up: the ring is laid out again in a moment, and its
+        // gate comes before the towers.
+        e.give_up_gate(late, (10, 10));
+        assert!(!e.walled(late + 1));
+        assert_eq!(e.no_gate, vec![(10, 10)]);
+        // And the next look finds no ring after all: towers again.
+        e.no_line_fits(late + BREACH_RETRY);
+        assert!(e.walled(late + BREACH_RETRY + 1));
     }
 
     #[test]

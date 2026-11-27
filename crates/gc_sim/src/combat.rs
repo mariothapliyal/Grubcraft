@@ -1605,7 +1605,9 @@ impl Combat {
                     }
                     continue;
                 }
-                regs.round[i] = None;
+                // Called off (another order): the ticks it spent on the
+                // way are not crowded turns of its next fight.
+                regs.end_round(i);
             }
             let me = self.blocks[i];
             // Locked in: a regiment keeps fighting the foe it is touching,
@@ -1659,11 +1661,16 @@ impl Combat {
                 && regs.attack_target[i].is_none()
                 && !regs.braced[i]
                 && !regs.hold[i]
-                && previous
-                    .and_then(|h| regs.resolve(h))
+                && let Some(foe) = previous
+                && regs
+                    .resolve(foe)
                     .is_some_and(|j| regs.falling_back[j] == 0 && !regs.morale_state[j].broken())
             {
-                regs.attack_target[i] = previous;
+                // An attack, as `Regiments::attack` makes one: no longer
+                // marching to a spot it was sent to stand at, so losing
+                // sight of the foe later (which leaves it walking to where
+                // the foe was seen) is not taken for coming up to its spot.
+                regs.take_on(i, foe);
             }
             let engaged = best.map(|j| RegimentHandle {
                 index: j as u32,
@@ -1674,6 +1681,16 @@ impl Combat {
                 regs.pressing[i] = 0;
                 regs.pressed[i] = 0;
                 regs.giving[i] = 0;
+                // A fight over, or one begun after none (however the last
+                // one ended: falling back, swept off, its foe vanished),
+                // leaves no crowded turns from before (`crowded_out`).
+                // Turning straight from one foe to the next in the same
+                // press keeps them: in a crush the nearest foe changes
+                // often, and a block behind would never go round. (Going
+                // round, it never comes here: see above.)
+                if engaged.is_none() || previous.is_none() {
+                    regs.crowded[i] = 0;
+                }
             }
             regs.engaged[i] = engaged;
             if let Some(j) = best {
@@ -1808,7 +1825,7 @@ impl Combat {
             }
             if regs.round[i].is_some() && regs.on_wall[j] {
                 // Up on a wall: there is no side to go round to.
-                regs.round[i] = None;
+                regs.end_round(i);
             }
             if let Some(code) = regs.round[i] {
                 // Going round: by the corner, then beside the side; there,
@@ -1821,8 +1838,7 @@ impl Combat {
                 round.corner &= !near(corner, Fx::ONE);
                 regs.crowded[i] = regs.crowded[i].saturating_add(1);
                 if (!round.corner && near(side, REACH)) || regs.crowded[i] >= ROUNDING_TICKS {
-                    regs.round[i] = None;
-                    regs.crowded[i] = 0;
+                    regs.end_round(i);
                 } else {
                     regs.round[i] = Some(round.pack());
                     regs.target[i] = Some(if round.corner { corner } else { side });
@@ -1939,7 +1955,14 @@ impl Combat {
             }) else {
                 continue;
             };
+            // The step back is not the order that sent it to its spot:
+            // still seeking that place, the crowding look would turn it
+            // round to the spot (or a place beside it), back towards the
+            // enemy it is keeping away from. Nor is it a short drilled
+            // move.
             regs.target[i] = Some(to);
+            regs.set_seeks_place(i, false);
+            regs.drill[i] = false;
             regs.target_facing[i] = Some(Angle::of_vec(regs.position[j] - to));
             regs.backing[i] = SKIRMISH_TICKS;
             regs.held[i] = 0;
@@ -2439,7 +2462,7 @@ impl Combat {
                     return;
                 }
                 // Measured only for one coming its way, as most are not.
-                let end = brigades.of(j).map_or(target, |(_, end)| end);
+                let end = brigades.of(regs, j).map_or(target, |(_, end)| end);
                 if along + my_length >= (end - them.centre).length() - its_length {
                     return;
                 }
@@ -3568,24 +3591,29 @@ fn strikers(
 }
 
 /// Regiment `i`, locked with `j`, had hardly anyone able to strike on this
-/// turn. After [`CROWDED_TURNS`] of it, it looks for a better side to go
-/// round to (see [`open_side`]); with none, it counts its turns afresh.
+/// turn. After [`CROWDED_TURNS`] of it in a row, free to go round, it
+/// looks for a better side to go round to (see [`open_side`]); with none,
+/// it counts its turns afresh. A turn braced, holding, on a wall or
+/// falling back is not counted and starts the count again, so one let go
+/// from those still waits its turns before it leaves its line.
 fn crowded_out(regs: &mut Regiments, nav: &Nav, i: usize, j: usize, me: &Block, them: &Block) {
+    if regs.braced[i] || regs.hold[i] || regs.on_wall[i] || regs.falling_back[i] > 0 {
+        regs.crowded[i] = 0;
+        return;
+    }
     regs.crowded[i] = regs.crowded[i].saturating_add(1);
-    if regs.crowded[i] < CROWDED_TURNS
-        || regs.braced[i]
-        || regs.hold[i]
-        || regs.on_wall[i]
-        || regs.falling_back[i] > 0
-    {
+    if regs.crowded[i] < CROWDED_TURNS {
         return;
     }
     // From here it counts ticks on the way round.
     regs.crowded[i] = 0;
     regs.round[i] = open_side(regs, nav, i, j, me, them, false).map(Round::pack);
     if regs.round[i].is_some() {
-        // Going round means taking this fight on.
-        regs.attack_target[i] = Some(regs.handle(j));
+        // Going round means taking this fight on, as an attack order
+        // would: it no longer seeks the spot it was once sent to, which
+        // the crowding look would otherwise turn it back to should it
+        // lose sight of the foe near there (see `Vision`).
+        regs.take_on(i, regs.handle(j));
     }
 }
 
@@ -3928,5 +3956,227 @@ fn step_up(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, j: usize, ranks
         if !nav.blocks(regs.owner[j], regs.position[j], to) {
             regs.position[j] = to;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::num::NonZeroU8;
+
+    use gc_fixed::FxVec2;
+
+    use super::{Block, CROWDED_TURNS, SKIRMISH_STEP};
+    use crate::scenario::{DRILL_UNITS, NORTH};
+    use crate::test_util::{order, spawn};
+    use crate::{Command, RegimentHandle, UnitStats, World};
+
+    /// Drill unit 0: a melee block.
+    const FOOT: u16 = 0;
+    /// Drill unit 2: a block that shoots.
+    const BOWS: u16 = 2;
+
+    fn world() -> World {
+        // Morale off, so nobody runs.
+        let units: [UnitStats; 4] = DRILL_UNITS.map(|u| UnitStats { morale: 0, ..u });
+        crate::test_util::world(&units)
+    }
+
+    /// Two blocks of foot of either side close enough to fight, and
+    /// nobody yet striking: the second's handle, both slots, and both
+    /// blocks.
+    fn locked_pair(w: &mut World) -> (RegimentHandle, usize, usize, Block, Block) {
+        let a = spawn(w, 0, FOOT, 60, 60);
+        let b = spawn(w, 1, FOOT, 60, 52);
+        let (i, j) = (
+            w.regiments.resolve(a).unwrap(),
+            w.regiments.resolve(b).unwrap(),
+        );
+        let (me, them) = (
+            Block::of(&w.regiments, &w.units, i),
+            Block::of(&w.regiments, &w.units, j),
+        );
+        (b, i, j, me, them)
+    }
+
+    /// Going round called off (here by a move order, which lifts the
+    /// attack it went round for) leaves no count behind: its ticks on the
+    /// way are not crowded turns of a later fight.
+    #[test]
+    fn a_round_called_off_leaves_no_crowded_turns() {
+        let mut w = world();
+        let h = spawn(&mut w, 0, FOOT, 60, 60);
+        let i = w.regiments.resolve(h).unwrap();
+        w.regiments.round[i] = NonZeroU8::new(1);
+        w.regiments.crowded[i] = 30;
+        w.regiments.attack_target[i] = None;
+        w.tick(&[]);
+        assert_eq!(w.regiments.round[i], None);
+        assert_eq!(w.regiments.crowded[i], 0);
+    }
+
+    /// Crowded turns count in a row in one fight: when the fight ends (here
+    /// its foe is gone) the count goes, so it cannot send the block round
+    /// its next foe on the first crowded turn of that fight.
+    #[test]
+    fn a_fight_ended_leaves_no_crowded_turns() {
+        let mut w = world();
+        let a = spawn(&mut w, 0, FOOT, 60, 60);
+        let b = spawn(&mut w, 1, FOOT, 60, 40);
+        let i = w.regiments.resolve(a).unwrap();
+        assert!(order(
+            &mut w,
+            0,
+            Command::Attack {
+                regiment: a,
+                target: b,
+            }
+        ));
+        for _ in 0..400 {
+            if w.regiments.engaged[i].is_some() {
+                break;
+            }
+            w.tick(&[]);
+        }
+        assert_eq!(w.regiments.engaged[i], Some(b), "never came to blows");
+        // One crowded turn short of going round, and its foe is gone.
+        w.regiments.crowded[i] = CROWDED_TURNS - 1;
+        w.regiments.round[i] = None;
+        assert!(w.regiments.despawn(b));
+        w.tick(&[]);
+        assert_eq!(w.regiments.engaged[i], None);
+        assert_eq!(w.regiments.crowded[i], 0);
+    }
+
+    /// A fight left outside the combat step (here by `leave_fight`, as a
+    /// fall back, a river or a vanishing foe leave it) keeps no crowded
+    /// turns either: the next fight starts its count afresh.
+    #[test]
+    fn a_fight_left_elsewhere_leaves_no_crowded_turns() {
+        let mut w = world();
+        let a = spawn(&mut w, 0, FOOT, 60, 60);
+        let b = spawn(&mut w, 1, FOOT, 60, 40);
+        let i = w.regiments.resolve(a).unwrap();
+        assert!(order(
+            &mut w,
+            0,
+            Command::Attack {
+                regiment: a,
+                target: b,
+            }
+        ));
+        for _ in 0..400 {
+            if w.regiments.engaged[i].is_some() {
+                break;
+            }
+            w.tick(&[]);
+        }
+        assert_eq!(w.regiments.engaged[i], Some(b), "never came to blows");
+        w.regiments.crowded[i] = CROWDED_TURNS - 1;
+        w.regiments.round[i] = None;
+        w.regiments.leave_fight(i);
+        w.tick(&[]);
+        assert_eq!(w.regiments.engaged[i], Some(b), "took the fight up again");
+        assert_eq!(w.regiments.crowded[i], 0);
+    }
+
+    /// Only turns it was free to go round count: one let go from holding
+    /// fast still waits its crowded turns before it leaves its line.
+    #[test]
+    fn crowded_turns_held_fast_do_not_count() {
+        let mut w = world();
+        let (_, i, j, me, them) = locked_pair(&mut w);
+        w.regiments.hold[i] = true;
+        for _ in 0..CROWDED_TURNS + 1 {
+            super::crowded_out(&mut w.regiments, &w.nav, i, j, &me, &them);
+        }
+        assert_eq!(w.regiments.crowded[i], 0);
+        w.regiments.hold[i] = false;
+        super::crowded_out(&mut w.regiments, &w.nav, i, j, &me, &them);
+        assert_eq!(w.regiments.crowded[i], 1);
+        assert_eq!(
+            w.regiments.round[i], None,
+            "went round on its first free turn"
+        );
+    }
+
+    /// Going round a crowded fight is an attack on that foe: like an
+    /// attack order it ends seeking the spot the block was once sent to,
+    /// so losing sight of the foe within reach of that spot does not turn
+    /// it back there.
+    #[test]
+    fn going_round_forgets_the_spot_it_was_sent_to() {
+        let mut w = world();
+        let (b, i, j, me, them) = locked_pair(&mut w);
+        w.regiments.set_seeks_place(i, true);
+        for _ in 0..CROWDED_TURNS {
+            super::crowded_out(&mut w.regiments, &w.nav, i, j, &me, &them);
+        }
+        assert!(
+            w.regiments.round[i].is_some(),
+            "found no side to go round to"
+        );
+        assert_eq!(w.regiments.attack_target[i], Some(b));
+        assert!(!w.regiments.seeks_place(i), "still seeks its old spot");
+    }
+
+    /// A skirmisher sent to a spot, standing there, steps back from melee
+    /// and keeps going back: the step back is not the order that sent it
+    /// there, so it does not turn round to take its place at the spot
+    /// again (towards the enemy it keeps away from).
+    #[test]
+    fn a_skirmisher_sent_to_a_spot_keeps_stepping_back() {
+        let mut w = world();
+        let s = spawn(&mut w, 0, BOWS, 60, 70);
+        let spot = FxVec2::from_ints(60, 64);
+        assert!(order(
+            &mut w,
+            0,
+            Command::MoveTo {
+                regiment: s,
+                target: spot,
+                facing: Some(NORTH),
+                files: 0,
+                pace: gc_fixed::Fx::ZERO,
+                brigade: 0,
+            }
+        ));
+        let i = w.regiments.resolve(s).unwrap();
+        for _ in 0..400 {
+            if w.regiments.target[i].is_none() {
+                break;
+            }
+            w.tick(&[]);
+        }
+        assert_eq!(w.regiments.target[i], None, "never got to its spot");
+        let spot = w.regiments.spot[i];
+        assert!(order(
+            &mut w,
+            0,
+            Command::Skirmish {
+                regiment: s,
+                on: true,
+            }
+        ));
+        // A melee block comes near, north of it.
+        let at = w.regiments.position[i];
+        spawn(&mut w, 1, FOOT, at.x.floor_int(), at.y.floor_int() - 12);
+        let mut backing = false;
+        for _ in 0..60 {
+            w.tick(&[]);
+            if w.regiments.backing[i] > 0 {
+                backing = true;
+                break;
+            }
+        }
+        assert!(backing, "never stepped back");
+        let away = w.regiments.target[i].unwrap();
+        assert!((away - spot).length() > SKIRMISH_STEP / 2);
+        for _ in 0..40 {
+            w.tick(&[]);
+            if let Some(t) = w.regiments.target[i] {
+                assert_eq!(t, away, "turned round towards {t:?}, its spot {spot:?}");
+            }
+        }
+        assert!((w.regiments.position[i] - spot).length() > SKIRMISH_STEP / 2);
     }
 }

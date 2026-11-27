@@ -228,6 +228,8 @@ impl Economy {
             return;
         };
         self.node_resource[n] = Resource::Grub;
+        // A new pile: workers sent to the last one in this slot leave it be.
+        self.node_gen[n] = self.node_gen[n].wrapping_add(1);
         self.node_at[n] = at;
         self.node_left[n] = amount;
         self.node_full[n] = amount;

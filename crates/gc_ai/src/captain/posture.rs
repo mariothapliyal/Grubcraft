@@ -69,6 +69,7 @@ impl Captain {
                 let away = shy.unwrap_or(-self.forward);
                 let back = ctx.terrain.clamp(self.anchor + away * WITHDRAW_TILES, 8.0);
                 self.anchor = back;
+                self.leave_cover();
                 let why = if shy.is_some() {
                     "keeping out of their fight".to_string()
                 } else {
@@ -239,10 +240,9 @@ impl Captain {
             let settled = now >= self.posture_since + POSTURE_TICKS;
             if want != self.posture && (settled || watching) {
                 self.posture = want;
-                if want == Posture::Advance && self.covered != 0.0 {
+                if want == Posture::Advance {
                     // Leaving its cover behind: hammers on both wings again.
-                    self.covered = 0.0;
-                    self.relayout = true;
+                    self.leave_cover();
                 }
                 if want == Posture::Hold {
                     // Halt where the line stands now; one halting to watch

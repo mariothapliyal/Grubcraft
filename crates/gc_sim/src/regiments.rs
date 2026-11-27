@@ -592,9 +592,14 @@ regiment_fields! {
     /// Crowded out, under orders to attack: going round its foe to a less
     /// crowded side (see `combat::Round`).
     round: Option<core::num::NonZeroU8> = None,
-    /// Turns in a row it was locked in a fight with nobody able to strike
-    /// (no room on the foe's side, or only a corner touching); while going
-    /// round, ticks spent on the way.
+    /// Turns in a row it was locked in one fight with nobody able to strike
+    /// (no room on the foe's side, or only a corner touching) and free to
+    /// go round (see `combat::crowded_out`); while going round, ticks spent
+    /// on the way. Back to 0 in `Combat::before_move` when its fight is
+    /// over or one begins after none, and whenever its going round ends (see
+    /// [`Regiments::end_round`]), so no fight inherits the turns of
+    /// another; turning from one foe to the next in the same press keeps
+    /// them.
     crowded: u8 = 0,
     /// Spears or pikes set against a charge (see [`Regiments::brace`]):
     /// standing until given another order.
@@ -613,7 +618,8 @@ regiment_fields! {
     /// In a column or a wedge, the frontage it was asked for (the width it
     /// stood at going in, or a line drawn for it since): it forms up that
     /// wide again on leaving. 0 for none, when the width it was raised
-    /// with is used.
+    /// with is used. On a wall, whatever its shape, also a line drawn for
+    /// it up there, which it forms up at on coming down.
     width_kept: u16 = 0,
     /// Torches lit (see [`Regiments::light`]): they burn only in the dark.
     torches: bool = false,
@@ -809,7 +815,15 @@ impl Regiments {
         // A column or a wedge has a frontage of its own; leaving one, the
         // regiment forms up as wide as when raised.
         if was != formation && formation.own_frontage() {
-            self.set_frontage(i, self.frontage[i]);
+            // Out of the other shape with a frontage of its own (a column
+            // into a wedge, say), the width to widen out to is the one
+            // that shape kept, not its own narrowed frontage.
+            let asked = if was.own_frontage() {
+                self.kept_or(i, self.frontage[i])
+            } else {
+                self.frontage[i]
+            };
+            self.set_frontage(i, asked);
         } else if was != formation && was.own_frontage() {
             self.leave_own(i, units[self.unit[i] as usize].files);
         }
@@ -829,8 +843,17 @@ impl Regiments {
     /// Slot `i`, just out of a column or a wedge, forms up as wide as it
     /// kept (see `width_kept`), or else `files`.
     fn leave_own(&mut self, i: usize, files: u16) {
-        let kept = core::mem::take(&mut self.width_kept[i]);
-        self.set_frontage(i, if kept > 0 { kept } else { files });
+        let files = self.kept_or(i, files);
+        self.width_kept[i] = 0;
+        self.set_frontage(i, files);
+    }
+
+    /// The width slot `i` kept (see `width_kept`), or else `files`.
+    pub(crate) fn kept_or(&self, i: usize, files: u16) -> u16 {
+        match self.width_kept[i] {
+            0 => files,
+            kept => kept,
+        }
     }
 
     pub(crate) fn despawn(&mut self, h: RegimentHandle) -> bool {
@@ -1063,6 +1086,13 @@ impl Regiments {
         // Growth owed on the last march (see `squeeze`) is not this one's.
         self.grow[i] = 0;
         if order.files != 0 {
+            // Up on a wall it stands in Line for the wall's sake, and
+            // takes back the shape it had when it comes down (see
+            // `Conquest::come_down`): the width drawn for it is kept for
+            // then, or it would be lost.
+            if self.on_wall[i] {
+                self.width_kept[i] = order.files;
+            }
             self.set_frontage(i, order.files);
         }
         self.pace[i] = self.pace_for(i, order.pace);
@@ -1469,6 +1499,24 @@ impl Regiments {
         self.leave_fight(i);
     }
 
+    /// Regiment `i` stops going round its foe (see `combat::Round`), if it
+    /// was: the ticks it spent on the way are not crowded turns of its next
+    /// fight.
+    pub(crate) fn end_round(&mut self, i: usize) {
+        self.round[i] = None;
+        self.crowded[i] = 0;
+    }
+
+    /// Slot `i` makes for `foe` as an attack does, no longer marching to a
+    /// spot it was sent to stand at (see [`KEEP_PLACE`]): only that part
+    /// of [`Regiments::attack`], which also ends going round and lifts
+    /// bracing, holding, backing and the rest, for a fight taken on in
+    /// the middle of one.
+    pub(crate) fn take_on(&mut self, i: usize, foe: RegimentHandle) {
+        self.attack_target[i] = Some(foe);
+        self.set_seeks_place(i, false);
+    }
+
     /// Order a regiment to attack an enemy regiment: melee regiments close
     /// in and fight, ranged ones move into range and shoot.
     pub(crate) fn attack(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {
@@ -1478,13 +1526,15 @@ impl Regiments {
         if self.owner[i] == self.owner[t] || self.morale_state[i].broken() {
             return false;
         }
-        if self.attack_target[i] != Some(target) {
+        if self.attack_target[i] != Some(target) && self.round[i].is_some() {
             // Going round only the foe it was going round (see
-            // `combat::Round`): an order repeated keeps it on its way.
-            self.round[i] = None;
+            // `combat::Round`): an order repeated keeps it on its way. Not
+            // going round, its crowded turns are those of the fight it is
+            // locked in, whatever it is ordered onto (`Combat::before_move`
+            // resets them when that fight is over).
+            self.end_round(i);
         }
-        self.set_seeks_place(i, false);
-        self.attack_target[i] = Some(target);
+        self.take_on(i, target);
         self.target_facing[i] = None;
         self.drill[i] = false;
         self.braced[i] = false;
@@ -1521,6 +1571,10 @@ impl Regiments {
         self.target[i] = Some(to);
         self.set_seeks_place(i, false);
         self.target_facing[i] = Some(self.facing[i]);
+        // Backing away is at half pace (see `step_movement`), not the
+        // drilled pace of a short move it may have been on: a drilled
+        // step sideways or off straight back would go faster.
+        self.drill[i] = false;
         self.attack_target[i] = None;
         self.braced[i] = false;
         self.hold[i] = false;
@@ -2940,5 +2994,58 @@ mod tests {
                 .regiments
                 .spawn(0, 0, FxVec2::ZERO, Angle::ZERO, &stats)
         );
+    }
+
+    /// Falling back is at half pace, whatever the order before it: a block
+    /// still on a short drilled move must not back away at drilled pace
+    /// (full ahead, three quarters sideways).
+    #[test]
+    fn falling_back_ends_a_drilled_move() {
+        let mut regs = Regiments::with_capacity(4);
+        let stats = DRILL_UNITS[0].sanitized();
+        let h = (regs.spawn(0, 0, FxVec2::from_ints(50, 50), Angle::ZERO, &stats)).unwrap();
+        let i = regs.resolve(h).unwrap();
+        let order = Order {
+            target: FxVec2::from_ints(52, 50),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+        };
+        assert!(regs.order(h, order));
+        assert!(regs.drill[i], "a short move is drilled");
+        assert!(regs.fall_back(h, FxVec2::from_ints(50, 56)));
+        assert!(!regs.drill[i], "falls back at drilled pace");
+    }
+
+    /// An attack on another foe calls off going round the last one, and
+    /// its ticks on the way with it: they are not crowded turns. Not going
+    /// round, a block locked in a fight keeps the crowded turns of that
+    /// fight whatever it is ordered onto (the fight resets them when its
+    /// foe changes).
+    #[test]
+    fn a_new_attack_leaves_no_crowded_turns() {
+        let mut regs = Regiments::with_capacity(4);
+        let stats = DRILL_UNITS[0].sanitized();
+        let at = |x| FxVec2::from_ints(x, 50);
+        let me = (regs.spawn(0, 0, at(50), Angle::ZERO, &stats)).unwrap();
+        let old = (regs.spawn(1, 0, at(60), Angle::ZERO, &stats)).unwrap();
+        let new = (regs.spawn(1, 0, at(70), Angle::ZERO, &stats)).unwrap();
+        let i = regs.resolve(me).unwrap();
+        assert!(regs.attack(me, old));
+        regs.round[i] = core::num::NonZeroU8::new(1);
+        regs.crowded[i] = 30;
+        // The same order again keeps it on its way round.
+        assert!(regs.attack(me, old));
+        assert_eq!(regs.round[i], core::num::NonZeroU8::new(1));
+        assert_eq!(regs.crowded[i], 30);
+        assert!(regs.attack(me, new));
+        assert_eq!(regs.round[i], None);
+        assert_eq!(regs.crowded[i], 0);
+        // Locked with `old` and crowded, not going round: ordered onto
+        // `new`, its turns crowded against `old` stand.
+        assert!(regs.attack(me, old));
+        regs.crowded[i] = 12;
+        assert!(regs.attack(me, new));
+        assert_eq!(regs.crowded[i], 12);
     }
 }
