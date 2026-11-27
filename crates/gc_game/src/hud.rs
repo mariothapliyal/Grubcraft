@@ -568,7 +568,7 @@ impl Running {
             .generals()
             .find(|g| g.party == side && g.fell.is_none())
             .map(|g| g.regiment);
-        for &h in self.selected.iter() {
+        for &h in self.selected.regiments() {
             let Some(r) = self.world.regiments.get(h).filter(|r| r.owner == side) else {
                 continue;
             };
@@ -799,7 +799,7 @@ impl Running {
                 gc_ui::Rect::new(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1))
             });
 
-        let selection = (!self.selected.is_empty())
+        let selection = (!self.selected.regiments().is_empty())
             .then(|| self.selection_info(side))
             .flatten();
         // Army shapes to choose from (the tray shows them for two or more
@@ -911,7 +911,7 @@ impl Running {
         let mut chevrons: Vec<([i32; 2], u8)> = Vec::new();
         if self.ride.is_none() {
             let field = gc_ui::hud::HudLayout::new(screen).field;
-            for &h in self.selected.iter() {
+            for &h in self.selected.regiments() {
                 let (Some(r), Some(f)) = (
                     self.world.regiments.get(h),
                     self.world.regiments.feedback(h),
@@ -953,22 +953,23 @@ impl Running {
         let hud = &mut self.hud;
         // A power being aimed needs no selection, unless it shifts one (see
         // `drop_stale_power`).
-        if self.selected.is_empty() && !matches!(hud.armed, Some(Armed::Power(_))) {
+        if self.selected.regiments().is_empty() && !matches!(hud.armed, Some(Armed::Power(_))) {
             hud.armed = None;
         }
         hud.dots.clear();
         hud.cards.clear();
         hud.picked.clear();
-        hud.picked.extend(self.selected.iter().map(|h| h.index));
+        hud.picked
+            .extend(self.selected.regiments().iter().map(|h| h.index));
         hud.picked.sort_unstable();
         let picked = |h: gc_sim::RegimentHandle| hud.picked.binary_search(&h.index).is_ok();
         // The tray shows the selection, or else the group last recalled; a
         // selected building shows its own panel instead.
         let (shown, title): (&[_], _) = match self.last_group_key {
             _ if picked_structure.is_some() => (&[], String::new()),
-            _ if !self.selected.is_empty() => (
-                &self.selected,
-                format!("Selected ({})", self.selected.len()),
+            _ if !self.selected.regiments().is_empty() => (
+                self.selected.regiments(),
+                format!("Selected ({})", self.selected.regiments().len()),
             ),
             Some((n, _)) => (
                 &self.control_groups[n],
@@ -1053,8 +1054,8 @@ impl Running {
         let hero = if hud.hero_preview {
             Some(preview_hero(crate::color_of(&self.parties, side)))
         } else {
-            match self.selected[..] {
-                [h] => hero_panel(&self.world, h, &self.units.names, |p| {
+            match self.selected.regiments() {
+                &[h] => hero_panel(&self.world, h, &self.units.names, |p| {
                     crate::color_of(&self.parties, p)
                 }),
                 _ => None,
@@ -1065,7 +1066,7 @@ impl Running {
             None => Default::default(),
         };
         // A replay plays its recorded orders and nobody else's.
-        let has_orders = !self.selected.is_empty() && self.watching.is_none();
+        let has_orders = !self.selected.regiments().is_empty() && self.watching.is_none();
         let ready = |on: bool| if on { SlotState::Ready } else { SlotState::Off };
         let mut grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|i| GridSlot {
             label: LABELS[i],
@@ -1077,13 +1078,13 @@ impl Running {
         grid[SLOT_ATTACK].state = ready(has_orders);
         grid[SLOT_ADVANCE].state = ready(has_orders);
         grid[SLOT_FORMATION].state = ready(has_orders);
-        let has_spears = self.selected.iter().any(|&h| {
+        let has_spears = self.selected.regiments().iter().any(|&h| {
             self.world
                 .regiments
                 .get(h)
                 .is_some_and(|r| self.units.stats[r.unit as usize].reach)
         });
-        let has_bows = self.selected.iter().any(|&h| {
+        let has_bows = self.selected.regiments().iter().any(|&h| {
             self.world
                 .regiments
                 .get(h)
@@ -1453,7 +1454,7 @@ impl Running {
                     return;
                 };
                 if add {
-                    self.toggle_selected(h);
+                    self.selected.toggle(h);
                 } else {
                     self.selected.select_only(h);
                 }
@@ -1499,7 +1500,7 @@ impl Running {
                 self.ui_sound(sounds::UiSound::Select);
             }
             HudEvent::Order([x, z]) => {
-                if !self.selected.is_empty() {
+                if !self.selected.regiments().is_empty() {
                     self.issue_group_order(move_order(Vec2::new(x, z)));
                 }
             }
@@ -1590,7 +1591,7 @@ impl Running {
 
     /// A battle grid slot: Move, Attack, Formation, Brace or Fall back.
     pub fn battle_press(&mut self, slot: usize) {
-        if self.watching.is_some() || self.sandbox.placing || self.selected.is_empty() {
+        if self.watching.is_some() || self.sandbox.placing || self.selected.regiments().is_empty() {
             return;
         }
         // A hero shown owns these slots for its abilities.

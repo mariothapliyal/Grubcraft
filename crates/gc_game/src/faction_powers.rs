@@ -293,7 +293,7 @@ impl Running {
     fn power_hold(&self, power: u8) -> Option<Hold> {
         let effect = self.power_effect(power)?;
         let refusal = self.world.can_use_power(self.sandbox.side, power).err();
-        hold(effect, refusal, self.selected.len())
+        hold(effect, refusal, self.selected.regiments().len())
     }
 
     /// Each offered power as its button: its name into `names`, its second
@@ -344,7 +344,7 @@ impl Running {
             self.say(hold_message(hold, cooling, self.meter_name(power)));
         } else if let Some(aim) = self.power_aim(power) {
             if aim.at_once() {
-                let commands = pressed(aim, power, &self.selected);
+                let commands = pressed(aim, power, self.selected.regiments());
                 if !self.silenced(&commands) {
                     self.orders(commands);
                 }
@@ -391,7 +391,7 @@ impl Running {
         };
         let stale = match self.power_aim(power) {
             Some(aim) if aim.at_once() => true,
-            Some(aim) => aim.needs_selection() && self.selected.is_empty(),
+            Some(aim) => aim.needs_selection() && self.selected.regiments().is_empty(),
             None => true,
         };
         if stale || self.watching.is_some() {
@@ -414,7 +414,7 @@ impl Running {
                 .collect(),
             Aim::Building(to) => self
                 .resonator_at_cursor(to)
-                .map(|to| shifts(power, &self.selected, to).collect())
+                .map(|to| shifts(power, self.selected.regiments(), to).collect())
                 .unwrap_or_default(),
             Aim::Ground(_) => (self.ground_under_cursor())
                 .map(|at| planted(power, fx_vec(at)))

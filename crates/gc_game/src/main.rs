@@ -265,7 +265,7 @@ use camera::{ActiveCamera, FollowCamera, RideTarget, RtsCamera};
 use gc_map::{FieldMap, Map};
 use models::Action;
 use puppets::{Block, Fighter, Puppets, Soldier};
-use selection::Selection;
+use selection::Picked;
 
 #[global_allocator]
 static ALLOC: TaggedAlloc = TaggedAlloc;
@@ -1079,7 +1079,7 @@ struct Running {
     sandbox: Sandbox,
     /// The regiments selected, or the building selected when no regiment is
     /// (Conquest).
-    selected: Selection,
+    selected: Picked,
     /// The idle worker F1 last picked, to go on from there.
     idle_from: Option<u32>,
     /// The formation F last ordered, for which selection and on which tick:
@@ -1596,6 +1596,13 @@ enum SandboxPage {
     Credits,
 }
 
+impl SandboxPage {
+    /// Go to page `to`, or back to the panel's own text if it is on already.
+    fn toggle(&mut self, to: SandboxPage) {
+        *self = if *self == to { SandboxPage::Panel } else { to };
+    }
+}
+
 /// The sandbox's and the drill's four sides, named by colour.
 fn sandbox_parties() -> Vec<Party> {
     (0..PLAYERS as usize)
@@ -2101,7 +2108,7 @@ impl App {
             sandbox: Sandbox {
                 ..Sandbox::new(opts.sandbox)
             },
-            selected: Selection::default(),
+            selected: Picked::default(),
             idle_from: None,
             formation_pick: None,
             shown_formation: None,
@@ -2497,6 +2504,9 @@ impl ApplicationHandler for App {
                         Some("That sandbox tool is off in a network battle.")
                     } else if r.watching.is_some() && (edit_tool || code == KeyCode::KeyF) {
                         Some("That is off while you watch a replay.")
+                    } else if r.showroom.is_some() && code == KeyCode::KeyT {
+                        // The showroom shows no panel to tune in.
+                        Some("The stats panel is off in the showroom.")
                     } else if r.conquest_match() && edit_tool {
                         Some("That sandbox tool is off in Conquest.")
                     } else {
@@ -2582,10 +2592,7 @@ impl ApplicationHandler for App {
                             r.delete_key();
                         }
                         KeyCode::KeyT if down && !event.repeat => {
-                            r.sandbox.page = match r.sandbox.page {
-                                SandboxPage::Tuning => SandboxPage::Panel,
-                                _ => SandboxPage::Tuning,
-                            };
+                            r.sandbox.page.toggle(SandboxPage::Tuning);
                             r.input.arrows = [false; 4];
                             r.sandbox.dirty = true;
                         }
@@ -2646,10 +2653,7 @@ impl ApplicationHandler for App {
                             r.sandbox.dirty = true;
                         }
                         KeyCode::KeyC if down && !event.repeat => {
-                            r.sandbox.page = match r.sandbox.page {
-                                SandboxPage::Credits => SandboxPage::Panel,
-                                _ => SandboxPage::Credits,
-                            };
+                            r.sandbox.page.toggle(SandboxPage::Credits);
                             r.sandbox.dirty = true;
                         }
                         KeyCode::KeyH
@@ -3045,12 +3049,13 @@ impl Running {
                     let side = self.sandbox.side;
                     let building = self
                         .selected
+                        .regiments()
                         .is_empty()
                         .then(|| self.building_under_cursor(|o| o == side))
                         .flatten();
                     let reach = if building.is_some() { 1.5 } else { 6.0 };
                     match self.own_regiment_at_cursor(reach) {
-                        Some(h) => self.toggle_selected(h),
+                        Some(h) => self.selected.toggle(h),
                         None => {
                             if let Some(b) = building {
                                 self.selected.select_structure(b);
@@ -3058,7 +3063,7 @@ impl Running {
                         }
                     }
                 }
-                if !matches!(self.selected, Selection::Nothing) {
+                if !self.selected.is_nothing() {
                     self.ui_sound(sounds::UiSound::Select);
                 }
                 self.input.left_down = None;
@@ -3135,12 +3140,13 @@ impl Running {
                 // A second right-click soon after the first: they run there.
                 if ordered && !queue && !self.world.deploying() {
                     let now = Instant::now();
-                    let again = (self.last_right.take())
-                        .is_some_and(|(t, who)| now - t < DOUBLE_TAP && *who == *self.selected);
+                    let again = (self.last_right.take()).is_some_and(|(t, who)| {
+                        now - t < DOUBLE_TAP && who == self.selected.regiments()
+                    });
                     if again {
                         self.run();
                     } else {
-                        self.last_right = Some((now, self.selected.to_vec()));
+                        self.last_right = Some((now, self.selected.regiments().to_vec()));
                     }
                 }
                 self.input.right_down = None;
@@ -3236,7 +3242,7 @@ impl Running {
         // (docs/42-armies-that-march.md), each order a new one.
         // Each player's numbers are its own, so two players ordering
         // one owner's regiments (an army handed over) never share one.
-        if self.selected.len() > 1 {
+        if self.selected.regiments().len() > 1 {
             order.brigade = self.next_brigade();
         }
         self.plan_order(order);
@@ -3246,7 +3252,7 @@ impl Running {
             // Ordered other than as a whole army, they leave their places.
             for army in self.armies.iter_mut().flatten() {
                 for h in &mut army.held {
-                    if h.is_some_and(|h| self.selected.contains(&h)) {
+                    if h.is_some_and(|h| self.selected.regiments().contains(&h)) {
                         *h = None;
                     }
                 }
@@ -3353,34 +3359,42 @@ impl Running {
     /// if `queue`).
     fn issue_attack(&mut self, target: RegimentHandle, queue: bool) {
         let queue = queue && !self.world.deploying();
-        if !self.selected.is_empty() {
+        if !self.selected.regiments().is_empty() {
             self.attack_mark = Some((target, Instant::now()));
             self.ui_sound(sounds::UiSound::Attack);
         }
-        self.human_orders
-            .extend(self.selected.iter().map(|&regiment| PlayerCommand {
-                player: self.sandbox.side,
-                command: gc_sim::Command::of_step(
-                    regiment,
-                    gc_sim::orders::Step::Attack { target },
-                    queue,
-                ),
-            }));
+        self.human_orders.extend(
+            self.selected
+                .regiments()
+                .iter()
+                .map(|&regiment| PlayerCommand {
+                    player: self.sandbox.side,
+                    command: gc_sim::Command::of_step(
+                        regiment,
+                        gc_sim::orders::Step::Attack { target },
+                        queue,
+                    ),
+                }),
+        );
     }
 
     /// Send the selection to attack the building `structure`.
     fn issue_siege(&mut self, structure: StructureHandle) {
-        if !self.selected.is_empty() {
+        if !self.selected.regiments().is_empty() {
             self.ui_sound(sounds::UiSound::Attack);
         }
-        self.human_orders
-            .extend(self.selected.iter().map(|&regiment| PlayerCommand {
-                player: self.sandbox.side,
-                command: gc_sim::Command::AttackStructure {
-                    regiment,
-                    structure,
-                },
-            }));
+        self.human_orders.extend(
+            self.selected
+                .regiments()
+                .iter()
+                .map(|&regiment| PlayerCommand {
+                    player: self.sandbox.side,
+                    command: gc_sim::Command::AttackStructure {
+                        regiment,
+                        structure,
+                    },
+                }),
+        );
     }
 
     /// The building the mouse is over whose owner `accept` allows.
@@ -3409,18 +3423,13 @@ impl Running {
         self.building_under_cursor(|o| self.world.hostile(side, o))
     }
 
-    /// Add `h` to the selection, or take it out if it is already in.
-    fn toggle_selected(&mut self, h: RegimentHandle) {
-        self.selected.toggle(h);
-    }
-
     /// Fill `self.group` with the selection as group orders see it, each
     /// regiment with its place in an arranged army.
     fn fill_group(&mut self) {
         let regiments = &self.world.regiments;
         self.selected.retain(|&h| regiments.get(h).is_some());
         let selected = std::mem::take(&mut self.selected);
-        self.fill_group_with(&selected);
+        self.fill_group_with(selected.regiments());
         self.selected = selected;
     }
 
@@ -3609,7 +3618,7 @@ impl Running {
         }
         if self.input.command {
             self.control_groups[n].clear();
-            self.control_groups[n].extend_from_slice(&self.selected);
+            self.control_groups[n].extend_from_slice(self.selected.regiments());
             if self.armies[n].take().is_some() {
                 self.say(format!("Group {} saved: no longer an army.", army_label(n)));
             }
@@ -3627,7 +3636,7 @@ impl Running {
         for &h in &self.control_groups[n] {
             self.selected.add(h);
         }
-        if !self.selected.is_empty() {
+        if !self.selected.regiments().is_empty() {
             self.ui_sound(sounds::UiSound::Select);
         }
         let now = Instant::now();
@@ -3658,20 +3667,20 @@ impl Running {
             return;
         };
         self.control_groups[n].clear();
-        self.control_groups[n].extend_from_slice(&self.selected);
+        self.control_groups[n].extend_from_slice(self.selected.regiments());
         self.armies[n] = Some(army);
         self.ui_sound(sounds::UiSound::Select);
         self.say(format!(
             "Army {}: its {} regiments keep this shape on every group order. Alt+{n} sends others to join it.",
             army_label(n),
-            self.selected.len()
+            self.selected.regiments().len()
         ));
     }
 
     /// The army the selection is, all of it and nothing else, if any.
     fn army_selected(&self) -> Option<usize> {
         let regiments = &self.world.regiments;
-        let selected = (self.selected.iter())
+        let selected = (self.selected.regiments().iter())
             .filter(|&&h| regiments.get(h).is_some())
             .count();
         if selected < 2 {
@@ -3682,7 +3691,7 @@ impl Running {
                 (self.control_groups[n].iter()).filter(|&&h| regiments.get(h).is_some());
             self.armies[n].is_some()
                 && alive.clone().count() == selected
-                && alive.all(|h| self.selected.contains(h))
+                && alive.all(|h| self.selected.regiments().contains(h))
         })
     }
 
@@ -3703,7 +3712,7 @@ impl Running {
         };
         let (regiments, side) = (&self.world.regiments, self.sandbox.side);
         self.control_groups[n].retain(|&h| regiments.get(h).is_some_and(|r| r.owner == side));
-        let newcomers: Vec<RegimentHandle> = (self.selected.iter().copied())
+        let newcomers: Vec<RegimentHandle> = (self.selected.regiments().iter().copied())
             .filter(|h| !self.control_groups[n].contains(h))
             .filter(|&h| regiments.get(h).is_some_and(|r| r.owner == side))
             .collect();
@@ -3747,7 +3756,7 @@ impl Running {
         self.armies[n] = Some(army);
         self.control_groups[n].extend_from_slice(&newcomers);
         let k = newcomers.len();
-        self.selected = Selection::from(newcomers);
+        self.selected = Picked::from(newcomers);
         self.send_planned(false, false);
         self.say(format!(
             "Sent {k} {} to join army {}.",
@@ -3777,6 +3786,7 @@ impl Running {
         let regiments = &self.world.regiments;
         let Some(r) = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| regiments.get(h))
             .find(|r| r.morale != MoraleState::Shattered)
@@ -3963,12 +3973,13 @@ impl Running {
         // Regiments locked in melee or running can't re-form.
         let ready = || {
             self.selected
+                .regiments()
                 .iter()
                 .filter_map(|&h| regiments.get(h))
                 .filter(|r| !r.engaged && !r.morale.broken())
         };
         let Some(first) = ready().next() else {
-            if !self.selected.is_empty() {
+            if !self.selected.regiments().is_empty() {
                 self.say("Locked in melee or running: no new formation".into());
             }
             return;
@@ -3978,7 +3989,11 @@ impl Running {
         // may not have landed yet), else from where it stands now: a shield
         // regiment's formation, since the rest stand in Tight for its wall.
         let current = match &self.formation_pick {
-            Some((selection, f, at)) if **selection == *self.selected && tick < at + 40 => *f,
+            Some((selection, f, at))
+                if **selection == *self.selected.regiments() && tick < at + 40 =>
+            {
+                *f
+            }
             _ => ready().find(shielded).unwrap_or(first).formation,
         };
         let wedges = |r: &gc_sim::RegimentView| units[r.unit as usize].can_wedge();
@@ -4010,7 +4025,7 @@ impl Running {
                 },
             });
         }
-        self.formation_pick = Some((self.selected.to_vec(), next, tick));
+        self.formation_pick = Some((self.selected.regiments().to_vec(), next, tick));
         self.ui_sound(sounds::UiSound::Move);
         let note = if closed_up {
             " (Tight for those without shields)"
@@ -4084,6 +4099,7 @@ impl Running {
         let units = self.world.units();
         let spears: Vec<_> = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .filter(|r| units[r.unit as usize].reach && !r.morale.broken())
@@ -4137,6 +4153,7 @@ impl Running {
         let units = self.world.units();
         let bows: Vec<_> = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .filter(|r| units[r.unit as usize].can_skirmish() && !r.morale.broken())
@@ -4169,6 +4186,7 @@ impl Running {
     fn toggle_hold(&mut self) {
         let mine: Vec<_> = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .filter(|r| !r.morale.broken() && !r.falling_back)
@@ -4202,6 +4220,7 @@ impl Running {
         }
         let ready: Vec<_> = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .filter(|r| {
@@ -4239,7 +4258,7 @@ impl Running {
             return;
         }
         let before = self.human_orders.len();
-        for &regiment in self.selected.iter() {
+        for &regiment in self.selected.regiments() {
             if self.world.regiments.owner(regiment).is_some() {
                 self.human_orders.push(PlayerCommand {
                     player: self.sandbox.side,
@@ -4261,6 +4280,7 @@ impl Running {
     fn toggle_torches(&mut self) {
         let mine: Vec<_> = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .collect();
@@ -4290,6 +4310,7 @@ impl Running {
     /// stakes of its faction's to plant.
     fn plantable(&self) -> Vec<(RegimentHandle, gc_sim::BuildingId)> {
         self.selected
+            .regiments()
             .iter()
             .filter_map(|&h| {
                 let unit = self.world.regiments.get(h)?.unit;
@@ -4328,6 +4349,7 @@ impl Running {
     fn fall_back(&mut self) {
         let ready: Vec<_> = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .filter(|r| !r.morale.broken() && !r.falling_back)
@@ -4715,7 +4737,8 @@ impl Running {
                 .tend(r.handle, r.engaged, self.world.is_worker(r.handle), fx_dt);
             let (pos, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
             let [cr, cg, cb] = color_of(&self.parties, r.owner);
-            let selected = self.selected.contains(&r.handle) || self.boxed.contains(&r.handle);
+            let selected =
+                self.selected.regiments().contains(&r.handle) || self.boxed.contains(&r.handle);
             let stats = &self.units.stats[r.unit as usize];
             let (file_spacing, rank_spacing) = stats.spacing(r.formation);
             let (file_spacing, rank_spacing) = (fx_to_f32(file_spacing), fx_to_f32(rank_spacing));
@@ -7443,8 +7466,11 @@ impl Running {
         // way ends to each one's own place.
         let mut ways: Vec<u16> = Vec::new();
         // The regiment the mouse rests on shows its route too.
-        let hovered = self.hud.hover_own.filter(|h| !self.selected.contains(h));
-        for h in self.selected.iter().copied().chain(hovered) {
+        let hovered = self
+            .hud
+            .hover_own
+            .filter(|h| !self.selected.regiments().contains(h));
+        for h in self.selected.regiments().iter().copied().chain(hovered) {
             let Some(r) = self.world.regiments.get(h) else {
                 continue;
             };
@@ -10088,25 +10114,24 @@ impl Running {
     /// every regiment of every side.
     fn remove_regiments(&mut self, all: bool) {
         let side = self.sandbox.side;
+        let selected = self.selected.take_regiments();
         let doomed: Vec<RegimentHandle> = if all {
             self.world.regiments.iter().map(|r| r.handle).collect()
         } else {
-            self.selected.take_regiments()
+            selected
         };
         self.human_orders
             .extend(doomed.into_iter().map(|regiment| PlayerCommand {
                 player: side,
                 command: gc_sim::Command::RemoveRegiment { regiment },
             }));
-        self.selected.clear_regiments();
     }
 
     /// The stats panel (T) is on screen, which is when the arrows tune. A
-    /// replay and the showroom show no panel, so the arrows keep panning there.
+    /// replay and the showroom refuse T, and a match starts on the panel's
+    /// own text, so the page is never Tuning there.
     fn tuning_shown(&self) -> bool {
         self.sandbox.page == SandboxPage::Tuning
-            && self.watching.is_none()
-            && self.showroom.is_none()
     }
 
     /// Up and Down pick a stat, Left and Right change it (Shift: ten steps).
@@ -10433,6 +10458,7 @@ impl Running {
     fn selection_formation(&self) -> Option<Option<Formation>> {
         let mut formations = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .map(|r| r.formation);
