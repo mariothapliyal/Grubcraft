@@ -647,8 +647,13 @@ impl Brigades {
     /// (slots are given out again at once) is no member of.
     fn slot(&self, regs: &Regiments, i: usize) -> Option<usize> {
         let tag = *self.of.get(i)?;
-        (tag != 0 && regs.alive[i] && self.members[i].generation == regs.generation[i])
-            .then(|| usize::from(tag) - 1)
+        (tag != 0 && self.member_current(regs, i)).then(|| usize::from(tag) - 1)
+    }
+
+    /// Whether the regiment in slot `i` is still the one that joined
+    /// (alive, and not one raised in the slot since another died there).
+    fn member_current(&self, regs: &Regiments, i: usize) -> bool {
+        regs.alive[i] && self.members[i].generation == regs.generation[i]
     }
 
     /// The number of the brigade regiment slot `i` marches in, and where
@@ -660,16 +665,16 @@ impl Brigades {
 
     /// How regiment slot `i` stands in its brigade, if it marches in one.
     pub(crate) fn view(&self, regs: &Regiments, i: usize) -> Option<BrigadeView> {
-        let (number, goal) = self.of(regs, i)?;
         let b = &self.pool[self.slot(regs, i)?];
-        let marching = b.phase == Phase::Marching && self.members[i].mode != Mode::Plain;
+        let m = &self.members[i];
+        let marching = b.phase == Phase::Marching && m.mode != Mode::Plain;
         Some(BrigadeView {
-            number,
-            goal,
-            place: marching.then(|| b.lane(b.arc - self.members[i].station, self.members[i].side)),
+            number: b.number,
+            goal: m.end,
+            place: marching.then(|| b.lane(b.arc - m.station, m.side)),
             in_step: regs.step_with[i] & IN_STEP != 0,
-            behind: b.arc - self.members[i].station - self.members[i].arc,
-            steering: self.members[i].mode as u8,
+            behind: b.arc - m.station - m.arc,
+            steering: m.mode as u8,
         })
     }
 
@@ -855,7 +860,7 @@ impl Brigades {
             if self.of[i] == 0 {
                 continue;
             }
-            if !regs.alive[i] || regs.generation[i] != self.members[i].generation {
+            if !self.member_current(regs, i) {
                 self.leave(regs, i);
                 continue;
             }
@@ -1936,55 +1941,22 @@ impl Brigades {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
     use alloc::vec::Vec;
 
     use gc_fixed::{Fx, FxVec2};
 
-    use crate::nav::CELLS_PER_TILE;
     use crate::scenario::{DRILL_UNITS, NORTH};
-    use crate::{Capacities, Command, Ground, MatchSetup, PlayerCommand, RegimentHandle, World};
-
-    const MAP: u32 = 128;
-
-    fn world() -> World {
-        let side = (MAP as usize) * CELLS_PER_TILE as usize;
-        let nav = vec![1u8; side * side];
-        World::new(&MatchSetup {
-            seed: 3,
-            capacities: Capacities { regiments: 16 },
-            units: &DRILL_UNITS,
-            map_tiles: MAP,
-            nav: &nav,
-            teams: &[],
-            ground: Ground::FLAT,
-            champions: false,
-            sky: crate::Sky::STILL,
-            generals: false,
-        })
-    }
-
-    fn spawn(w: &mut World, x: i32, y: i32) -> RegimentHandle {
-        let before: Vec<_> = w.regiments.iter().map(|r| r.handle).collect();
-        let command = Command::SpawnRegiment {
-            unit: 0,
-            position: FxVec2::from_ints(x, y),
-            facing: NORTH,
-        };
-        w.tick(&[PlayerCommand { player: 0, command }]);
-        (w.regiments.iter().map(|r| r.handle))
-            .find(|h| !before.contains(h))
-            .unwrap()
-    }
+    use crate::test_util::{spawn, world};
+    use crate::{Command, PlayerCommand};
 
     /// A regiment raised in the slot of a brigade member that died the
     /// same tick (slots are given out again at once) is of no brigade,
     /// before the next step forgets the dead one as well as after.
     #[test]
     fn a_regiment_raised_in_a_dead_members_slot_is_of_no_brigade() {
-        let mut w = world();
-        let a = spawn(&mut w, 40, 100);
-        let b = spawn(&mut w, 52, 100);
+        let mut w = world(&DRILL_UNITS);
+        let a = spawn(&mut w, 0, 0, 40, 100);
+        let b = spawn(&mut w, 0, 0, 52, 100);
         let moves: Vec<_> = [(a, 40), (b, 52)]
             .into_iter()
             .map(|(regiment, x)| PlayerCommand {

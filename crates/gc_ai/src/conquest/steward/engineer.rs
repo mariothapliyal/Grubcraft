@@ -395,10 +395,7 @@ impl Steward {
                 self.engineer.raised = 0;
             }
             match works {
-                Some(w) => {
-                    self.engineer.works = Some(w);
-                    self.engineer.no_line = false;
-                }
+                Some(w) => self.engineer.works = Some(w),
                 // Nothing can be laid out now: what stands is kept, and
                 // looked at again later.
                 None => {

@@ -627,47 +627,11 @@ fn flee(
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
-    use alloc::vec::Vec;
-
     use gc_fixed::FxVec2;
 
     use super::rout;
-    use crate::nav::CELLS_PER_TILE;
-    use crate::scenario::{DRILL_UNITS, NORTH};
-    use crate::{Capacities, Command, Ground, MatchSetup, PlayerCommand, RegimentHandle, World};
-
-    const MAP: u32 = 128;
-
-    fn world() -> World {
-        let side = (MAP as usize) * CELLS_PER_TILE as usize;
-        let nav = vec![1u8; side * side];
-        World::new(&MatchSetup {
-            seed: 3,
-            capacities: Capacities { regiments: 16 },
-            units: &DRILL_UNITS,
-            map_tiles: MAP,
-            nav: &nav,
-            teams: &[],
-            ground: Ground::FLAT,
-            champions: false,
-            sky: crate::Sky::STILL,
-            generals: false,
-        })
-    }
-
-    fn spawn(w: &mut World, player: u8, x: i32, y: i32) -> RegimentHandle {
-        let before: Vec<_> = w.regiments.iter().map(|r| r.handle).collect();
-        let command = Command::SpawnRegiment {
-            unit: 0,
-            position: FxVec2::from_ints(x, y),
-            facing: NORTH,
-        };
-        w.tick(&[PlayerCommand { player, command }]);
-        (w.regiments.iter().map(|r| r.handle))
-            .find(|h| !before.contains(h))
-            .unwrap()
-    }
+    use crate::scenario::DRILL_UNITS;
+    use crate::test_util::{spawn, world};
 
     /// Men who break set no points and keep no place they stood aside
     /// from: a charge arriving the next tick (before `before_move` gets to
@@ -675,8 +639,8 @@ mod tests {
     /// not walk back to where they made way from.
     #[test]
     fn a_rout_lowers_the_spears_and_forgets_the_place_made_way_from() {
-        let mut w = world();
-        let h = spawn(&mut w, 0, 60, 60);
+        let mut w = world(&DRILL_UNITS);
+        let h = spawn(&mut w, 0, 0, 60, 60);
         let i = w.regiments.resolve(h).unwrap();
         w.regiments.braced[i] = true;
         w.regiments.home[i] = Some(FxVec2::from_ints(64, 60));

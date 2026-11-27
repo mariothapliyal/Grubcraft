@@ -841,6 +841,9 @@ impl Economy {
         r: usize,
         used: &mut Option<[u32; MAX_PARTIES]>,
     ) {
+        if self.clock[r] > 0 {
+            return;
+        }
         let n = usize::from(self.node[r]);
         let at = if self.same_node(r) {
             self.node_at[n]
@@ -849,7 +852,7 @@ impl Economy {
             // walking there (a tile short of it, see `at_point`) is.
             regs.target[r].unwrap_or(regs.position[r])
         };
-        if self.clock[r] > 0 || !self.at_point(regs, r, at, NODE_REACH) {
+        if !self.at_point(regs, r, at, NODE_REACH) {
             return;
         }
         if !structures.on_veins(regs.owner[r], at) {

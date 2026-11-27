@@ -61,6 +61,8 @@ pub mod stances;
 mod state;
 pub mod structures;
 pub mod terrain;
+#[cfg(test)]
+mod test_util;
 pub mod tithe;
 pub mod towers;
 pub mod towns;

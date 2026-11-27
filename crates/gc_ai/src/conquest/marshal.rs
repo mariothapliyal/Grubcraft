@@ -13,6 +13,7 @@ use gc_sim::economy::SUPPLY_LIMIT;
 use gc_sim::structures::{Role, StructureHandle};
 use gc_sim::{MoraleState, PlayerId, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
+use std::cell::OnceCell;
 
 use super::raider::Raider;
 use super::scout::Scout;
@@ -504,11 +505,10 @@ impl Marshal {
         // look, its window running down and the stalemate forgotten, so
         // the raid waits until no threat would keep it home once raiding.
         let threat = threat_to_home(s, army, home);
-        let raid_goal = Goal::Attack(Vec2::ZERO);
         if enough
             && !holding
             && self.heart_stalemate(s.now, beaten_enough)
-            && keeps_home(s, threat, raid_goal, true, ready).is_none()
+            && keeps_home(threat, false, ready, || HeartNow::see(s, true)).is_none()
             && let Some((t, note)) = raid_target(s, centroid(army))
                 .map(|t| (t, "going to break a base"))
                 .or_else(|| {
@@ -525,12 +525,12 @@ impl Marshal {
             self.set_out_with = self.out.set(army);
         }
         let raiding = s.now < self.raid_until;
-        // A raid leaves the Heart be; but against a lone enemy holding it a
-        // while nobody else will stop them, and they win.
-        let lone_alarm = |s: &Sense| heart_alarm(s) && spymaster::enemies(s).len() < 2;
-        let heart_to_take = |s: &Sense| heart_to_take(s).filter(|_| !raiding || lone_alarm(s));
-        let enemy_holds_heart = |s: &Sense| enemy_holds_heart(s) && (!raiding || lone_alarm(s));
-        if let Some(threat) = keeps_home(s, threat, self.goal, raiding, ready) {
+        // The Heart as this look weighs it (a raid leaves it be, see
+        // `HeartNow::see`), worked out when first asked for.
+        let seen_heart = OnceCell::new();
+        let heart_now = || *seen_heart.get_or_init(|| HeartNow::see(s, raiding));
+        let on_heart = matches!(self.goal, Goal::Heart(_));
+        if let Some(threat) = keeps_home(threat, on_heart, ready, heart_now) {
             if !matches!(self.goal, Goal::Defend(_)) {
                 c.journal.note(
                     s.now,
@@ -557,9 +557,9 @@ impl Marshal {
                 // while it breaks a base: four armies piling onto the Heart
                 // and none holding it never ends.
                 let regrouped = s.now >= self.regroup_until;
-                let heart = heart_to_take(s).filter(|_| {
+                let heart = heart_now().to_take.filter(|_| {
                     regrouped
-                        && if enemy_holds_heart(s) {
+                        && if heart_now().enemy_holds {
                             ready || enough
                         } else {
                             ready && !brawl_at_heart(s)
@@ -601,13 +601,13 @@ impl Marshal {
                     self.goal = Goal::Gather;
                     self.out.clear();
                     self.regroup_until = s.now + REGROUP_TICKS;
-                } else if let Some(heart) = heart_to_take(s).filter(|_| {
+                } else if let Some(heart) = heart_now().to_take.filter(|_| {
                     // An enemy holding the Heart a while (against one
                     // enemy, at all) wins unless it is stopped; otherwise an
                     // attack under way goes on.
                     matches!(self.goal, Goal::Heart(_))
-                        || heart_alarm(s)
-                        || enemy_holds_heart(s) && spymaster::enemies(s).len() < 2
+                        || heart_alarm(s, heart_holder(s))
+                        || heart_now().enemy_holds && spymaster::enemies(s).len() < 2
                 }) {
                     if !matches!(self.goal, Goal::Heart(_)) {
                         c.journal.note(
@@ -1262,53 +1262,65 @@ fn nearest(buildings: Vec<Sighted>, from: Vec2) -> Option<Vec2> {
 }
 
 /// Where the enemies at its buildings (`threat`, from [`threat_to_home`])
-/// keep an army going for `goal` home to defend, if they do, `raiding` or
-/// not, its wave `ready` or not (see [`defends`]).
+/// keep an army home to defend, if they do: one going for the Heart
+/// (`on_heart`) or not, its wave `ready` or not, the Heart standing as
+/// `heart` gives it (see [`defends`]).
 fn keeps_home(
-    s: &Sense,
     threat: Option<(Vec2, bool)>,
-    goal: Goal,
-    raiding: bool,
+    on_heart: bool,
     ready: bool,
+    heart: impl FnOnce() -> HeartNow,
 ) -> Option<Vec2> {
     let (at, at_home) = threat?;
-    let heart = HeartNow {
-        to_take: heart_to_take(s).is_some(),
-        enemy_holds: enemy_holds_heart(s),
-        we_hold: we_hold_heart(s),
-        lone_alarm: heart_alarm(s) && spymaster::enemies(s).len() < 2,
-    };
-    defends(at_home, goal, raiding, ready, heart).then_some(at)
+    defends(at_home, on_heart, ready, heart).then_some(at)
 }
 
-/// How the Titan's Heart stands, for [`defends`].
+/// How the Titan's Heart stands, as an army weighs going for it (see
+/// [`HeartNow::see`]).
 #[derive(Clone, Copy, Debug)]
 struct HeartNow {
-    /// Open, and not held by its own side.
-    to_take: bool,
+    /// Where it is, if it is open, not held by its own side, and worth
+    /// going for.
+    to_take: Option<Vec2>,
+    /// An enemy holds it, and that is worth stopping.
     enemy_holds: bool,
     we_hold: bool,
-    /// An enemy has held it a while, and it knows of no other.
-    lone_alarm: bool,
+}
+
+impl HeartNow {
+    /// The Heart as `s` shows it, `raiding` or not. A raid leaves the
+    /// Heart be (as if it were shut and nobody held it) unless a lone
+    /// enemy has held it a while (see [`lone_alarm`]): nobody else will
+    /// stop them, and they win.
+    fn see(s: &Sense, raiding: bool) -> HeartNow {
+        let holder = heart_holder(s);
+        let enemy = holder.map(|(enemy, _)| enemy);
+        let open = s
+            .world
+            .heart()
+            .filter(|h| h.open && enemy != Some(false))
+            .map(|h| v2(h.at));
+        let enemy_holds = enemy == Some(true);
+        let minded = (open.is_some() || enemy_holds) && (!raiding || lone_alarm(s, holder));
+        HeartNow {
+            to_take: open.filter(|_| minded),
+            enemy_holds: enemy_holds && minded,
+            we_hold: enemy == Some(false),
+        }
+    }
 }
 
 /// Whether enemies at its buildings (`at_home`, or at an outlying one)
-/// keep an army going for `goal` home. Home first, but a threat to
-/// outlying buildings doesn't pull the army off the Titan's Heart: a game
-/// of armies guarding sprawling bases never ends otherwise. A raid leaves
-/// the Heart be, unless a lone enemy has held it a while: nobody else
-/// will stop them, and they win.
-fn defends(at_home: bool, goal: Goal, raiding: bool, ready: bool, heart: HeartNow) -> bool {
-    let heart_minded = !raiding || heart.lone_alarm;
-    at_home
-        || !(heart.to_take && heart_minded) && !heart.we_hold
-        || !(matches!(goal, Goal::Heart(_)) || heart.enemy_holds && heart_minded || ready)
-}
-
-/// The Titan's Heart, if it is open and not held by its own side.
-fn heart_to_take(s: &Sense) -> Option<Vec2> {
-    let h = s.world.heart().filter(|h| h.open)?;
-    (heart_held_by_enemy(s) != Some(false)).then(|| v2(h.at))
+/// keep an army home, one going for the Heart (`on_heart`) or not. Home
+/// first, but a threat to outlying buildings doesn't pull the army off the
+/// Titan's Heart: a game of armies guarding sprawling bases never ends
+/// otherwise. `heart` is asked for only for a threat away from home.
+fn defends(at_home: bool, on_heart: bool, ready: bool, heart: impl FnOnce() -> HeartNow) -> bool {
+    if at_home {
+        return true;
+    }
+    let heart = heart();
+    heart.to_take.is_none() && !heart.we_hold || !(on_heart || heart.enemy_holds || ready)
 }
 
 /// Who holds the Heart: `Some(true)` an enemy, `Some(false)` its own side
@@ -1342,14 +1354,16 @@ fn brawl_at_heart(s: &Sense) -> bool {
         .is_some_and(|first| sides.any(|o| s.view.hostile(first, o)))
 }
 
-/// Whether an enemy has held the Heart for [`HEART_ALARM`] or more.
-fn heart_alarm(s: &Sense) -> bool {
-    heart_holder(s)
-        .is_some_and(|(enemy, since)| enemy && s.world.tick_count() >= since + HEART_ALARM)
+/// Whether an enemy has held the Heart (held as `holder` says, from
+/// [`heart_holder`]) for [`HEART_ALARM`] or more.
+fn heart_alarm(s: &Sense, holder: Option<(bool, u32)>) -> bool {
+    holder.is_some_and(|(enemy, since)| enemy && s.world.tick_count() >= since + HEART_ALARM)
 }
 
-fn enemy_holds_heart(s: &Sense) -> bool {
-    heart_held_by_enemy(s) == Some(true)
+/// Whether an enemy has held the Heart a while (see [`heart_alarm`]) and
+/// it knows of no other enemy: nobody else will stop them.
+fn lone_alarm(s: &Sense, holder: Option<(bool, u32)>) -> bool {
+    heart_alarm(s, holder) && spymaster::enemies(s).len() < 2
 }
 
 fn we_hold_heart(s: &Sense) -> bool {
@@ -1576,17 +1590,20 @@ mod tests {
     /// the defence and the stalemate be forgotten).
     #[test]
     fn a_raid_waits_while_an_outlying_threat_would_call_it_home() {
-        let heart = HeartNow {
-            to_take: true,
+        let open = HeartNow {
+            to_take: Some(Vec2::ZERO),
             enemy_holds: false,
             we_hold: false,
-            lone_alarm: false,
         };
-        let on_heart = Goal::Heart(Vec2::ZERO);
-        assert!(!defends(false, on_heart, false, true, heart));
-        assert!(defends(false, Goal::Attack(Vec2::ZERO), true, true, heart));
+        assert!(!defends(false, true, true, || open));
+        // Raiding, it leaves the Heart be (nobody has held it a while).
+        let raided = HeartNow {
+            to_take: None,
+            ..open
+        };
+        assert!(defends(false, false, true, || raided));
         // At home, it always defends.
-        assert!(defends(true, on_heart, false, true, heart));
+        assert!(defends(true, true, true, || open));
     }
 
     #[test]

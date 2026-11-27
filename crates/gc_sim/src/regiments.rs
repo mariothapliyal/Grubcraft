@@ -596,10 +596,11 @@ regiment_fields! {
     /// (no room on the foe's side, or only a corner touching) and free to
     /// go round (see `combat::crowded_out`); while going round, ticks spent
     /// on the way. Back to 0 whenever its foe changes in `Combat::before_move`
-    /// (a new fight, or none) and whenever its going round ends, so no
-    /// fight inherits the turns of another. A fight left elsewhere (falling
-    /// back, swept off, onto a wall) keeps the count until the next fight
-    /// starts, which then resets it before counting.
+    /// (a new fight, or none) and whenever its going round ends (see
+    /// [`Regiments::end_round`]), so no fight inherits the turns of
+    /// another. A fight left elsewhere (falling back, swept off, onto a
+    /// wall) keeps the count until the next fight starts, which then resets
+    /// it before counting.
     crowded: u8 = 0,
     /// Spears or pikes set against a charge (see [`Regiments::brace`]):
     /// standing until given another order.
@@ -818,9 +819,8 @@ impl Regiments {
             // Out of the other shape with a frontage of its own (a column
             // into a wedge, say), the width to widen out to is the one
             // that shape kept, not its own narrowed frontage.
-            let kept = self.width_kept[i];
-            let asked = if was.own_frontage() && kept > 0 {
-                kept
+            let asked = if was.own_frontage() {
+                self.kept_or(i, self.frontage[i])
             } else {
                 self.frontage[i]
             };
@@ -844,8 +844,17 @@ impl Regiments {
     /// Slot `i`, just out of a column or a wedge, forms up as wide as it
     /// kept (see `width_kept`), or else `files`.
     fn leave_own(&mut self, i: usize, files: u16) {
-        let kept = core::mem::take(&mut self.width_kept[i]);
-        self.set_frontage(i, if kept > 0 { kept } else { files });
+        let files = self.kept_or(i, files);
+        self.width_kept[i] = 0;
+        self.set_frontage(i, files);
+    }
+
+    /// The width slot `i` kept (see `width_kept`), or else `files`.
+    pub(crate) fn kept_or(&self, i: usize, files: u16) -> u16 {
+        match self.width_kept[i] {
+            0 => files,
+            kept => kept,
+        }
     }
 
     pub(crate) fn despawn(&mut self, h: RegimentHandle) -> bool {
@@ -1491,6 +1500,24 @@ impl Regiments {
         self.leave_fight(i);
     }
 
+    /// Regiment `i` stops going round its foe (see `combat::Round`), if it
+    /// was: the ticks it spent on the way are not crowded turns of its next
+    /// fight.
+    pub(crate) fn end_round(&mut self, i: usize) {
+        self.round[i] = None;
+        self.crowded[i] = 0;
+    }
+
+    /// Slot `i` makes for `foe` as an attack does, no longer marching to a
+    /// spot it was sent to stand at (see [`KEEP_PLACE`]): only that part
+    /// of [`Regiments::attack`], which also ends going round and lifts
+    /// bracing, holding, backing and the rest, for a fight taken on in
+    /// the middle of one.
+    pub(crate) fn take_on(&mut self, i: usize, foe: RegimentHandle) {
+        self.attack_target[i] = Some(foe);
+        self.set_seeks_place(i, false);
+    }
+
     /// Order a regiment to attack an enemy regiment: melee regiments close
     /// in and fight, ranged ones move into range and shoot.
     pub(crate) fn attack(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {
@@ -1503,13 +1530,9 @@ impl Regiments {
         if self.attack_target[i] != Some(target) {
             // Going round only the foe it was going round (see
             // `combat::Round`): an order repeated keeps it on its way.
-            // The ticks spent going round are not crowded turns of the
-            // next fight.
-            self.round[i] = None;
-            self.crowded[i] = 0;
+            self.end_round(i);
         }
-        self.set_seeks_place(i, false);
-        self.attack_target[i] = Some(target);
+        self.take_on(i, target);
         self.target_facing[i] = None;
         self.drill[i] = false;
         self.braced[i] = false;

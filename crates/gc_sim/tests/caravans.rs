@@ -760,10 +760,10 @@ fn what_dead_workers_took_goes_back_to_their_pile_before_it_is_cleared() {
     assert_eq!(left, [38]);
 }
 
-#[test]
-fn a_worker_that_emptied_a_pile_leaves_a_new_one_in_its_slot_be() {
-    // Two caravans of player 0's take on cargo and are sent aside, to keep
-    // it; one is lost, and its pile is laid.
+/// Two caravans of player 0's take on cargo and are sent aside, to keep
+/// it; one is lost, and its pile is laid: the world, the caravan left
+/// (with its cargo, 20 tiles from the pile), and the pile.
+fn lay_pile() -> (World, RegimentHandle, gc_sim::NodeView) {
     let mut w = conquest(&[], &[post_east(30)]);
     let first = base(&mut w);
     let second = spawn(&mut w, 0, CARAVAN, 11, 8);
@@ -788,9 +788,19 @@ fn a_worker_that_emptied_a_pile_leaves_a_new_one_in_its_slot_be() {
         ));
     }
     run(&mut w, 30 * SECOND);
-    let gone = |c| Command::RemoveRegiment { regiment: c };
-    assert!(order(&mut w, 0, gone(first)));
+    assert!(order(&mut w, 0, lose(first)));
     let pile = piles(&w)[0];
+    (w, second, pile)
+}
+
+/// The order that loses regiment `c`.
+fn lose(c: RegimentHandle) -> Command {
+    Command::RemoveRegiment { regiment: c }
+}
+
+#[test]
+fn a_worker_that_emptied_a_pile_leaves_a_new_one_in_its_slot_be() {
+    let (mut w, second, pile) = lay_pile();
     // Player 2's worker empties it, its granary a long way off.
     put_up(&mut w, 2, GRANARY, 4, 56);
     let (px, py) = (pile.at.x.floor_int(), pile.at.y.floor_int());
@@ -809,7 +819,7 @@ fn a_worker_that_emptied_a_pile_leaves_a_new_one_in_its_slot_be() {
     // While it takes the last load home, the other caravan is lost, and
     // its pile is laid in the same slot, 20 tiles off.
     assert!(w.carries(worker).is_some());
-    assert!(order(&mut w, 0, gone(second)));
+    assert!(order(&mut w, 0, lose(second)));
     let laid = piles(&w)[0];
     assert_eq!(laid.index, pile.index);
     assert!((laid.at - pile.at).length() > Fx::from_int(10));
@@ -825,33 +835,7 @@ fn a_burrower_that_emptied_a_pile_does_not_take_its_load_to_a_new_one() {
     // As above, but player 2 has a burrowing worker at the pile too, off
     // its veins: it holds its load where it stands, waiting for veins,
     // while the other worker empties the pile.
-    let mut w = conquest(&[], &[post_east(30)]);
-    let first = base(&mut w);
-    let second = spawn(&mut w, 0, CARAVAN, 11, 8);
-    for c in [first, second] {
-        assert!(trade(&mut w, 0, c, TradePost::Hamlet(0)));
-    }
-    while w.cargo(first).is_none() || w.cargo(second).is_none() {
-        w.tick(&[]);
-    }
-    for (c, y) in [(first, 30), (second, 50)] {
-        assert!(order(
-            &mut w,
-            0,
-            Command::MoveTo {
-                regiment: c,
-                target: FxVec2::from_ints(40, y),
-                facing: None,
-                files: 0,
-                pace: Fx::ZERO,
-                brigade: 0,
-            }
-        ));
-    }
-    run(&mut w, 30 * SECOND);
-    let gone = |c| Command::RemoveRegiment { regiment: c };
-    assert!(order(&mut w, 0, gone(first)));
-    let pile = piles(&w)[0];
+    let (mut w, second, pile) = lay_pile();
     put_up(&mut w, 2, GRANARY, 4, 56);
     let (px, py) = (pile.at.x.floor_int(), pile.at.y.floor_int());
     let worker = spawn(&mut w, 2, GNAWER, px + 1, py + 1);
@@ -875,7 +859,7 @@ fn a_burrower_that_emptied_a_pile_does_not_take_its_load_to_a_new_one() {
     assert!(piles(&w).is_empty(), "the pile was never emptied");
     assert!(w.carries(worker).is_some());
     let stood = w.regiments.get(worker).unwrap().position;
-    assert!(order(&mut w, 0, gone(second)));
+    assert!(order(&mut w, 0, lose(second)));
     let laid = piles(&w)[0];
     assert_eq!(laid.index, pile.index);
     assert!((laid.at - pile.at).length() > Fx::from_int(10));

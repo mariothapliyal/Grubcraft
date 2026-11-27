@@ -109,17 +109,6 @@ impl Pier {
     }
 }
 
-impl super::JamFire {
-    /// The piece it was burning is gone: the next it burns starts from
-    /// nothing, even one that jams into the same place in the pool (it
-    /// would otherwise take over the seconds the last one burned, and go
-    /// up at once).
-    fn burnt_down(&mut self) {
-        self.piece = u8::MAX;
-        self.seconds = 0;
-    }
-}
-
 impl Rivers {
     /// The piers standing now: each finished bridge tile off the banks
     /// (its tile and pier) that stands over running river. Refreshed each
@@ -274,21 +263,26 @@ impl Rivers {
                 return false;
             };
             let pieces = &mut self.debris.pieces;
-            let Some(k) =
-                (pieces.iter()).position(|p| p.is_some_and(|p| p.jammed && p.next == fire.pier))
-            else {
+            let Some((k, piece)) = (pieces.iter().enumerate()).find_map(|(k, p)| {
+                p.filter(|p| p.jammed && p.next == fire.pier)
+                    .map(|p| (k, p))
+            }) else {
                 return false;
             };
             (self.debris.blows).push((pier.slot, DECK_BURN_PER_TEN_THOUSAND));
-            // A new piece to burn down (the last one burnt, or pulled out).
-            if usize::from(fire.piece) != k {
+            // A new piece to burn down (the last one burnt, or pulled
+            // out, or gone however it went): it starts from nothing, even
+            // one jammed into the same place in the pool, which would
+            // otherwise take over the seconds the last one burned and go
+            // up at once.
+            if usize::from(fire.piece) != k || fire.born != piece.born {
                 fire.piece = k as u8;
+                fire.born = piece.born;
                 fire.seconds = 0;
             }
             fire.seconds += 1;
-            if pieces[k].is_some_and(|p| fire.seconds >= BURN_SECONDS * p.kind.mass()) {
+            if fire.seconds >= BURN_SECONDS * piece.kind.mass() {
                 pieces[k] = None;
-                fire.burnt_down();
             }
             true
         });
@@ -330,6 +324,7 @@ impl Rivers {
         let fire = super::JamFire {
             pier,
             piece: u8::MAX,
+            born: 0,
             seconds: 0,
         };
         fires.insert(at, fire);
@@ -398,14 +393,7 @@ impl Rivers {
         let Some((k, _)) = self.jammed_at(i as u32).filter(|&(_, m)| m == mass) else {
             return false;
         };
-        let pier = self.debris.pieces[k].map(|p| p.next);
         self.debris.pieces[k] = None;
-        // If it was the piece burning, its fire starts on the next afresh.
-        for fire in &mut self.debris.fires {
-            if Some(fire.pier) == pier && usize::from(fire.piece) == k {
-                fire.burnt_down();
-            }
-        }
         true
     }
 
@@ -506,6 +494,7 @@ mod tests {
         r.debris.fires = alloc::vec![JamFire {
             pier: 10,
             piece: u8::MAX,
+            born: 0,
             seconds: 0,
         }];
         r
@@ -555,6 +544,24 @@ mod tests {
         }
         // Workers drag the raft out a second before it would burn down.
         assert!(r.pull_jam(9, 0, Kind::Raft.mass()));
+        let mut log = jammed(Kind::Log);
+        log.as_mut().unwrap().born = 1;
+        r.debris.pieces[0] = log;
+        let log = u32::from(BURN_SECONDS * Kind::Log.mass());
+        assert_eq!(seconds_to_burn(&mut r), log);
+    }
+
+    /// However the burning piece's place in the pool was emptied (a piece
+    /// floating off the map, or another put in over it, empties one with
+    /// no word to the fire), a piece jammed into it burns its own time.
+    #[test]
+    fn a_piece_jammed_where_a_burning_one_went_any_way_burns_its_own_time() {
+        let mut r = burning();
+        r.debris.pieces = alloc::vec![jammed(Kind::Raft)];
+        for _ in 0..8 {
+            r.burn_jams();
+        }
+        r.debris.pieces[0] = None;
         let mut log = jammed(Kind::Log);
         log.as_mut().unwrap().born = 1;
         r.debris.pieces[0] = log;

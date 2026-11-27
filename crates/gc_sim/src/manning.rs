@@ -721,7 +721,7 @@ impl Conquest {
         let kept = regs.width_kept[r];
         regs.formation[r] = o.formation;
         let own = o.formation.own_frontage();
-        regs.set_frontage(r, if kept > 0 { kept } else { o.frontage });
+        regs.set_frontage(r, regs.kept_or(r, o.frontage));
         regs.width_kept[r] = if own { kept } else { 0 };
         let at = nav.settle(regs.owner[r], at, regs.berth(units, r));
         regs.position[r] = at;
