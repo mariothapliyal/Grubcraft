@@ -1310,7 +1310,9 @@ impl Lan {
         let Role::Client(c) = &self.role else {
             return;
         };
-        if c.game.is_some() {
+        // A rejoin whose start came in this same pump has not been
+        // reported yet: [`Lan::joining`] says why it ended.
+        if c.game.is_some() && self.joining_since.is_none() {
             self.match_events.push(MatchEvent::Ended(why));
         } else {
             self.events.push(NetEvent::Left(why));
@@ -1328,7 +1330,7 @@ impl Lan {
         let Role::Host(h) = &mut self.role else {
             return false;
         };
-        let Some(g) = &h.game else { return false };
+        let Some(g) = &mut h.game else { return false };
         let ip = h.peers[index].addr.ip();
         // The host is player 0 and never rejoins. A place is taken back
         // from the computer that held it, under the name it had (an empty
@@ -1349,6 +1351,11 @@ impl Lan {
         }) else {
             return false;
         };
+        // The new game is judged afresh: one that goes out of sync again
+        // replaying is reported again, and nothing the old one sent is
+        // compared with it.
+        g.desynced.retain(|&d| usize::from(d) != player);
+        g.theirs.retain(|&(p, ..)| usize::from(p) != player);
         // Whoever held it before (a lost connection) is let go quietly.
         for p in &mut h.peers {
             if p.player == Some(player as PlayerId) && !p.gone {
@@ -2679,9 +2686,12 @@ impl Network for Lan {
             return Err(NetError::Refused(why));
         }
         // With nobody else on the network, the match runs on this machine
-        // alone, with no input delay.
+        // alone, with no input delay, and the lobby closes (nobody could
+        // join a match it will never start).
         if !h.peers.iter().any(|p| p.slot.is_some() && !p.gone) {
-            return Ok(h.lobby.match_start(None));
+            let start = h.lobby.match_start(None);
+            self.leave();
+            return Ok(start);
         }
         // The world is seeded with the map seed, so the lobby's settings
         // are all a joiner needs to make the same battle.
@@ -2749,8 +2759,12 @@ impl Network for Lan {
         self.joining_since = None;
         self.socket = None;
         self.finder = None;
+        self.last_query = None;
         self.found.clear();
         self.games.clear();
+        // Nothing from this session carries over into the next.
+        self.events.clear();
+        self.match_events.clear();
     }
 
     fn poll(&mut self) -> Vec<NetEvent> {

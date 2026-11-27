@@ -605,6 +605,92 @@ fn a_player_whose_game_restarts_rejoins_and_catches_up() {
 }
 
 #[test]
+fn a_rejoiner_out_of_sync_again_is_reported_again() {
+    let mut m = Match::start(&["Alex", "Sam"], &[], OnDrop::Wait);
+    m.run(&[], 40, Match::turns(40));
+    // Alex's machine goes its own way, and everyone hears.
+    m.recorders[1].tick(&mut m.worlds[1], &[]);
+    m.run(&[], 100, Match::turns(100));
+    m.settle();
+    assert_eq!(m.desyncs(), [50, 50, 50]);
+
+    // Alex's game closes and starts again, and goes its own way again
+    // replaying the match.
+    m.run(
+        &[1],
+        u32::MAX,
+        gc_net::PLAYER_TIMEOUT + Duration::from_millis(500),
+    );
+    m.restart(1, "Alex");
+    m.recorders[1].tick(&mut m.worlds[1], &[]);
+    let target = m.ticks()[0] + 100;
+    m.run(&[], target, Match::turns(300));
+    m.settle();
+    let sam = m.lans[2].match_events();
+    assert!(
+        notice(&sam, "Alex is out of sync with the host (turn 10)."),
+        "{sam:?}"
+    );
+    // The host and Alex's new game hear too (Alex's saves a report).
+    let found = m.desyncs();
+    assert_eq!(found, [10, 10], "{found:?}");
+}
+
+#[test]
+fn a_host_leaving_as_a_rejoin_starts_says_so() {
+    // A match with no orders yet, so the host's whole answer to a rejoin
+    // and its goodbye fit in one packet.
+    let net = MemoryNet::new(SEED);
+    let mut host = lan(&net);
+    let settings = LobbySettings {
+        on_drop: OnDrop::Wait,
+        ..LobbySettings::default()
+    };
+    host.host(&profile("Mario"), settings, "").unwrap();
+    let mut old = lan(&net);
+    join(&net, &mut old, "Alex", &mut host).unwrap();
+    old.edit_slot(1, SlotEdit::Ready(true));
+    settle(&net, &mut [&mut host, &mut old]);
+    host.start_match().unwrap();
+    settle(&net, &mut [&mut host, &mut old]);
+    assert!(matches!(old.poll().as_slice(), [NetEvent::Started(_)]));
+    host.loaded(Ok(()));
+    old.loaded(Ok(()));
+    settle(&net, &mut [&mut host, &mut old]);
+    // Alex's game closes without a word.
+    net.cut(old.port().unwrap(), true);
+    std::mem::forget(old);
+    pass(
+        &net,
+        &mut [&mut host],
+        gc_net::PLAYER_TIMEOUT + Duration::from_millis(500),
+    );
+    assert!(host.paused_for_player());
+    // Alex's restarted game asks for its place back; the host gives it,
+    // then leaves before Alex's machine has looked at the answer.
+    let mut alex = lan(&net);
+    alex.start_join(&profile("Alex"), &address(&host), "")
+        .unwrap();
+    while host.paused_for_player() {
+        net.advance(STEP);
+        host.pump(net.now());
+        if host.paused_for_player() {
+            assert!(alex.joining().is_none());
+        }
+    }
+    host.leave();
+    net.advance(Duration::from_millis(20));
+    let err = alex.joining().unwrap().unwrap_err();
+    assert_eq!(err, NetError::Refused("The host left the match.".into()));
+    // The next session on this machine starts with nothing left over
+    // (the notice that came with the start, say).
+    alex.host(&profile("Alex"), LobbySettings::default(), "")
+        .unwrap();
+    assert_eq!(alex.match_events(), []);
+    assert!(alex.poll().is_empty());
+}
+
+#[test]
 fn six_machines_play_in_lockstep() {
     let joiners = ["Alex", "Sam", "Kai", "Jo", "Ren"];
     let net = MemoryNet::new(SEED);
@@ -814,6 +900,43 @@ fn the_join_screen_finds_a_hosted_game() {
     assert_eq!(g.version, "test");
     join_with(&net, &mut finder, "Alex", &g.address, "", &mut host).unwrap();
     assert_eq!(finder.lobby().unwrap().slots[0].name, "Mario");
+}
+
+#[test]
+fn the_join_screen_asks_again_at_once_after_leaving() {
+    let net = MemoryNet::new(SEED);
+    let mut host = lan(&net);
+    host.host(&profile("Mario"), LobbySettings::default(), "")
+        .unwrap();
+    let mut finder = lan(&net);
+    find(&net, &mut finder, "Mario", &mut host);
+    // A join the host turns away at once, say, and back to the Join card:
+    // the search starts afresh without waiting for the next round.
+    finder.leave();
+    let began = net.now();
+    find(&net, &mut finder, "Mario", &mut host);
+    assert!(net.now() - began < Duration::from_millis(100));
+}
+
+#[test]
+fn a_match_against_the_computer_closes_the_lobby() {
+    let net = MemoryNet::new(SEED);
+    let mut host = lan(&net);
+    host.host(&profile("Mario"), LobbySettings::default(), "")
+        .unwrap();
+    host.edit_slot(1, SlotEdit::Kind(SlotKind::Ai));
+    let start = host.start_match().unwrap();
+    assert_eq!(start.seed, None);
+    // Nobody can join a lobby that will never start.
+    assert!(host.lobby().is_none());
+    assert_eq!(host.port(), None);
+    let mut finder = lan(&net);
+    let end = net.now() + Duration::from_millis(1500);
+    while net.now() < end {
+        net.advance(STEP);
+        host.pump(net.now());
+        assert!(finder.discovered().is_empty());
+    }
 }
 
 #[test]
