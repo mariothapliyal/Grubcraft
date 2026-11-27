@@ -170,7 +170,7 @@ pub struct Marshal {
     /// Where new regiments gather.
     pub rally: Option<Vec2>,
     /// The regiments out on the attack (the rest wait at the rally point).
-    out: Vec<RegimentHandle>,
+    out: Out,
     /// Soldiers it set out with.
     set_out_with: u32,
     /// Starts looked at and found empty, by index.
@@ -229,7 +229,7 @@ impl Marshal {
             next_look: 0,
             goal: Goal::Gather,
             rally: None,
-            out: Vec::new(),
+            out: Out::default(),
             set_out_with: 0,
             scouted: Vec::new(),
             battle: None,
@@ -322,7 +322,9 @@ impl Marshal {
             .copied()
             .filter(|r| !lent.contains(&r.handle))
             .collect();
-        self.out.retain(|h| army.iter().any(|r| r.handle == *h));
+        self.out
+            .0
+            .retain(|(h, _)| army.iter().any(|r| r.handle == *h));
         if army.is_empty() {
             self.battle = None;
         } else {
@@ -499,11 +501,7 @@ impl Marshal {
         };
         if enough
             && !holding
-            && s.now >= self.regroup_until
-            && (self
-                .contesting_since
-                .is_some_and(|t| s.now >= t + HEART_PATIENCE)
-                || self.heart_beaten > 0 && self.heart_beaten >= beaten_enough())
+            && self.heart_stalemate(s.now, beaten_enough)
             && let Some((t, note)) = raid_target(s, centroid(army))
                 .map(|t| (t, "going to break a base"))
                 .or_else(|| {
@@ -517,8 +515,7 @@ impl Marshal {
             self.heart_beaten = 0;
             self.raid_until = s.now + RAID_TICKS;
             self.goal = Goal::Attack(t);
-            self.out = army.iter().map(|r| r.handle).collect();
-            self.set_out_with = army.iter().map(|r| u32::from(r.models)).sum();
+            self.set_out_with = self.out.set(army);
         }
         let raiding = s.now < self.raid_until;
         // A raid leaves the Heart be; but against a lone enemy holding it a
@@ -542,14 +539,14 @@ impl Marshal {
                 );
             }
             self.goal = Goal::Defend(threat);
-            self.out = army.iter().map(|r| r.handle).collect();
+            self.out.set(army);
         } else if matches!(self.goal, Goal::Defend(_)) {
             self.goal = Goal::Gather;
             self.out.clear();
         }
-        let soldiers = |hs: &[RegimentHandle]| -> u32 {
-            hs.iter()
-                .filter_map(|h| s.view.get(*h))
+        let soldiers = |out: &Out| -> u32 {
+            out.handles()
+                .filter_map(|h| s.view.get(h))
                 .map(|r| u32::from(r.models))
                 .sum()
         };
@@ -584,8 +581,7 @@ impl Marshal {
                     None => None,
                 };
                 if let Some((goal, note)) = set_out {
-                    self.out = army.iter().map(|r| r.handle).collect();
-                    self.set_out_with = soldiers(&self.out);
+                    self.set_out_with = self.out.set(army);
                     if matches!(goal, Goal::Heart(_)) {
                         self.contesting_since.get_or_insert(s.now);
                     }
@@ -595,8 +591,7 @@ impl Marshal {
                 }
             }
             Goal::Attack(_) | Goal::Heart(_) => {
-                let left = soldiers(&self.out);
-                if (left as f32) < FALL_BACK_SHARE * self.set_out_with as f32 {
+                if cost_too_much(&self.out, soldiers(&self.out), self.set_out_with) {
                     c.journal.note(
                         s.now,
                         "The attack has cost too much: falling back".to_string(),
@@ -630,7 +625,7 @@ impl Marshal {
                         self.out.clear();
                     }
                 } else {
-                    let mid = centroid_of(s.view, &self.out).unwrap_or(rally);
+                    let mid = centroid_of(s.view, self.out.handles()).unwrap_or(rally);
                     let t = raiding
                         .then(|| raid_target(s, mid))
                         .flatten()
@@ -663,8 +658,7 @@ impl Marshal {
             && waiting.len() >= REINFORCE
             && waiting.iter().all(|r| r.pos.distance(rally) <= WAITING)
         {
-            self.out.extend(waiting.iter().map(|r| r.handle));
-            self.set_out_with += waiting.iter().map(|r| u32::from(r.models)).sum::<u32>();
+            self.set_out_with += self.out.add(&waiting);
         }
         self.man_walls(s, army, home);
         let (going, staying): (Vec<&Seen>, Vec<&Seen>) = army
@@ -725,6 +719,29 @@ impl Marshal {
         }
     }
 
+    /// Regiment `h` leaves the attack (to refill): the soldiers it set out
+    /// with no longer count for it.
+    fn leave_attack(&mut self, h: RegimentHandle) {
+        let brought = self.out.take(h);
+        self.set_out_with = self.set_out_with.saturating_sub(brought);
+    }
+
+    /// Whether the Heart has become a stalemate to leave for a raid (see
+    /// [`Marshal::decide`]): it has gone for the Heart a long while without
+    /// holding it, or been beaten back from it `beaten_enough` times, and has
+    /// regrouped since it last fell back. Never while it defends its
+    /// buildings: the defence keeps the army home, so the raid would not
+    /// happen, yet its window would start running out and the stalemate
+    /// would be forgotten. It is weighed again once the defence is over.
+    fn heart_stalemate(&self, now: u32, beaten_enough: impl FnOnce() -> u8) -> bool {
+        !matches!(self.goal, Goal::Defend(_))
+            && now >= self.regroup_until
+            && (self
+                .contesting_since
+                .is_some_and(|t| now >= t + HEART_PATIENCE)
+                || self.heart_beaten > 0 && self.heart_beaten >= beaten_enough())
+    }
+
     /// The regiments at home (not out) short of soldiers that go to stand
     /// by a reinforcement point until they are full again: from below
     /// [`MEND_BELOW`] of their strength, so one soldier short isn't worth
@@ -737,7 +754,10 @@ impl Marshal {
         }
         // A badly cut-up regiment out on an attack, out of the fight and
         // steady (rallied, say), leaves it to refill: it would only be lost.
-        // Its men no longer count for the attack, gone or set out with.
+        // Its men no longer count for the attack, gone or set out with: the
+        // tally loses the soldiers it set out with, not its full strength,
+        // or the attack would fall back later than it should (or, the
+        // tally run down to nothing, never).
         if !matches!(self.goal, Goal::Defend(_)) {
             for r in army {
                 let spent = r.strength() < MEND_OUT_BELOW
@@ -747,8 +767,7 @@ impl Marshal {
                     && s.world.can_reinforce(r.handle)
                     && s.world.refill_spot(r.handle).is_some();
                 if spent {
-                    self.out.retain(|h| *h != r.handle);
-                    self.set_out_with = self.set_out_with.saturating_sub(u32::from(r.full));
+                    self.leave_attack(r.handle);
                 }
             }
         }
@@ -1412,7 +1431,116 @@ fn centroid(rs: &[&Seen]) -> Vec2 {
     crate::captain::helpers::centroid(rs)
 }
 
-fn centroid_of(view: &Perception, hs: &[RegimentHandle]) -> Option<Vec2> {
-    let rs: Vec<&Seen> = hs.iter().filter_map(|h| view.get(*h)).collect();
+fn centroid_of(view: &Perception, hs: impl Iterator<Item = RegimentHandle>) -> Option<Vec2> {
+    let rs: Vec<&Seen> = hs.filter_map(|h| view.get(h)).collect();
     (!rs.is_empty()).then(|| centroid(&rs))
+}
+
+/// The regiments out on an attack, each with the soldiers it had when it
+/// set out (or joined it), so that one leaving to refill takes out of the
+/// tally just what it brought.
+#[derive(Clone, Debug, Default)]
+struct Out(Vec<(RegimentHandle, u16)>);
+
+impl Out {
+    fn contains(&self, h: &RegimentHandle) -> bool {
+        self.0.iter().any(|(o, _)| o == h)
+    }
+
+    fn handles(&self) -> impl Iterator<Item = RegimentHandle> + '_ {
+        self.0.iter().map(|(h, _)| *h)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// Just `rs` are out now; the soldiers they set out with.
+    fn set(&mut self, rs: &[&Seen]) -> u32 {
+        self.0.clear();
+        self.add(rs)
+    }
+
+    /// `rs` join those out; the soldiers they bring.
+    fn add(&mut self, rs: &[&Seen]) -> u32 {
+        self.0.extend(rs.iter().map(|r| (r.handle, r.models)));
+        rs.iter().map(|r| u32::from(r.models)).sum()
+    }
+
+    /// `h` leaves the attack; the soldiers it set out with (none if it was
+    /// not out).
+    fn take(&mut self, h: RegimentHandle) -> u32 {
+        let Some(i) = self.0.iter().position(|(o, _)| *o == h) else {
+            return 0;
+        };
+        u32::from(self.0.remove(i).1)
+    }
+}
+
+/// Whether an attack has cost too much and falls back: down to less than
+/// [`FALL_BACK_SHARE`] of the soldiers it set out with (`left` of
+/// `set_out_with`), or nobody out on it any more (all pulled out to refill,
+/// say), which no share of a tally tells.
+fn cost_too_much(out: &Out, left: u32, set_out_with: u32) -> bool {
+    out.is_empty() || (left as f32) < FALL_BACK_SHARE * set_out_with as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn handle(index: u32) -> RegimentHandle {
+        RegimentHandle {
+            index,
+            generation: 0,
+        }
+    }
+
+    #[test]
+    fn one_leaving_to_refill_takes_back_only_the_soldiers_it_brought() {
+        let mut m = Marshal::new(0, 0, 60);
+        // Two regiments of 60 set out, one already cut down to 30.
+        m.out = Out(vec![(handle(0), 30), (handle(1), 60)]);
+        m.set_out_with = 90;
+        // The cut-up one leaves to refill: the tally loses its 30, not the
+        // 60 it has at full strength.
+        m.leave_attack(handle(0));
+        assert_eq!(m.set_out_with, 60);
+        m.leave_attack(handle(0));
+        assert_eq!(m.set_out_with, 60, "only once");
+        // The other down to 20 of the 60 it set out with: fall back.
+        assert!(cost_too_much(&m.out, 20, m.set_out_with));
+        assert!(!cost_too_much(&m.out, 30, m.set_out_with));
+    }
+
+    #[test]
+    fn an_attack_with_nobody_left_out_falls_back() {
+        let mut m = Marshal::new(0, 0, 60);
+        m.out = Out(vec![(handle(0), 40)]);
+        m.set_out_with = 40;
+        m.leave_attack(handle(0));
+        assert!(m.out.is_empty());
+        assert!(cost_too_much(&m.out, 0, m.set_out_with));
+    }
+
+    #[test]
+    fn the_heart_stalemate_waits_until_the_defence_is_over() {
+        let mut m = Marshal::new(0, 0, 60);
+        m.contesting_since = Some(0);
+        let now = HEART_PATIENCE + 1;
+        m.goal = Goal::Heart(Vec2::ZERO);
+        assert!(m.heart_stalemate(now, || HEART_BEATEN));
+        m.goal = Goal::Defend(Vec2::ZERO);
+        assert!(!m.heart_stalemate(now, || HEART_BEATEN));
+        // Beaten back often enough counts the same way.
+        m.contesting_since = None;
+        m.heart_beaten = HEART_BEATEN;
+        assert!(!m.heart_stalemate(now, || HEART_BEATEN));
+        m.goal = Goal::Gather;
+        assert!(m.heart_stalemate(now, || HEART_BEATEN));
+    }
 }

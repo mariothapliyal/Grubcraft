@@ -274,7 +274,8 @@ impl Captain {
     /// Crossing to a bridgehead: the line's place is beyond the ford until
     /// most of the army is across, and it fights on from there.
     /// If the enemy comes to watch the ford before anyone has gone into the
-    /// water, it goes back to waiting.
+    /// water, it goes back to waiting; one sent to attack (see
+    /// [`Captain::press`]) holds a moment and then goes straight on.
     pub(super) fn hold_bridgehead(&mut self, ctx: &mut Ctx, ours: &[&Seen], fighting: &[&Seen]) {
         let Some((b, exit)) = self.bridgehead else {
             return;
@@ -298,7 +299,10 @@ impl Captain {
         let shutting = t.ford_shut_near(exit, reach);
         if (watched || shutting) && !wading && across == 0 {
             self.bridgehead = None;
-            self.crossing = false;
+            // Only a crossing it chose itself is called off: one sent to
+            // attack still presses on (see `press`), or it would halt at
+            // the bank for good.
+            self.crossing = self.pressing;
             self.standoff_since = ctx.view.tick;
             self.posture = Posture::Hold;
             self.posture_since = ctx.view.tick;
@@ -320,6 +324,8 @@ impl Captain {
             return;
         }
         self.anchor = b;
+        // Off over the water: cover found on this bank stays behind.
+        self.leave_cover();
         if self.posture != Posture::Advance {
             self.posture = Posture::Advance;
             self.posture_since = ctx.view.tick;
