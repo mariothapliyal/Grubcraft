@@ -144,24 +144,10 @@ impl Duty {
         Some(target)
     }
 
-    /// Set off for `target`, giving up on the way at `trip_ends`.
-    fn set_off(&mut self, target: usize, trip_ends: u32) {
+    /// Be about `to` now, if it is out.
+    fn set_leg(&mut self, to: Leg) {
         if let Duty::Out { leg, .. } = self {
-            *leg = Leg::Travelling { target, trip_ends };
-        }
-    }
-
-    /// Its way to the place it was going to is over: reached or given up on.
-    fn trip_over(&mut self) {
-        if let Duty::Out { leg, .. } = self {
-            *leg = Leg::Choosing;
-        }
-    }
-
-    /// Start coming back, from `now`, giving up on any place it was going to.
-    fn go_home(&mut self, now: u32) {
-        if let Duty::Out { leg, .. } = self {
-            *leg = Leg::Returning { since: now };
+            *leg = to;
         }
     }
 }
@@ -235,7 +221,7 @@ impl Scout {
         // An early scout has a limit on how long it stays out.
         let returning = matches!(self.duty.leg(), Some(Leg::Returning { .. }));
         if early && !returning && self.taken.is_some_and(|t| s.now >= t + EARLY_LIMIT) {
-            self.duty.go_home(s.now);
+            self.duty.set_leg(Leg::Returning { since: s.now });
         }
         // Enemy fighters near: fall back, and leave the place it was going
         // to alone for a while.
@@ -270,7 +256,7 @@ impl Scout {
                 if !reached && !p.own {
                     self.places[t].avoid_until = s.now + AVOID;
                 }
-                self.duty.trip_over();
+                self.duty.set_leg(Leg::Choosing);
             }
         }
         if let Some(Leg::Returning { since }) = self.duty.leg() {
@@ -286,10 +272,13 @@ impl Scout {
                 let d = self.places[t].at.distance(pos);
                 let trip_ends =
                     s.now + ((d / pace.max(0.5)) * 2.0 + 30.0) as u32 * TICKS_PER_SECOND;
-                self.duty.set_off(t, trip_ends);
+                self.duty.set_leg(Leg::Travelling {
+                    target: t,
+                    trip_ends,
+                });
             } else if early && self.starts_left() == 0 {
                 // It has seen what it was sent for.
-                self.duty.go_home(s.now);
+                self.duty.set_leg(Leg::Returning { since: s.now });
             }
         }
     }

@@ -685,21 +685,25 @@ impl Steward {
     /// crossing near the straight way to the nearest. It looks once.
     fn bridge(&mut self, s: &Sense, look: &Look, home: Vec2, spare: u32) -> Option<Order> {
         let b = s.kit.works(Role::Bridge)?;
-        if let Bridge::Unlooked = self.engineer.bridge {
-            let crossing = || {
-                let target = super::super::nearest_other_start(s, home)?;
-                if !s.terrain.cut_off(home, super::super::other_starts(s, home)) {
-                    return None;
-                }
-                narrowest_crossing(s, b.id, home, target)
-            };
-            self.engineer.bridge = match crossing() {
-                Some((line, tiles)) => Bridge::Planned { line, tiles },
-                None => Bridge::Done,
-            };
-        }
         let (line, tiles, tries) = match self.engineer.bridge {
-            Bridge::Unlooked | Bridge::Done => return None,
+            Bridge::Done => return None,
+            // Its one look: the crossing it finds is planned, and ordered
+            // below if it can be now.
+            Bridge::Unlooked => {
+                let crossing = || {
+                    let target = super::super::nearest_other_start(s, home)?;
+                    if !s.terrain.cut_off(home, super::super::other_starts(s, home)) {
+                        return None;
+                    }
+                    narrowest_crossing(s, b.id, home, target)
+                };
+                let Some((line, tiles)) = crossing() else {
+                    self.engineer.bridge = Bridge::Done;
+                    return None;
+                };
+                self.engineer.bridge = Bridge::Planned { line, tiles };
+                (line, tiles, 0)
+            }
             Bridge::Planned { line, tiles } => (line, tiles, 0),
             // Ordered: drawn once a deck of its own lies there, else the
             // order is sent again after a while.

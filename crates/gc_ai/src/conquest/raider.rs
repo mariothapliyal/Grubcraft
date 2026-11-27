@@ -170,8 +170,15 @@ impl Raider {
             self.end(s.now);
         }
         match self.phase {
-            Phase::Idle { .. } => self.take(s, army, waiting, recall, &name, &mut notes),
-            Phase::Out { .. } => self.out(s, &name, &mut notes),
+            Phase::Idle { next_party } => {
+                self.take(s, next_party, army, waiting, recall, &name, &mut notes);
+            }
+            Phase::Out {
+                target,
+                trip_ends,
+                started_with,
+                ..
+            } => self.out(s, target, trip_ends, started_with, &name, &mut notes),
             Phase::Falling(limit) => self.fall_back(s, limit, &mut notes),
             Phase::Resting(until) => self.rest(s, until, &name, &mut notes),
         }
@@ -188,20 +195,19 @@ impl Raider {
     }
 
     /// Take the fastest regiments waiting at the rally point, if there is
-    /// an army to spare them from, it is time, and there is somewhere to
-    /// go.
+    /// an army to spare them from, it is time (`next_party` has come), and
+    /// there is somewhere to go.
+    #[allow(clippy::too_many_arguments)]
     fn take(
         &mut self,
         s: &Sense,
+        next_party: u32,
         army: usize,
         waiting: &[&Seen],
         recall: bool,
         name: &impl Fn(u8) -> String,
         notes: &mut Vec<String>,
     ) {
-        let Phase::Idle { next_party } = self.phase else {
-            return;
-        };
         if recall || s.now < FIRST_RAID || s.now < next_party {
             return;
         }
@@ -255,19 +261,19 @@ impl Raider {
         s.now + ((mid.distance(target.at) / pace) * 2.0 + 30.0) as u32 * TICKS_PER_SECOND
     }
 
-    /// Going for workers: keep on while there are some, choose where next
-    /// when there are none, and fall back when it must.
-    fn out(&mut self, s: &Sense, name: &impl Fn(u8) -> String, notes: &mut Vec<String>) {
+    /// Going for workers at `target`, given up on at `trip_ends`, having
+    /// set out with `started_with` soldiers: keep on while there are some,
+    /// choose where next when there are none, and fall back when it must.
+    fn out(
+        &mut self,
+        s: &Sense,
+        target: Spot,
+        trip_ends: u32,
+        started_with: u32,
+        name: &impl Fn(u8) -> String,
+        notes: &mut Vec<String>,
+    ) {
         let Some(mid) = self.middle(s) else { return };
-        let Phase::Out {
-            target,
-            trip_ends,
-            started_with,
-            ..
-        } = self.phase
-        else {
-            return;
-        };
         // Soldiers lost, or enemy fighters about: run home.
         if (self.soldiers(s) as f32) <= LOST_SHARE * started_with as f32 {
             notes.push("The raid has cost too much: raiders falling back".to_string());
