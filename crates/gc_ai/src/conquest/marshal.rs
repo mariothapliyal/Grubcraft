@@ -1509,9 +1509,10 @@ mod tests {
 
     #[test]
     fn an_attack_with_nobody_left_out_falls_back() {
-        // Nobody out, though the tally (run down by the regiments that
-        // left to refill) is not yet nothing: fall back.
-        assert!(cost_too_much(&[], 0, 40));
+        // Every regiment left to refill, running the tally down to
+        // nothing: no share of nothing is ever short, yet nobody is out,
+        // so it falls back.
+        assert!(cost_too_much(&[], 0, 0));
         let out = [RegimentHandle {
             index: 0,
             generation: 0,
