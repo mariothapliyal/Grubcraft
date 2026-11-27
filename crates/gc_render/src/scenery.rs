@@ -68,6 +68,10 @@ pub struct SceneryBatch {
     /// Whether the camera may see the run. Casters that only the sun sees
     /// are drawn into the shadow map alone.
     pub on_screen: bool,
+    /// Whether its instances may move from frame to frame, even with
+    /// nothing in the wind (a felled tree, a stump that appears): such runs
+    /// are drawn into the sun's map every frame, not kept.
+    pub moves: bool,
     pub first: u32,
     pub count: u32,
 }
@@ -313,7 +317,7 @@ impl SceneryGpu {
                 lod: usize::from(b.lod).min(LODS - 1),
                 shadow: b.shadow,
                 on_screen: b.on_screen,
-                still: b.shadow && !models.models[model].sways,
+                still: b.shadow && !b.moves && !models.models[model].sways,
                 first: b.first,
                 end,
             });
@@ -379,10 +383,15 @@ impl SceneryGpu {
 }
 
 impl Draw {
-    /// The level the sun's pass draws these casters at: no finer than 2,
-    /// and the coarsest for those off screen.
+    /// The level the sun's pass draws these casters at: no finer than
+    /// `SHADOW_LOD`, which on screen is the level its silhouette needs (a
+    /// coarser caster shades the surface drawn finer: a rock's lit face
+    /// went dark). Off screen and at least that far, the coarsest: only
+    /// its shadow shows, and far off, where it is small. Nearer casters
+    /// keep their level off screen, so the big shadows near the camera do
+    /// not change as their casters come into view.
     fn shadow_lod(&self) -> usize {
-        if !self.on_screen {
+        if !self.on_screen && self.lod >= SHADOW_LOD {
             LODS - 1
         } else {
             self.lod.max(SHADOW_LOD)

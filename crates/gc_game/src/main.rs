@@ -2289,15 +2289,17 @@ impl ApplicationHandler for App {
             return;
         };
         // Alt+Enter, or Ctrl+Cmd+F on a Mac, switches fullscreen anywhere.
+        // (Held down, its repeats go nowhere.)
         if let WindowEvent::KeyboardInput { event: key, .. } = &event
             && key.state == ElementState::Pressed
-            && !key.repeat
             && let PhysicalKey::Code(code) = key.physical_key
-            && ((code == KeyCode::Enter && r.input.alt)
+            && ((matches!(code, KeyCode::Enter | KeyCode::NumpadEnter) && r.input.alt)
                 || (code == KeyCode::KeyF && r.input.ctrl_cmd))
         {
-            let on = !r.menu.settings().fullscreen;
-            r.menu.set_fullscreen(on);
+            if !key.repeat {
+                let on = !r.menu.settings().fullscreen;
+                r.menu.set_fullscreen(on);
+            }
             return;
         }
         if r.guide.is_some() && r.guide_event(&event) {
@@ -2332,13 +2334,6 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 r.renderer.resize(size.width, size.height);
                 r.camera.aspect = r.renderer.aspect_ratio();
-                // Fullscreen left or entered with the system's own controls:
-                // Settings follows the window.
-                let fullscreen = r.window.fullscreen().is_some();
-                if fullscreen != r.fullscreen {
-                    r.fullscreen = fullscreen;
-                    r.menu.set_fullscreen(fullscreen);
-                }
             }
             WindowEvent::Focused(f) => {
                 r.input.focused = f;

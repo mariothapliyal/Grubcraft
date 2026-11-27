@@ -2355,6 +2355,8 @@ impl Renderer {
                     draw_calls += self.scenery.draw(&mut pass, Part::StillShadow).0;
                 }
             }
+            // (Untimed: a copy is no pass. 8 MB, a fraction of a
+            // millisecond on a real GPU.)
             encoder.copy_texture_to_texture(
                 self.shadow_still.as_image_copy(),
                 self.shadow_texture.as_image_copy(),

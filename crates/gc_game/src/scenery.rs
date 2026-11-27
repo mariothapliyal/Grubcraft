@@ -896,7 +896,13 @@ impl Scenery {
                     }
                     f(
                         p,
-                        bin(usize::from(p.model), lod, n.screen),
+                        Bin {
+                            model: usize::from(p.model),
+                            lod,
+                            on_screen: n.screen,
+                            extra: false,
+                        }
+                        .index(),
                         [ox as f32, oy as f32],
                     );
                 }
@@ -929,11 +935,18 @@ impl Scenery {
             } else {
                 radius + half
             };
-            if !cull.sees(centre, round * n.scale) {
+            let on_screen = cull.on_screen(centre, round * n.scale);
+            // Off screen, only the sun sees it: shadow casters alone.
+            if !on_screen && !(info.shadow && cull.sees(centre, round * n.scale)) {
                 continue;
             }
-            let lod = lod_for(usize::from(info.class), d.hypot(distance));
-            let bin = bin(id, lod, cull.on_screen(centre, round * n.scale));
+            let bin = Bin {
+                model: id,
+                lod: lod_for(usize::from(info.class), d.hypot(distance)),
+                on_screen,
+                extra: true,
+            }
+            .index();
             counts[bin] += 1;
             total += 1;
             extra_bins.push((bin, k));
@@ -961,12 +974,13 @@ impl Scenery {
         for (bin, &count) in counts.iter().enumerate() {
             cursor[bin] = at;
             if count > 0 {
-                let (model, lod, on_screen) = unbin(bin);
+                let b = Bin::of(bin);
                 batches.push(SceneryBatch {
-                    model: model as u16,
-                    lod,
-                    shadow: models.info[model].shadow,
-                    on_screen,
+                    model: b.model as u16,
+                    lod: b.lod,
+                    shadow: models.info[b.model].shadow,
+                    on_screen: b.on_screen,
+                    moves: b.extra,
                     first: at,
                     count,
                 });
@@ -983,7 +997,7 @@ impl Scenery {
                 facing: facings[usize::from(n.turn)],
                 scale: n.scale,
                 tint: [r, g, b, n.phase],
-                kind: models.info[unbin(bin).0].detail
+                kind: models.info[Bin::of(bin).model].detail
                     | u32::from(n.lean) << 8
                     | u32::from(n.fall) << 16,
             };
@@ -1000,7 +1014,7 @@ impl Scenery {
                     facing: facings[usize::from(p.angle)],
                     scale: f32::from(p.scale) / 100.0,
                     tint: p.tint,
-                    kind: models.info[unbin(bin).0].detail,
+                    kind: models.info[Bin::of(bin).model].detail,
                 };
             });
         }
@@ -1008,19 +1022,37 @@ impl Scenery {
     }
 }
 
-/// Each model's instances go in one bin per level of detail, twice over:
-/// those the camera may see, then those only the sun does (shadow casters
-/// off screen, which the world pass skips).
-const BINS: usize = LODS * 2;
+/// Bins a model has: one per level of detail for each of the four kinds
+/// of [`Bin`].
+const BINS: usize = LODS * 4;
 
-/// The bin for `model` at level `lod`, on screen or not.
-fn bin(model: usize, lod: u8, on_screen: bool) -> usize {
-    model * BINS + usize::from(lod) * 2 + usize::from(!on_screen)
+/// Which batch an instance goes in: its model and level, whether the camera
+/// may see it (shadow casters only the sun sees are left out of the world
+/// pass), and whether it is one of the game's extras, which may move from
+/// frame to frame (kept out of the renderer's still shadows).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Bin {
+    model: usize,
+    lod: u8,
+    on_screen: bool,
+    extra: bool,
 }
 
-/// The model, level and whether on screen of a [`bin`].
-fn unbin(bin: usize) -> (usize, u8, bool) {
-    (bin / BINS, (bin % BINS / 2) as u8, bin.is_multiple_of(2))
+impl Bin {
+    fn index(self) -> usize {
+        (self.model * LODS + usize::from(self.lod)) * 4
+            + usize::from(!self.on_screen)
+            + 2 * usize::from(self.extra)
+    }
+
+    fn of(index: usize) -> Bin {
+        Bin {
+            model: index / BINS,
+            lod: (index % BINS / 4) as u8,
+            on_screen: index.is_multiple_of(2),
+            extra: index % 4 >= 2,
+        }
+    }
 }
 
 /// The level of detail for a class of model `eye` tiles from the camera.
@@ -1767,10 +1799,18 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for model in 0..3 {
             for lod in 0..LODS as u8 {
-                for on_screen in [true, false] {
-                    let b = bin(model, lod, on_screen);
-                    assert!(seen.insert(b) && b < (model + 1) * BINS);
-                    assert_eq!(unbin(b), (model, lod, on_screen));
+                for (on_screen, extra) in
+                    [(true, false), (false, false), (true, true), (false, true)]
+                {
+                    let bin = Bin {
+                        model,
+                        lod,
+                        on_screen,
+                        extra,
+                    };
+                    let i = bin.index();
+                    assert!(seen.insert(i) && i < (model + 1) * BINS);
+                    assert_eq!(Bin::of(i), bin);
                 }
             }
         }
