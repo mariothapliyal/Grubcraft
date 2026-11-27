@@ -260,6 +260,23 @@ pub(crate) fn other<T: State>(v: T) -> T {
     panic!("no other value of this type");
 }
 
+/// The bytes `v` is written as, once it is checked that it hashes as those
+/// same bytes fed in one at a time, the way a row of `u8` fields is: for
+/// tests that a value packed in an enum keeps the bytes it had as numbers.
+#[cfg(test)]
+pub(crate) fn written<T: State>(v: T) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    v.write(&mut bytes);
+    let mut hashed = StateHasher::new();
+    v.hash(&mut hashed);
+    let mut by_byte = StateHasher::new();
+    for b in &bytes {
+        b.hash(&mut by_byte);
+    }
+    assert_eq!(hashed.finish(), by_byte.finish(), "hashed unlike its bytes");
+    bytes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -877,7 +877,7 @@ impl Brigades {
                     regs.pace[i] = self.members[i].ordered;
                 }
                 self.leave(regs, i);
-            } else if regs.run_left[i] > 0 {
+            } else if regs.stride[i].running() {
                 // Told to run, it runs on ahead.
                 self.release(regs, i);
             }
