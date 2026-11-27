@@ -1295,13 +1295,22 @@ impl HeartNow {
     fn see(s: &Sense, raiding: bool) -> HeartNow {
         let holder = heart_holder(s);
         let enemy = holder.map(|(enemy, _)| enemy);
-        let open = s
-            .world
-            .heart()
-            .filter(|h| h.open && enemy != Some(false))
-            .map(|h| v2(h.at));
+        let open = s.world.heart().filter(|h| h.open).map(|h| v2(h.at));
+        HeartNow::gated(open, enemy, raiding, || lone_alarm(s, holder))
+    }
+
+    /// The Heart at `open` (if it is open) and held by an enemy
+    /// (`Some(true)`), by its own side (`Some(false)`) or nobody, with the
+    /// raid's gating: `lone` is asked only for a raid that would mind it.
+    fn gated(
+        open: Option<Vec2>,
+        enemy: Option<bool>,
+        raiding: bool,
+        lone: impl FnOnce() -> bool,
+    ) -> HeartNow {
+        let open = open.filter(|_| enemy != Some(false));
         let enemy_holds = enemy == Some(true);
-        let minded = (open.is_some() || enemy_holds) && (!raiding || lone_alarm(s, holder));
+        let minded = (open.is_some() || enemy_holds) && (!raiding || lone());
         HeartNow {
             to_take: open.filter(|_| minded),
             enemy_holds: enemy_holds && minded,
@@ -1604,6 +1613,26 @@ mod tests {
         assert!(defends(false, false, true, || raided));
         // At home, it always defends.
         assert!(defends(true, true, true, || open));
+    }
+
+    /// A raid leaves the Heart be unless a lone enemy has held it a while;
+    /// an army not raiding minds it as it always did.
+    #[test]
+    fn a_raid_minds_the_heart_only_for_a_lone_holder() {
+        let at = Some(Vec2::ZERO);
+        // Not raiding: an open Heart is to take and the alarm is not asked.
+        let h = HeartNow::gated(at, None, false, || panic!("not asked"));
+        assert_eq!(h.to_take, at);
+        // Raiding: left be, unless the lone alarm rings.
+        assert_eq!(HeartNow::gated(at, None, true, || false).to_take, None);
+        assert_eq!(HeartNow::gated(at, None, true, || true).to_take, at);
+        let held = HeartNow::gated(at, Some(true), true, || false);
+        assert!(!held.enemy_holds && held.to_take.is_none());
+        let held = HeartNow::gated(at, Some(true), true, || true);
+        assert!(held.enemy_holds && held.to_take == at);
+        // Its own side holds it: nothing to take, nothing asked.
+        let ours = HeartNow::gated(at, Some(false), true, || panic!("not asked"));
+        assert!(ours.we_hold && ours.to_take.is_none() && !ours.enemy_holds);
     }
 
     #[test]
