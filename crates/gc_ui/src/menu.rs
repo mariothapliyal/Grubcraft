@@ -462,6 +462,12 @@ impl<N: Network> Menu<N> {
         ui.draw.border(r, 2, theme::INK);
     }
 
+    /// Switch fullscreen from its keys, and save it at once.
+    pub fn set_fullscreen(&mut self, on: bool) {
+        self.settings.fullscreen = on;
+        self.save_settings();
+    }
+
     fn save_settings(&mut self) {
         self.settings.sanitize();
         if let Some(path) = &self.settings_path
@@ -1745,6 +1751,7 @@ impl<N: Network> Menu<N> {
         if ui.stepper(st.next(row), "UI scale", &mut si, &srefs) {
             s.ui_scale = UI_SCALES[si];
         }
+        ui.toggle(st.next(row), "Fullscreen", &mut s.fullscreen);
         ui.toggle(st.next(row), "V-sync", &mut s.vsync);
         let cnames: Vec<String> = FRAME_CAPS
             .iter()

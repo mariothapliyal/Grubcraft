@@ -2,6 +2,20 @@
 
 Before and after numbers from each milestone's performance pass ([12 · Performance](12-performance.md#the-loop)). Newest first.
 
+## Shadows kept, and off-screen casters (2026-11-27)
+
+The sun's view of the ground and of the scenery that does not sway is kept between frames and drawn again only when the sun's view, the ground, its chunks or that scenery change; trees, soldiers and boxes are drawn over a copy each frame. Scenery outside the view that only casts onto it is left out of the world pass and drawn into the shadow map at its coarsest level. Six-player General battle, seed 3, lavapipe at 1280x760 without MSAA, cloud container, 40 frames averaged, three runs each against main.
+
+| | main | this change |
+|---|---|---|
+| Still camera (the battle's first seconds), GPU ms a frame | 481.5, 455.8, 464.1 (mean 467.1) | 394.3, 389.4, 388.9 (mean 390.9, −16.3%) |
+| the sun's pass alone | 105.1 | 46.5 (−56%) |
+| Moving camera (200 s in, the director camera), GPU ms a frame | 533.8, 528.9, 527.1 (mean 529.9) | 519.7, 514.0, 515.1 (mean 516.3, −2.6%) |
+| Still camera at dusk / golden hour (one run each) | 459 / 471 | 381 / 387 |
+| Scenery triangles in the world pass, still camera | 642k | 259k |
+
+The still-camera frames are identical to main pixel for pixel at noon, golden hour and dusk. The copy of the kept map (8 MB) is not in these totals (it is not inside a pass); 8 MB more GPU memory. No change to the simulation.
+
 ## GPU work for integrated graphics (2026-11-26)
 
 The GPU's time for each pass is now measured (`--gpu-times`, the dev overlay; see [12](12-performance.md#gpu-work)). Six-player General battle, seed 3, 200 s in, 80 frames averaged, lavapipe at 1280x760 without MSAA, cloud container; three runs each. "Before" is this branch with the four changes switched off (the bottom bar not cut, the slopes read from the heights, the ground drawn first), so it differs from main only by the timing itself.

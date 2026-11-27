@@ -65,6 +65,9 @@ pub struct Settings {
     pub ui_scale: u16,
     pub vsync: bool,
     pub frame_cap: u16,
+    /// Borderless over the whole screen (lighter on the GPU: the system
+    /// need not compose the game with the desktop).
+    pub fullscreen: bool,
     /// Plain light for competitive play: no vignette, film grain or heavy
     /// colour grading, in any look.
     pub clarity: bool,
@@ -99,6 +102,7 @@ impl Default for Settings {
             ui_scale: 100,
             vsync: true,
             frame_cap: 60,
+            fullscreen: false,
             clarity: false,
             tilt_shift: false,
             full_blood: false,

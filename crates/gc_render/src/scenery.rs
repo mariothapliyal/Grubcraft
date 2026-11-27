@@ -65,6 +65,9 @@ pub struct SceneryBatch {
     pub lod: u8,
     /// Whether the run casts shadows (trees and big rocks; not grass).
     pub shadow: bool,
+    /// Whether the camera may see the run. Casters that only the sun sees
+    /// are drawn into the shadow map alone.
+    pub on_screen: bool,
     pub first: u32,
     pub count: u32,
 }
@@ -87,6 +90,21 @@ struct ModelGpu {
     first_vertex: i32,
     /// First index and index count of each level.
     lods: [[u32; 2]; LODS],
+    /// Whether any of it moves in the wind; a model that holds still casts
+    /// into the kept shadow map (`Renderer::shadow_still`).
+    sways: bool,
+}
+
+/// Which of the frame's scenery a draw covers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Part {
+    /// Everything, into the world pass.
+    World,
+    /// The casters that hold still (rocks, and anything else with no
+    /// vertex in the wind), into the sun's kept map.
+    StillShadow,
+    /// The casters that sway, into the sun's map each frame.
+    MovingShadow,
 }
 
 struct ModelsGpu {
@@ -101,6 +119,7 @@ struct Draw {
     model: usize,
     lod: usize,
     shadow: bool,
+    on_screen: bool,
     first: u32,
     end: u32,
 }
@@ -113,6 +132,11 @@ pub(crate) struct SceneryGpu {
     draws: Vec<Draw>,
     /// Instances left out this frame for want of room.
     dropped: u32,
+    /// What the still casters were this frame (model, level and instance,
+    /// draw by draw), and whether that differs from the frame before, so
+    /// the kept shadow map is redrawn only when they change.
+    still: Vec<u8>,
+    still_changed: bool,
 }
 
 pub(crate) fn make(
@@ -178,6 +202,8 @@ pub(crate) fn make(
         models: None,
         draws: Vec::new(),
         dropped: 0,
+        still: Vec::new(),
+        still_changed: true,
     }
 }
 
@@ -232,13 +258,21 @@ impl SceneryGpu {
             models: scenery
                 .models
                 .iter()
-                .map(|r| ModelGpu {
-                    first_vertex: r.first_vertex as i32,
-                    lods: r.lods,
+                .map(|r| {
+                    let first = r.first_vertex as usize;
+                    let vertices = scenery.vertices.get(first..first + r.vertex_count as usize);
+                    ModelGpu {
+                        first_vertex: r.first_vertex as i32,
+                        lods: r.lods,
+                        // The shader sways a vertex whose wind weight is
+                        // above 0 (`place` in scenery.wgsl).
+                        sways: vertices.is_none_or(|v| v.iter().any(|v| v.color[3] > 0)),
+                    }
                 })
                 .collect(),
         });
         self.draws.clear();
+        self.still_changed = true;
         Ok(())
     }
 
@@ -253,6 +287,8 @@ impl SceneryGpu {
         self.draws.clear();
         self.dropped = 0;
         let Some(models) = &self.models else {
+            self.still_changed |= !self.still.is_empty();
+            self.still.clear();
             return;
         };
         let count = instances.len().min(MAX_SCENERY_INSTANCES);
@@ -274,22 +310,58 @@ impl SceneryGpu {
                 model,
                 lod: usize::from(b.lod).min(LODS - 1),
                 shadow: b.shadow,
+                on_screen: b.on_screen,
                 first: b.first,
                 end,
             });
         }
+        // Where in the instance buffer a still caster sits does not change
+        // its shadow, so only what is drawn goes in.
+        let mut still = std::mem::take(&mut self.still);
+        let previous = still.len();
+        let mut at = 0;
+        let mut same = true;
+        let mut put = |bytes: &[u8]| {
+            same &= still.get(at..at + bytes.len()) == Some(bytes);
+            if !same {
+                still.truncate(at);
+                still.extend_from_slice(bytes);
+            }
+            at += bytes.len();
+        };
+        for d in self
+            .draws
+            .iter()
+            .filter(|d| d.shadow && !models.models[d.model].sways)
+        {
+            put(&(d.model as u32).to_le_bytes());
+            put(&(d.shadow_lod() as u32).to_le_bytes());
+            put(&((d.end - d.first) as u32).to_le_bytes());
+            put(bytemuck::cast_slice(
+                &instances[d.first as usize..d.end as usize],
+            ));
+        }
+        self.still_changed |= !same || at != previous;
+        still.truncate(at);
+        self.still = still;
     }
 
-    /// Draw the frame's scenery into the world pass or (with `shadow`) the
-    /// shadow map, whose bind group 0 the caller has set. The sun only needs
-    /// a silhouette, so it draws no level finer than 2, and only the
-    /// batches that cast shadows. Returns draw calls, instances and
-    /// triangles drawn.
-    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, shadow: bool) -> (u32, u32, u64) {
+    /// Whether the still casters differ from those the kept shadow map was
+    /// last drawn with, since this was last asked.
+    pub fn take_still_changed(&mut self) -> bool {
+        std::mem::take(&mut self.still_changed)
+    }
+
+    /// Draw `part` of the frame's scenery into the world pass or the shadow
+    /// map, whose bind group 0 the caller has set. The sun only needs a
+    /// silhouette, so it draws no level finer than 2, and only the batches
+    /// that cast shadows. Returns draw calls, instances and triangles drawn.
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, part: Part) -> (u32, u32, u64) {
         let (mut calls, mut drawn, mut tris) = (0, 0, 0);
         let Some(models) = self.models.as_ref().filter(|_| !self.draws.is_empty()) else {
             return (calls, drawn, tris);
         };
+        let shadow = part != Part::World;
         pass.set_pipeline(if shadow {
             &self.shadow_pipeline
         } else {
@@ -298,9 +370,14 @@ impl SceneryGpu {
         pass.set_vertex_buffer(0, models.vertices.slice(..));
         pass.set_vertex_buffer(1, self.instances.slice(..));
         pass.set_index_buffer(models.indices.slice(..), wgpu::IndexFormat::Uint16);
-        for d in self.draws.iter().filter(|d| d.shadow || !shadow) {
+        let wanted = |d: &&Draw| match part {
+            Part::World => d.on_screen,
+            Part::StillShadow => d.shadow && !models.models[d.model].sways,
+            Part::MovingShadow => d.shadow && models.models[d.model].sways,
+        };
+        for d in self.draws.iter().filter(wanted) {
             let model = &models.models[d.model];
-            let lod = if shadow { d.lod.max(SHADOW_LOD) } else { d.lod };
+            let lod = if shadow { d.shadow_lod() } else { d.lod };
             let [first, len] = model.lods[lod];
             pass.draw_indexed(first..first + len, model.first_vertex, d.first..d.end);
             calls += 1;
@@ -311,8 +388,17 @@ impl SceneryGpu {
     }
 }
 
-/// The finest level the sun's pass draws.
-const SHADOW_LOD: usize = 2;
+impl Draw {
+    /// The level the sun's pass draws these casters at: no finer than 2,
+    /// and the coarsest for those off screen.
+    fn shadow_lod(&self) -> usize {
+        if !self.on_screen {
+            LODS - 1
+        } else {
+            self.lod.max(2)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
