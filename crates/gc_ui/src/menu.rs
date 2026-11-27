@@ -159,24 +159,6 @@ enum ReplayShelf {
     },
 }
 
-/// The Army screen's copy of your army: it exists only while the screen is
-/// open, and starts again from the lobby's slot each time it opens.
-enum ArmyDraft {
-    Closed,
-    Open(Vec<u16>),
-}
-
-impl ArmyDraft {
-    /// The draft, if there is one. The screen puts it back each frame it
-    /// stays open.
-    fn take(&mut self) -> Option<Vec<u16>> {
-        match std::mem::replace(self, ArmyDraft::Closed) {
-            ArmyDraft::Open(army) => Some(army),
-            ArmyDraft::Closed => None,
-        }
-    }
-}
-
 /// What the map code box says when the host types something that isn't a
 /// map code.
 const NOT_A_CODE: &str = "Not a map code (16 hex digits)";
@@ -207,8 +189,9 @@ pub struct Menu<N: Network = LocalNetwork> {
     surrender_sure: bool,
     /// The regiment types the army builder offers.
     roster: Vec<RosterUnit>,
-    /// The Army screen's copy of your army while it is open.
-    army_draft: ArmyDraft,
+    /// The Army screen's copy of your army while it is open. It starts
+    /// again from the lobby's slot each time the screen opens.
+    army_draft: Option<Vec<u16>>,
     /// The saved replays, or the wait for them.
     replays: ReplayShelf,
     /// What the map code box holds: the code of the map seed, or what the
@@ -275,7 +258,7 @@ impl<N: Network> Menu<N> {
             surrender: SurrenderItem::Hidden,
             surrender_sure: false,
             roster: Vec::new(),
-            army_draft: ArmyDraft::Closed,
+            army_draft: None,
             replays: ReplayShelf::Loaded {
                 entries: Vec::new(),
                 page: 0,
@@ -386,7 +369,7 @@ impl<N: Network> Menu<N> {
         self.copied = None;
         // The draft belongs to one visit to the Army screen, and every way
         // onto that screen comes through here.
-        self.army_draft = ArmyDraft::Closed;
+        self.army_draft = None;
         self.forget_code_entry();
     }
 
@@ -518,10 +501,8 @@ impl<N: Network> Menu<N> {
             match event {
                 NetEvent::Started(start) => return MenuAction::StartMatch(start),
                 NetEvent::Left(why) => {
-                    self.screen = Screen::Play;
+                    self.show(Screen::Play);
                     self.message = Some((why, true));
-                    self.army_draft = ArmyDraft::Closed;
-                    self.forget_code_entry();
                 }
             }
         }
@@ -1609,7 +1590,7 @@ impl<N: Network> Menu<N> {
         if done || escape {
             self.go(ui, Screen::Lobby);
         } else {
-            self.army_draft = ArmyDraft::Open(army);
+            self.army_draft = Some(army);
         }
         MenuAction::None
     }
@@ -1629,33 +1610,26 @@ impl<N: Network> Menu<N> {
         let top = panel.y + sp(64);
         let bottom = panel.bottom() - 64;
         let per_page = (((bottom - top) / (row_h + sp(8))).max(1)) as usize;
-        let (pages, mut page) = match &self.replays {
-            ReplayShelf::Loading => (1, 0),
-            ReplayShelf::Loaded { entries, page } => {
-                let pages = entries.len().div_ceil(per_page).max(1);
-                (pages, (*page).min(pages - 1))
-            }
+        let (entries, loading, page): (&[ReplayEntry], bool, usize) = match &self.replays {
+            ReplayShelf::Loading => (&[], true, 0),
+            ReplayShelf::Loaded { entries, page } => (entries, false, *page),
         };
+        let pages = entries.len().div_ceil(per_page).max(1);
+        let mut page = page.min(pages - 1);
         let mut action = MenuAction::None;
-        let mut shown: &[ReplayEntry] = &[];
-        let empty_text = match &self.replays {
-            ReplayShelf::Loading => Some("Looking for replays..."),
-            ReplayShelf::Loaded { entries, .. } if entries.is_empty() => {
-                Some("No replays yet. Play a battle and it will be here to watch.")
-            }
-            ReplayShelf::Loaded { entries, .. } => {
-                shown = entries;
-                None
-            }
-        };
-        if let Some(text) = empty_text {
+        if entries.is_empty() {
+            let text = if loading {
+                "Looking for replays..."
+            } else {
+                "No replays yet. Play a battle and it will be here to watch."
+            };
             // An empty shelf: the message sits in the middle of the cloth.
             let middle = Rect::new(panel.x + 24, top, panel.w - 48, (bottom - top) / 2);
             ui.label_centered(middle, 1, theme::INK_MUTED, text);
         }
         let first = page * per_page;
         let mut y = top;
-        for entry in shown.iter().skip(first).take(per_page) {
+        for entry in entries.iter().skip(first).take(per_page) {
             let row = Rect::new(panel.x + 24, y, panel.w - 48, row_h);
             ui.draw.rect(row, theme::CLOTH);
             let chars = ((row.w - 160) / 8).max(8) as usize;
