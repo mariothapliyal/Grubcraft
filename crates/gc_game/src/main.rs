@@ -6506,6 +6506,11 @@ impl Running {
         self.input.right_down = None;
         self.input.middle_down = None;
         self.input.clear_from = None;
+        // An Alt+left ping half-made would leave its wheel up.
+        self.input.alt_left = false;
+        if let Some(o) = &mut self.online {
+            o.ping_press = None;
+        }
         self.hud.reset();
     }
 
