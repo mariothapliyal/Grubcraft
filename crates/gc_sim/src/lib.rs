@@ -3250,7 +3250,8 @@ impl World {
     }
 
     /// Regiment `h` was given another order: it stops attacking any
-    /// building and stops gathering.
+    /// building, gathering, trading and planting stakes (see
+    /// `Conquest::stop_work`).
     fn leave_off(&mut self, h: RegimentHandle) {
         if let (Some(conquest), Some(i)) = (&mut self.conquest, self.regiments.resolve(h)) {
             conquest.stop_work(i);

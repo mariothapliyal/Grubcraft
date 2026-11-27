@@ -487,10 +487,18 @@ impl Economy {
         regs.alive[r] && regs.generation[r] == self.work_gen[r]
     }
 
-    /// The node regiment slot `r` is working, if it is (not a new pile in
-    /// the slot of one it emptied: it is only taking its last load home).
+    /// The node regiment slot `r` is working, if it is. One taking home
+    /// its last load from a pile that is gone still works it (it is on
+    /// its round), whether or not another pile has been laid in the slot.
     pub(crate) fn work_of(&self, regs: &Regiments, r: usize) -> Option<u16> {
-        (self.step[r].gathers() && self.ours(regs, r) && self.same_node(r)).then_some(self.node[r])
+        (self.step[r].gathers() && self.ours(regs, r)).then_some(self.node[r])
+    }
+
+    /// Whether regiment slot `r` works `node` itself, not a pile laid in
+    /// the slot of one it emptied (to which an order to gather there is a
+    /// new one).
+    pub(crate) fn works_at(&self, regs: &Regiments, r: usize, node: u16) -> bool {
+        self.work_of(regs, r) == Some(node) && self.same_node(r)
     }
 
     /// What regiment slot `r` carries: how much of what.
@@ -823,7 +831,8 @@ impl Economy {
     /// is at its node and the node is on its owner's veins; else it tries
     /// again in a while. (A worker sent elsewhere with a load takes it to
     /// its new node first.) One whose pile is gone and another laid in its
-    /// slot banks where it stands, not at the new pile.
+    /// slot goes on to where it was walking, as it would with the slot
+    /// empty, or banks where it stands; never at the new pile.
     fn send_home(
         &mut self,
         regs: &mut Regiments,
@@ -836,7 +845,9 @@ impl Economy {
         let at = if self.same_node(r) {
             self.node_at[n]
         } else {
-            regs.position[r]
+            // The old pile's spot is no longer known, but the way it was
+            // walking there (a tile short of it, see `at_point`) is.
+            regs.target[r].unwrap_or(regs.position[r])
         };
         if self.clock[r] > 0 || !self.at_point(regs, r, at, NODE_REACH) {
             return;
@@ -1027,7 +1038,10 @@ impl Economy {
             h.u32(self.node_left[i]);
             h.u32(self.node_full[i]);
             h.u32(self.tune_clock[i]);
-            h.u16(self.node_gen[i]);
+            // (The map's nodes are never laid again: always 0.)
+            if self.is_pile(i) {
+                h.u16(self.node_gen[i]);
+            }
         }
         h.u32(self.posts.len() as u32);
         for at in &self.posts {
@@ -1049,7 +1063,9 @@ impl Economy {
             }
             h.u8(1 + self.step[r] as u8);
             h.u16(self.node[r]);
-            h.u16(self.pile_gen[r]);
+            if self.is_pile(usize::from(self.node[r])) {
+                h.u16(self.pile_gen[r]);
+            }
             let (kind, amount) = self.load[r].map_or((0, 0), |(k, a)| (k as u8 + 1, a));
             h.u8(kind);
             h.u8(amount);

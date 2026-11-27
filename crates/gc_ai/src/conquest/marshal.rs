@@ -499,9 +499,16 @@ impl Marshal {
                 HEART_BEATEN
             }
         };
+        // Enemies at its buildings, and (below) whether they keep the army
+        // home: a raid would be called off for the defence in the same
+        // look, its window running down and the stalemate forgotten, so
+        // the raid waits until no threat would keep it home once raiding.
+        let threat = threat_to_home(s, army, home);
+        let raid_goal = Goal::Attack(Vec2::ZERO);
         if enough
             && !holding
             && self.heart_stalemate(s.now, beaten_enough)
+            && keeps_home(s, threat, raid_goal, true, ready).is_none()
             && let Some((t, note)) = raid_target(s, centroid(army))
                 .map(|t| (t, "going to break a base"))
                 .or_else(|| {
@@ -523,15 +530,7 @@ impl Marshal {
         let lone_alarm = |s: &Sense| heart_alarm(s) && spymaster::enemies(s).len() < 2;
         let heart_to_take = |s: &Sense| heart_to_take(s).filter(|_| !raiding || lone_alarm(s));
         let enemy_holds_heart = |s: &Sense| enemy_holds_heart(s) && (!raiding || lone_alarm(s));
-        // Home first, but a threat to outlying buildings doesn't pull the
-        // army off the Titan's Heart: a game of armies guarding sprawling
-        // bases never ends otherwise.
-        let threat = threat_to_home(s, army, home).filter(|&(_, at_home)| {
-            at_home
-                || heart_to_take(s).is_none() && !we_hold_heart(s)
-                || !(matches!(self.goal, Goal::Heart(_)) || enemy_holds_heart(s) || ready)
-        });
-        if let Some((threat, _)) = threat {
+        if let Some(threat) = keeps_home(s, threat, self.goal, raiding, ready) {
             if !matches!(self.goal, Goal::Defend(_)) {
                 c.journal.note(
                     s.now,
@@ -1262,6 +1261,50 @@ fn nearest(buildings: Vec<Sighted>, from: Vec2) -> Option<Vec2> {
         .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
 }
 
+/// Where the enemies at its buildings (`threat`, from [`threat_to_home`])
+/// keep an army going for `goal` home to defend, if they do, `raiding` or
+/// not, its wave `ready` or not (see [`defends`]).
+fn keeps_home(
+    s: &Sense,
+    threat: Option<(Vec2, bool)>,
+    goal: Goal,
+    raiding: bool,
+    ready: bool,
+) -> Option<Vec2> {
+    let (at, at_home) = threat?;
+    let heart = HeartNow {
+        to_take: heart_to_take(s).is_some(),
+        enemy_holds: enemy_holds_heart(s),
+        we_hold: we_hold_heart(s),
+        lone_alarm: heart_alarm(s) && spymaster::enemies(s).len() < 2,
+    };
+    defends(at_home, goal, raiding, ready, heart).then_some(at)
+}
+
+/// How the Titan's Heart stands, for [`defends`].
+#[derive(Clone, Copy, Debug)]
+struct HeartNow {
+    /// Open, and not held by its own side.
+    to_take: bool,
+    enemy_holds: bool,
+    we_hold: bool,
+    /// An enemy has held it a while, and it knows of no other.
+    lone_alarm: bool,
+}
+
+/// Whether enemies at its buildings (`at_home`, or at an outlying one)
+/// keep an army going for `goal` home. Home first, but a threat to
+/// outlying buildings doesn't pull the army off the Titan's Heart: a game
+/// of armies guarding sprawling bases never ends otherwise. A raid leaves
+/// the Heart be, unless a lone enemy has held it a while: nobody else
+/// will stop them, and they win.
+fn defends(at_home: bool, goal: Goal, raiding: bool, ready: bool, heart: HeartNow) -> bool {
+    let heart_minded = !raiding || heart.lone_alarm;
+    at_home
+        || !(heart.to_take && heart_minded) && !heart.we_hold
+        || !(matches!(goal, Goal::Heart(_)) || heart.enemy_holds && heart_minded || ready)
+}
+
 /// The Titan's Heart, if it is open and not held by its own side.
 fn heart_to_take(s: &Sense) -> Option<Vec2> {
     let h = s.world.heart().filter(|h| h.open)?;
@@ -1525,6 +1568,25 @@ mod tests {
         m.leave_attack(handle(0));
         assert!(m.out.is_empty());
         assert!(cost_too_much(&m.out, 0, m.set_out_with));
+    }
+
+    /// Enemies at an outlying building leave an army on an open Heart that
+    /// nobody holds be; but a raid would be called home by them at once, so
+    /// it is not set off while they are there (its window would run down in
+    /// the defence and the stalemate be forgotten).
+    #[test]
+    fn a_raid_waits_while_an_outlying_threat_would_call_it_home() {
+        let heart = HeartNow {
+            to_take: true,
+            enemy_holds: false,
+            we_hold: false,
+            lone_alarm: false,
+        };
+        let on_heart = Goal::Heart(Vec2::ZERO);
+        assert!(!defends(false, on_heart, false, true, heart));
+        assert!(defends(false, Goal::Attack(Vec2::ZERO), true, true, heart));
+        // At home, it always defends.
+        assert!(defends(true, on_heart, false, true, heart));
     }
 
     #[test]

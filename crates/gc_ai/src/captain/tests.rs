@@ -82,21 +82,39 @@ fn sides(view: &Perception) -> (Vec<&Seen>, Vec<&Seen>) {
 fn an_army_sent_to_attack_still_crosses_when_its_ford_is_called_off() {
     // The enemy stands right where the ford comes out: it is watched.
     let exit = Vec2::new(128.0, 100.0);
-    let view = field(Vec2::new(128.0, 160.0), exit);
-    let (_, fighting) = sides(&view);
+    let mut view = field(Vec2::new(128.0, 160.0), exit);
+    view.tick = 60 * TICKS_PER_SECOND;
     let mut mind = Mind::new();
     for pressing in [false, true] {
+        // It chose that ford itself, then (or not) was sent to attack.
         let mut c = Captain::new();
+        c.started = true;
+        c.posture = Posture::Advance;
+        c.forward = -Vec2::Y;
+        c.anchor = Vec2::new(128.0, 160.0);
+        c.river = Some(ground::Crossing {
+            near: 10.0,
+            far: 20.0,
+        });
         c.crossing = true;
-        c.press(pressing);
         c.bridgehead = Some((exit - Vec2::Y * 5.0, exit));
-        let mut ctx = mind.ctx(&view);
+        c.press(pressing);
         // Nobody is in the water or across yet.
-        c.hold_bridgehead(&mut ctx, &[], &fighting);
+        let (_, fighting) = sides(&view);
+        c.hold_bridgehead(&mut mind.ctx(&view), &[], &fighting);
         assert_eq!(c.bridgehead, None);
         // Only one that chose to cross goes back to waiting; one sent to
         // attack must not halt at the bank for good.
         assert_eq!(c.crossing, pressing, "pressing {pressing}");
+        let note = &mind.journal.latest().unwrap().text;
+        assert_eq!(note.ends_with("pressing on"), pressing, "{note}");
+        // After its moment's hold, one sent to attack goes on.
+        let mut later = view.clone();
+        later.tick += POSTURE_TICKS + 1;
+        let (ours, fighting) = sides(&later);
+        c.choose_posture(&mut mind.ctx(&later), &ours, &fighting);
+        let advancing = c.posture == Posture::Advance;
+        assert_eq!(advancing, pressing, "pressing {pressing}: {:?}", c.posture);
     }
 }
 
@@ -106,10 +124,23 @@ fn pressing_on_or_stopping_drops_the_wait_behind_the_water() {
     c.baiting = true;
     c.press(true);
     assert!(!c.baiting, "no standing back to tempt them while attacking");
-    c.bridgehead = Some((Vec2::ZERO, Vec2::ONE));
     c.press(false);
-    assert!(!c.crossing);
-    assert_eq!(c.bridgehead, None, "no ford to go for while waiting again");
+    assert!(!c.crossing, "still crossing with no ford to go for");
+}
+
+#[test]
+fn stopping_on_the_way_to_a_ford_of_its_own_finishes_the_crossing() {
+    // It chose a ford and was then sent to attack; the attack ends with
+    // the line perhaps already in the water. It goes on to the far bank
+    // rather than waiting behind the water from the middle of it, and
+    // never waits with a ford still calling it forward.
+    let mut c = Captain::new();
+    c.crossing = true;
+    c.bridgehead = Some((Vec2::ZERO, Vec2::ONE));
+    c.press(true);
+    c.press(false);
+    assert!(c.crossing);
+    assert!(c.bridgehead.is_some());
 }
 
 #[test]
@@ -126,6 +157,36 @@ fn turning_to_face_a_new_way_forgets_the_covered_end() {
     c.relayout = false;
     c.update_frame(&mut mind.ctx(&view), &ours, &fighting);
     assert!(c.forward.x > 0.9, "it turned: {}", c.forward);
+    assert_eq!(c.covered, 0.0);
+}
+
+#[test]
+fn going_over_to_a_bridgehead_forgets_the_covered_end() {
+    // Nobody is watching where the ford comes out.
+    let view = field(Vec2::new(128.0, 160.0), Vec2::new(40.0, 40.0));
+    let mut mind = Mind::new();
+    // A river across the field, from 110 to 130 tiles down it.
+    let n = MAP as usize;
+    let heights = (0..n * n)
+        .map(|t| {
+            if (110..130).contains(&(t / n)) {
+                0.0
+            } else {
+                2.0
+            }
+        })
+        .collect();
+    mind.terrain = Terrain::open(MAP).with_heights(heights, 1.0);
+    let mut c = Captain::new();
+    c.started = true;
+    c.posture = Posture::Advance;
+    c.crossing = true;
+    c.bridgehead = Some((Vec2::new(200.0, 100.0), Vec2::new(200.0, 105.0)));
+    c.covered = 1.0;
+    c.relayout = false;
+    let (ours, fighting) = sides(&view);
+    c.hold_bridgehead(&mut mind.ctx(&view), &ours, &fighting);
+    assert_eq!(c.anchor, Vec2::new(200.0, 100.0), "not going over");
     assert_eq!(c.covered, 0.0);
     assert!(c.relayout);
 }

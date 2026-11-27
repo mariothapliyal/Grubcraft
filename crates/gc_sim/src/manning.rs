@@ -713,14 +713,16 @@ impl Conquest {
         regs.climber[r] = false;
         regs.loophole[r] = false;
         // A column (or wedge) still keeps the width it stood at before it
-        // narrowed: it stood in Line up there without touching that, and
-        // setting its frontage back must not record the narrowed width as
-        // the one to widen out to on leaving the column.
+        // narrowed, and setting its frontage back must not record the
+        // narrowed width as the one to widen out to on leaving the column.
+        // A line drawn for it up there is kept too (see
+        // `Regiments::order`), for any shape: it is the width it was asked
+        // for since.
         let kept = regs.width_kept[r];
         regs.formation[r] = o.formation;
         let own = o.formation.own_frontage();
-        regs.set_frontage(r, if kept > 0 && own { kept } else { o.frontage });
-        regs.width_kept[r] = kept;
+        regs.set_frontage(r, if kept > 0 { kept } else { o.frontage });
+        regs.width_kept[r] = if own { kept } else { 0 };
         let at = nav.settle(regs.owner[r], at, regs.berth(units, r));
         regs.position[r] = at;
     }

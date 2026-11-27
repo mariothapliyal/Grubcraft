@@ -307,10 +307,11 @@ impl Captain {
             self.posture = Posture::Hold;
             self.posture_since = ctx.view.tick;
             self.anchor = t.clamp(line_centre(&self.members, ours, centroid(ours)), 4.0);
-            let why = if shutting {
-                "The river is rising over that ford: waiting again"
-            } else {
-                "They have come to watch that ford: waiting again"
+            let why = match (shutting, self.pressing) {
+                (true, false) => "The river is rising over that ford: waiting again",
+                (false, false) => "They have come to watch that ford: waiting again",
+                (true, true) => "The river is rising over that ford: pressing on",
+                (false, true) => "They have come to watch that ford: pressing on",
             };
             ctx.journal.note(ctx.view.tick, why.to_string());
             return;

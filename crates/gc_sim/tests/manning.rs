@@ -472,6 +472,63 @@ fn a_column_down_off_the_wall_still_widens_to_its_old_line() {
     assert_eq!(view(&w, ours).unwrap().frontage, line);
 }
 
+/// A width drawn for it while it is up on the wall is the width it
+/// comes down at, in Line, and the one a column widens out to.
+#[test]
+fn a_width_drawn_on_the_wall_is_kept_coming_down() {
+    let wide = |w: &mut World, ours, files| {
+        order(
+            w,
+            0,
+            Command::MoveTo {
+                regiment: ours,
+                target: FxVec2::from_ints(10, 24),
+                facing: None,
+                files,
+                pace: Fx::ZERO,
+                brigade: 0,
+            },
+        )
+    };
+    // In Line.
+    let mut w = world();
+    let ours = spawn(&mut w, 0, FOOT, 14, 24);
+    let line = view(&w, ours).unwrap().frontage;
+    assert!(man(&mut w, 0, ours, (WALL_X, 24)));
+    climb(&mut w, ours);
+    let files = line / 2;
+    assert!(wide(&mut w, ours, files));
+    w.tick(&[]);
+    assert!(!view(&w, ours).unwrap().on_wall);
+    assert_eq!(view(&w, ours).unwrap().frontage, files);
+    // In a column.
+    let mut w = world();
+    let ours = spawn(&mut w, 0, FOOT, 14, 24);
+    assert!(order(
+        &mut w,
+        0,
+        Command::SetFormation {
+            regiment: ours,
+            formation: Formation::Column,
+        }
+    ));
+    let column = view(&w, ours).unwrap().frontage;
+    assert!(man(&mut w, 0, ours, (WALL_X, 24)));
+    climb(&mut w, ours);
+    assert!(wide(&mut w, ours, files));
+    w.tick(&[]);
+    assert_eq!(view(&w, ours).unwrap().frontage, column);
+    assert!(order(
+        &mut w,
+        0,
+        Command::SetFormation {
+            regiment: ours,
+            formation: Formation::Line,
+        }
+    ));
+    assert_eq!(view(&w, ours).unwrap().frontage, files);
+}
+
 /// Whether side 0's regiment of `unit` on the wall is still up there
 /// after being sent to attack an enemy regiment on the ground east of it.
 fn stays_up_to_attack(unit: u16) -> bool {

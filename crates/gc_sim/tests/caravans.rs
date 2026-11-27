@@ -27,6 +27,9 @@ const SPEARS: u16 = 2;
 const HEAVY: u16 = 3;
 /// A worker of a faction with no Grub drop-off, like the Concord's Clerk.
 const CLERK: u16 = 4;
+/// A worker that banks through the root-veins where it gathers, like the
+/// Gnawer.
+const GNAWER: u16 = 5;
 
 /// A main building that takes Marrow only, like the Concord's Counting
 /// House; a Waystation (a trade post and a Marrow drop-off); a granary
@@ -41,7 +44,7 @@ const SECOND: u32 = TICKS_PER_SECOND;
 /// Players 0 and 1 are allies; player 2 is against them.
 const TEAMS: [u8; 3] = [0, 0, 1];
 
-fn units() -> [UnitStats; 5] {
+fn units() -> [UnitStats; 6] {
     let worker = UnitStats {
         models: 1,
         files: 1,
@@ -57,10 +60,10 @@ fn units() -> [UnitStats; 5] {
         morale: 0,
         ..worker
     };
-    [caravan, worker, DRILL_UNITS[0], worker, worker]
+    [caravan, worker, DRILL_UNITS[0], worker, worker, worker]
 }
 
-fn conquest_units() -> [ConquestUnit; 5] {
+fn conquest_units() -> [ConquestUnit; 6] {
     let worker = ConquestUnit {
         worker: true,
         supply: 1,
@@ -81,6 +84,10 @@ fn conquest_units() -> [ConquestUnit; 5] {
         },
         ConquestUnit {
             cannot_bank: DROP_OFF_GRUB,
+            ..worker
+        },
+        ConquestUnit {
+            burrows: true,
             ..worker
         },
     ]
@@ -811,6 +818,90 @@ fn a_worker_that_emptied_a_pile_leaves_a_new_one_in_its_slot_be() {
     assert_eq!(grub(&w, 2), 38);
     assert_eq!(w.gathers_at(worker), None);
     assert_eq!(piles(&w)[0].left, laid.full);
+}
+
+#[test]
+fn a_burrower_that_emptied_a_pile_does_not_take_its_load_to_a_new_one() {
+    // As above, but player 2 has a burrowing worker at the pile too, off
+    // its veins: it holds its load where it stands, waiting for veins,
+    // while the other worker empties the pile.
+    let mut w = conquest(&[], &[post_east(30)]);
+    let first = base(&mut w);
+    let second = spawn(&mut w, 0, CARAVAN, 11, 8);
+    for c in [first, second] {
+        assert!(trade(&mut w, 0, c, TradePost::Hamlet(0)));
+    }
+    while w.cargo(first).is_none() || w.cargo(second).is_none() {
+        w.tick(&[]);
+    }
+    for (c, y) in [(first, 30), (second, 50)] {
+        assert!(order(
+            &mut w,
+            0,
+            Command::MoveTo {
+                regiment: c,
+                target: FxVec2::from_ints(40, y),
+                facing: None,
+                files: 0,
+                pace: Fx::ZERO,
+                brigade: 0,
+            }
+        ));
+    }
+    run(&mut w, 30 * SECOND);
+    let gone = |c| Command::RemoveRegiment { regiment: c };
+    assert!(order(&mut w, 0, gone(first)));
+    let pile = piles(&w)[0];
+    put_up(&mut w, 2, GRANARY, 4, 56);
+    let (px, py) = (pile.at.x.floor_int(), pile.at.y.floor_int());
+    let worker = spawn(&mut w, 2, GNAWER, px + 1, py + 1);
+    let other = spawn(&mut w, 2, WORKER, px - 1, py + 1);
+    for regiment in [worker, other] {
+        assert!(order(
+            &mut w,
+            2,
+            Command::Gather {
+                regiment,
+                node: pile.index
+            }
+        ));
+    }
+    for _ in 0..10 * 60 * SECOND {
+        if piles(&w).is_empty() {
+            break;
+        }
+        w.tick(&[]);
+    }
+    assert!(piles(&w).is_empty(), "the pile was never emptied");
+    assert!(w.carries(worker).is_some());
+    let stood = w.regiments.get(worker).unwrap().position;
+    assert!(order(&mut w, 0, gone(second)));
+    let laid = piles(&w)[0];
+    assert_eq!(laid.index, pile.index);
+    assert!((laid.at - pile.at).length() > Fx::from_int(10));
+    run(&mut w, 60 * SECOND);
+    let now = w.regiments.get(worker).unwrap().position;
+    assert!(
+        (now - stood).length() < Fx::from_int(2),
+        "walked off towards the new pile"
+    );
+    assert!(w.carries(worker).is_some());
+    assert_eq!(piles(&w)[0].left, laid.full);
+    // Sent to gather at the new pile, it does go: that is a new order.
+    assert!(order(
+        &mut w,
+        2,
+        Command::Gather {
+            regiment: worker,
+            node: laid.index
+        }
+    ));
+    run(&mut w, 60 * SECOND);
+    let now = w.regiments.get(worker).unwrap().position;
+    assert!(
+        (now - laid.at).length() < Fx::from_int(3),
+        "never went to the new pile"
+    );
 }
 
 #[test]

@@ -761,8 +761,10 @@ impl Brigades {
         // (A slot still tagged for a regiment that died in it is not
         // that brigade's member: this one starts afresh in it.)
         if self.slot(regs, i) != Some(slot) {
-            let members = self.of.iter().filter(|&&t| t == tag).count();
+            // Counted once its own tag is gone: a dead member's tag left
+            // on this very slot is no place taken.
             self.leave(regs, i);
+            let members = self.of.iter().filter(|&&t| t == tag).count();
             // (Nothing of a march it was on before comes with it.)
             self.members[i] = Member::NONE;
             if members >= MAX_MEMBERS {
@@ -2019,5 +2021,41 @@ mod tests {
         assert_eq!(w.brigades.of(&w.regiments, i), None);
         // Its friend still marches in the brigade.
         assert!(w.brigade(a).is_some());
+    }
+
+    /// A full brigade that lost a member, whose slot was given straight
+    /// out again, has a place for the regiment raised there: the dead
+    /// member's tag left on that slot does not count as one taken.
+    #[test]
+    fn a_full_brigade_takes_one_raised_in_a_dead_members_slot() {
+        use super::{Brigades, MAX_MEMBERS};
+        use crate::regiments::Regiments;
+        let mut regs = Regiments::with_capacity(MAX_MEMBERS as u32);
+        let mut brigades = Brigades::new(MAX_MEMBERS);
+        let stats = DRILL_UNITS[0].sanitized();
+        let raise = |regs: &mut Regiments, k: usize| {
+            let at = FxVec2::from_ints(10 + k as i32 * 2, 100);
+            let h = regs.spawn(0, 0, at, NORTH, &stats).unwrap();
+            let i = regs.resolve(h).unwrap();
+            regs.target[i] = Some(FxVec2::from_ints(10 + k as i32 * 2, 30));
+            (h, i)
+        };
+        let mut last = None;
+        for k in 0..MAX_MEMBERS {
+            let (h, i) = raise(&mut regs, k);
+            brigades.join(&mut regs, i, 1, false);
+            assert!(brigades.of(&regs, i).is_some(), "the brigade filled early");
+            last = Some(h);
+        }
+        let dead = last.unwrap();
+        let old = regs.resolve(dead).unwrap();
+        assert!(regs.despawn(dead));
+        let (_, i) = raise(&mut regs, MAX_MEMBERS - 1);
+        assert_eq!(i, old, "the slot was not given out again");
+        brigades.join(&mut regs, i, 1, false);
+        assert!(
+            brigades.of(&regs, i).is_some(),
+            "turned away from a brigade with a place free"
+        );
     }
 }

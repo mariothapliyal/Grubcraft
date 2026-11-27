@@ -1666,7 +1666,12 @@ impl Combat {
                     .and_then(|h| regs.resolve(h))
                     .is_some_and(|j| regs.falling_back[j] == 0 && !regs.morale_state[j].broken())
             {
+                // An attack, as `Regiments::attack` makes one: no longer
+                // marching to a spot it was sent to stand at, so losing
+                // sight of the foe later (which leaves it walking to where
+                // the foe was seen) is not taken for coming up to its spot.
                 regs.attack_target[i] = previous;
+                regs.set_seeks_place(i, false);
             }
             let engaged = best.map(|j| RegimentHandle {
                 index: j as u32,
@@ -3600,8 +3605,12 @@ fn crowded_out(regs: &mut Regiments, nav: &Nav, i: usize, j: usize, me: &Block, 
     regs.crowded[i] = 0;
     regs.round[i] = open_side(regs, nav, i, j, me, them, false).map(Round::pack);
     if regs.round[i].is_some() {
-        // Going round means taking this fight on.
+        // Going round means taking this fight on, as an attack order
+        // would: it no longer seeks the spot it was once sent to, which
+        // the crowding look would otherwise turn it back to should it
+        // lose sight of the foe near there (see `Vision`).
         regs.attack_target[i] = Some(regs.handle(j));
+        regs.set_seeks_place(i, false);
     }
 }
 
@@ -4082,6 +4091,35 @@ mod tests {
             w.regiments.round[i], None,
             "went round on its first free turn"
         );
+    }
+
+    /// Going round a crowded fight is an attack on that foe: like an
+    /// attack order it ends seeking the spot the block was once sent to,
+    /// so losing sight of the foe within reach of that spot does not turn
+    /// it back there.
+    #[test]
+    fn going_round_forgets_the_spot_it_was_sent_to() {
+        let mut w = world();
+        let a = spawn(&mut w, 0, FOOT, 60, 60);
+        let b = spawn(&mut w, 1, FOOT, 60, 52);
+        let (i, j) = (
+            w.regiments.resolve(a).unwrap(),
+            w.regiments.resolve(b).unwrap(),
+        );
+        let (me, them) = (
+            super::Block::of(&w.regiments, &w.units, i),
+            super::Block::of(&w.regiments, &w.units, j),
+        );
+        w.regiments.set_seeks_place(i, true);
+        for _ in 0..CROWDED_TURNS {
+            super::crowded_out(&mut w.regiments, &w.nav, i, j, &me, &them);
+        }
+        assert!(
+            w.regiments.round[i].is_some(),
+            "found no side to go round to"
+        );
+        assert_eq!(w.regiments.attack_target[i], Some(b));
+        assert!(!w.regiments.seeks_place(i), "still seeks its old spot");
     }
 
     /// A skirmisher sent to a spot, standing there, steps back from melee

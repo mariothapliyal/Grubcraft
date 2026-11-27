@@ -595,7 +595,11 @@ regiment_fields! {
     /// Turns in a row it was locked in one fight with nobody able to strike
     /// (no room on the foe's side, or only a corner touching) and free to
     /// go round (see `combat::crowded_out`); while going round, ticks spent
-    /// on the way. Back to 0 whenever its fight or its going round ends.
+    /// on the way. Back to 0 whenever its foe changes in `Combat::before_move`
+    /// (a new fight, or none) and whenever its going round ends, so no
+    /// fight inherits the turns of another. A fight left elsewhere (falling
+    /// back, swept off, onto a wall) keeps the count until the next fight
+    /// starts, which then resets it before counting.
     crowded: u8 = 0,
     /// Spears or pikes set against a charge (see [`Regiments::brace`]):
     /// standing until given another order.
@@ -614,7 +618,8 @@ regiment_fields! {
     /// In a column or a wedge, the frontage it was asked for (the width it
     /// stood at going in, or a line drawn for it since): it forms up that
     /// wide again on leaving. 0 for none, when the width it was raised
-    /// with is used.
+    /// with is used. On a wall, whatever its shape, also a line drawn for
+    /// it up there, which it forms up at on coming down.
     width_kept: u16 = 0,
     /// Torches lit (see [`Regiments::light`]): they burn only in the dark.
     torches: bool = false,
@@ -810,7 +815,16 @@ impl Regiments {
         // A column or a wedge has a frontage of its own; leaving one, the
         // regiment forms up as wide as when raised.
         if was != formation && formation.own_frontage() {
-            self.set_frontage(i, self.frontage[i]);
+            // Out of the other shape with a frontage of its own (a column
+            // into a wedge, say), the width to widen out to is the one
+            // that shape kept, not its own narrowed frontage.
+            let kept = self.width_kept[i];
+            let asked = if was.own_frontage() && kept > 0 {
+                kept
+            } else {
+                self.frontage[i]
+            };
+            self.set_frontage(i, asked);
         } else if was != formation && was.own_frontage() {
             self.leave_own(i, units[self.unit[i] as usize].files);
         }
@@ -1064,6 +1078,13 @@ impl Regiments {
         // Growth owed on the last march (see `squeeze`) is not this one's.
         self.grow[i] = 0;
         if order.files != 0 {
+            // Up on a wall it stands in Line for the wall's sake, and
+            // takes back the shape it had when it comes down (see
+            // `Conquest::come_down`): the width drawn for it is kept for
+            // then, or it would be lost.
+            if self.on_wall[i] {
+                self.width_kept[i] = order.files;
+            }
             self.set_frontage(i, order.files);
         }
         self.pace[i] = self.pace_for(i, order.pace);

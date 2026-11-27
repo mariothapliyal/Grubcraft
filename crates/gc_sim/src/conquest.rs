@@ -380,7 +380,7 @@ impl Conquest {
         if !self.can_gather(regs, r, node) {
             return false;
         }
-        if self.economy.work_of(regs, r) != Some(node) {
+        if !self.economy.works_at(regs, r, node) {
             self.stop_work(r);
             self.economy.gather(regs, r, node);
         }
@@ -977,7 +977,10 @@ impl Conquest {
 
     /// Regiment slot `r` was given another order: it stops attacking or
     /// building, gathering or trading, and planting stakes. Every order
-    /// that sets a regiment to work calls this first.
+    /// that sets a regiment to work calls this first, and so do moves and
+    /// attacks on regiments (see `World::leave_off`), so any order but
+    /// planting itself calls a planting off at once, even one that leaves
+    /// the regiment standing where it is.
     pub(crate) fn stop_work(&mut self, r: usize) {
         // By slot: a planting by a regiment gone from the slot is over too.
         self.planting.retain(|p| p.regiment.index as usize != r);
