@@ -2,6 +2,20 @@
 
 Before and after numbers from each milestone's performance pass ([12 · Performance](12-performance.md#the-loop)). Newest first.
 
+## The kept ground (2026-11-27)
+
+What the ground is at each pixel (palette, grass and soil detail, habitats, rock, marks, lands, snow) is stored the frame after the camera, the land and the weather settle, and read back on the frames after; only its lighting, the water and the fog of war are worked out again. Six-player General battle, seed 3, lavapipe, 1280x760, three runs each against main at #435 (40 frames averaged; 100 for the runs 200 s in).
+
+| | main | this change |
+|---|---|---|
+| Still camera (battle start), anti-aliasing on, GPU ms a frame | 943.7, 977.3, 978.1, 960.9 (mean 965.0) | 801.8, 791.2, 818.4 (mean 803.8, −16.7%) |
+| Still camera (battle start), anti-aliasing off | 375.0, 382.7, 381.7, 378.7 (mean 379.5) | 286.3, 283.3, 283.3 (mean 284.3, −25.1%) |
+| Still camera 200 s in (`GC_HOLD_CAMERA=1`), regiments marching, anti-aliasing off; main's picture drawn by `--no-kept-ground` | 382.4, 383.6, 376.1 (mean 380.7) | 281.7, 286.5 (mean 284.1, −25.4%) |
+| Moving camera (200 s in), anti-aliasing off, 100 frames, first version | 565.4, 570.6, 609.1, 606.3 (mean 587.8) | 592.8, 595.2, 611.9, 615.4 (mean 603.8); with `--no-kept-ground` 581.2, 610.1, 594.4, 592.4 (594.5) |
+| Moving camera, anti-aliasing on, 100 frames, first version | 1859, 1924, 1846 | 1975, 1970, 1864 |
+
+This container is about twice as slow as the one that measured #435, so compare within a table only. Still frames differ from main on 0.6% of pixels with anti-aliasing (at most 5 steps of 255, on the edges between the ground's triangles) and 0.1% without (at most 3); with `--no-kept-ground` the picture is main's, pixel for pixel. A first version stored the colour and normal as half floats in three images: 6% of pixels moved, and a review found that its three images could each end up holding a different fragment's ground at a pixel on a real GPU (lavapipe shades in order, so it never showed); both images now carry the ground's distance, and the colour is stored exactly. Before marks and lands out of view were ignored, a still camera mid-battle would have stored the ground again four times a second; changes are now tracked by chunk. Storing the drawn height instead of working it out again took the still frames from 858 to 804 ms (anti-aliasing on) and 298 to 284 (off). The moving camera runs the same shader and draws as main; its 1 to 3% is inside the run-to-run spread but was the same way round in every set. 31 MB more GPU memory at 1280x760. No change to the simulation.
+
 ## Shadows kept, and off-screen casters (2026-11-27)
 
 The sun's view of the ground and of the scenery that does not sway is kept between frames and drawn again only when the sun's view, the ground, its chunks or that scenery change; trees, soldiers and boxes are drawn over a copy each frame. Scenery outside the view that only casts onto it is left out of the world pass and drawn into the shadow map at its coarsest level. Six-player General battle, seed 3, lavapipe at 1280x760 without MSAA, cloud container, 40 frames averaged, three runs each against main.

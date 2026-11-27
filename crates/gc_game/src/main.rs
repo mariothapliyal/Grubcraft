@@ -125,7 +125,9 @@
 //! and switch to one);
 //! `--overlay` starts with the dev overlay shown; `--no-audio` never opens
 //! the sound card; `--no-shadows`, `--no-glow` and `--no-aa` turn off the sun's
-//! shadows, the glow around bright light and the anti-aliasing; `--latency 1|2|3` sets
+//! shadows, the glow around bright light and the anti-aliasing, and
+//! `--no-kept-ground` works the ground out afresh every frame even while the
+//! camera holds still (to measure what keeping it saves); `--latency 1|2|3` sets
 //! frames in flight; `--render-scale F` renders at a
 //! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
 //! parts of the frame off to measure what they cost; `--lod 0..3` draws
@@ -746,6 +748,10 @@ fn parse_args() -> Options {
             opts.render.msaa = 1;
             continue;
         }
+        if flag == "--no-kept-ground" {
+            opts.render.keep_ground = false;
+            continue;
+        }
         if flag == "--no-glow" {
             opts.render.glow = false;
             continue;
@@ -955,7 +961,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord [--players 2-6]] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--hidden-frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord [--players 2-6]] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--hidden-frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--no-kept-ground] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--world-scale 0.5..1] [--gpu-times] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--season spring|summer|autumn|winter] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
@@ -1193,8 +1199,11 @@ struct Running {
     watching: Option<Watching>,
     /// `GC_PLAY_FROM` (seconds, a dev knob like `GC_WATCH_FROM`): play a
     /// live match's first ticks up to this one as fast as the game can, then
-    /// turn the director camera on, to measure a match's busy middle.
+    /// turn the director camera on, to measure a match's busy middle (or,
+    /// with `GC_HOLD_CAMERA` set, leave the camera where it is, to measure
+    /// a still view of it).
     play_from: Option<u32>,
+    hold_camera: bool,
     /// `GC_STILL_AT` (a frame number, a dev knob): hold that frame on screen
     /// for a few seconds, so a script can grab the same frame from two runs
     /// to compare them; and run the picture's clock (the wind, the water,
@@ -2174,6 +2183,7 @@ impl App {
                 .ok()
                 .and_then(|v| v.parse::<u32>().ok())
                 .map(|s| s.saturating_mul(gc_sim::TICKS_PER_SECOND)),
+            hold_camera: std::env::var_os("GC_HOLD_CAMERA").is_some(),
             sky_news: sky_news::SkyNews::default(),
             debris_told: None,
             jam_told: None,
@@ -4490,7 +4500,9 @@ impl Running {
             self.sim_clock = TICK * max_ticks;
             if left <= PLAY_FROM_TICKS_PER_FRAME {
                 self.play_from = None;
-                self.director.start(&self.camera);
+                if !self.hold_camera {
+                    self.director.start(&self.camera);
+                }
             }
         }
         while self.sim_clock >= TICK && ticks_this_frame < max_ticks {

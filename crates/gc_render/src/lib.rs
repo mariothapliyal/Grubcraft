@@ -13,6 +13,7 @@
 mod debug_font;
 mod detail;
 mod effects;
+mod kept_ground;
 mod lights;
 mod look;
 mod overlay;
@@ -20,6 +21,7 @@ mod particles;
 mod post;
 mod rock;
 mod scenery;
+mod settle;
 mod shadows;
 mod soldiers;
 mod surface;
@@ -227,6 +229,10 @@ pub struct RendererOptions {
     /// Samples a pixel for anti-aliasing: 4, or 1 for none. Falls back to 1
     /// where the GPU cannot draw the HDR image multisampled.
     pub msaa: u32,
+    /// Keep what the ground is at each pixel while the camera holds still,
+    /// and only light it again (see `kept_ground`): about a quarter of a
+    /// still frame's work, for 32 bytes a pixel of the world's image.
+    pub keep_ground: bool,
 }
 
 impl Default for RendererOptions {
@@ -239,6 +245,7 @@ impl Default for RendererOptions {
             shadows: true,
             glow: true,
             msaa: 4,
+            keep_ground: true,
         }
     }
 }
@@ -415,6 +422,9 @@ pub struct Renderer {
     shadow_globals: wgpu::Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
     terrain_pipeline: wgpu::RenderPipeline,
+    /// Where the GPU can write images from a fragment shader and it is not
+    /// switched off.
+    kept_ground: Option<kept_ground::KeptGround>,
     block_pipeline: wgpu::RenderPipeline,
     terrain_shadow_pipeline: wgpu::RenderPipeline,
     block_shadow_pipeline: wgpu::RenderPipeline,
@@ -426,13 +436,12 @@ pub struct Renderer {
     /// before what moves is drawn over it, and what it was drawn for. Most
     /// of the sun's work is the ground and the rocks, which only need
     /// drawing again when the camera, the sun or the land moves. It is
-    /// kept only once that key holds for two frames running (`still_seen`
-    /// is last frame's): while the camera moves, one pass draws everything
-    /// straight into the shadow map, as without it.
+    /// kept only once that key holds for two frames running (`still`):
+    /// while the camera moves, one pass draws everything straight into the
+    /// shadow map, as without it.
     shadow_still: wgpu::Texture,
     shadow_still_view: wgpu::TextureView,
-    still_drawn: Option<StillKey>,
-    still_seen: Option<StillKey>,
+    still: settle::Settle<StillKey>,
     /// Last frame's chunks the sun saw, and a count of the frames they
     /// differed from the one before.
     sun_chunks_before: ChunkList,
@@ -958,10 +967,10 @@ impl Renderer {
             format: hdr_format,
             samples,
         };
-        let terrain = |color| {
+        let terrain_with = |layout: &wgpu::PipelineLayout, color| {
             make_pipeline(
                 &device,
-                &layout,
+                layout,
                 &shader,
                 "terrain",
                 "vs_terrain",
@@ -973,8 +982,31 @@ impl Renderer {
                 },
             )
         };
+        let terrain = |color| terrain_with(&layout, color);
         let terrain_pipeline = terrain(Target::Color(hdr_target, "fs_terrain"));
         let terrain_shadow_pipeline = terrain(Target::Shadow);
+        let kept_ground = (options.keep_ground
+            && downlevel.contains(wgpu::DownlevelFlags::FRAGMENT_WRITABLE_STORAGE))
+        .then(|| {
+            let layouts = kept_ground::KeptGround::layouts(&device);
+            let with = |second: &wgpu::BindGroupLayout, fs| {
+                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("world and kept ground"),
+                    bind_group_layouts: &[Some(&bind_group_layout), Some(second)],
+                    immediate_size: 0,
+                });
+                terrain_with(&layout, Target::Color(hdr_target, fs))
+            };
+            let keep = with(&layouts.0, "fs_terrain_keep");
+            let kept = with(&layouts.1, "fs_terrain_kept");
+            kept_ground::KeptGround::new(
+                &device,
+                layouts,
+                keep,
+                kept,
+                (config.width, config.height),
+            )
+        });
         let block = |color, entry| {
             make_pipeline(
                 &device,
@@ -1156,6 +1188,7 @@ impl Renderer {
             shadow_globals,
             bind_group_layout,
             terrain_pipeline,
+            kept_ground,
             block_pipeline,
             terrain_shadow_pipeline,
             block_shadow_pipeline,
@@ -1164,8 +1197,7 @@ impl Renderer {
             shadow_texture,
             shadow_still,
             shadow_still_view,
-            still_drawn: None,
-            still_seen: None,
+            still: settle::Settle::default(),
             sun_chunks_before: ChunkList::default(),
             chunk_changes: 0,
             land_changes: 0,
@@ -1361,6 +1393,10 @@ impl Renderer {
         self.static_gpu_bytes
             + self.terrain_gpu_bytes
             + self.world_targets.bytes
+            + self
+                .kept_ground
+                .as_ref()
+                .map_or(0, kept_ground::KeptGround::bytes)
             + self.post_targets.gpu_bytes
             + self.overlay.gpu_bytes
             + self.ui.gpu_bytes
@@ -1471,6 +1507,9 @@ impl Renderer {
             self.adapter_info.transient_saves_memory == Some(true),
         );
         self.post_targets = self.post.targets(&self.device, size.0, size.1);
+        if let Some(k) = &mut self.kept_ground {
+            k.resize(&self.device, size);
+        }
     }
 
     /// The size of the images the 3D world is drawn into.
@@ -1894,6 +1933,10 @@ impl Renderer {
             _ => return,
         }
         terrain.landed = values.is_some();
+        if let Some(k) = &mut self.kept_ground {
+            k.marks
+                .sent(kept_ground::MarkMap::Lands, values, tiles, CHUNK_TILES);
+        }
     }
 
     /// Mark the ground: four bytes per map tile (red, green, blue, alpha),
@@ -1920,6 +1963,10 @@ impl Renderer {
             _ => return,
         }
         terrain.scarred = values.is_some();
+        if let Some(k) = &mut self.kept_ground {
+            k.marks
+                .sent(kept_ground::MarkMap::Scars, values, tiles, CHUNK_TILES);
+        }
     }
 
     /// Raise the rivers' water over its level: one byte per map tile, row
@@ -2254,14 +2301,34 @@ impl Renderer {
             chunks: self.chunk_changes,
             scenery: self.scenery.still_version(),
         };
-        let kept = self.still_drawn == Some(still_key);
-        let settled = self.still_seen == Some(still_key);
-        self.still_seen = Some(still_key);
-        let redraw_still = shadows && !bare && !kept && settled;
-        if redraw_still {
-            self.still_drawn = Some(still_key);
-        }
-        let use_still = kept || redraw_still;
+        let still = self.still.plan(still_key, shadows && !bare);
+        let redraw_still = still == settle::Use::Keep;
+        let use_still = still != settle::Use::None;
+
+        // What the ground at each pixel was worked out from: while it holds,
+        // the ground is stored once and read back after.
+        let drawn_rows = self.drawn_rows();
+        let ground_use = match &mut self.kept_ground {
+            Some(k) => {
+                k.marks
+                    .look(&self.visible_chunks.levels, terrain.chunks_per_side);
+                let key = kept_ground::GroundKey {
+                    view: frame.view_proj.to_cols_array().map(f32::to_bits),
+                    camera: frame.camera_pos.to_array().map(f32::to_bits),
+                    rows: drawn_rows,
+                    land: self.land_changes,
+                    water: terrain.water_level.to_bits(),
+                    weather: [
+                        kept_ground::weather_step(globals.haze[3], 256.0),
+                        kept_ground::weather_step(globals.misc[3], 256.0),
+                        kept_ground::weather_step(globals.light_meta[1], 1024.0),
+                    ],
+                };
+                let drawn = !bare && self.options.draw_terrain && !self.visible_chunks.is_empty();
+                k.plan(key, drawn)
+            }
+            None => settle::Use::None,
+        };
 
         let view = surface_texture
             .texture
@@ -2288,6 +2355,7 @@ impl Renderer {
         };
         // One instanced draw per level of detail that has chunks; each
         // level's chunks sit together in the instance buffer, finest first.
+        // The camera's ground is drawn as `ground_use` says.
         let draw_terrain = |pass: &mut wgpu::RenderPass<'_>, shadow: bool| {
             let (pipeline, chunks, at) = if shadow {
                 (
@@ -2295,6 +2363,11 @@ impl Renderer {
                     &self.sun_chunks,
                     sun_chunks_at,
                 )
+            } else if let Some((pipeline, images)) =
+                self.kept_ground.as_ref().and_then(|k| k.pass(ground_use))
+            {
+                pass.set_bind_group(1, images, &[]);
+                (pipeline, &self.visible_chunks, 0)
             } else {
                 (&self.terrain_pipeline, &self.visible_chunks, 0)
             };
@@ -2375,6 +2448,11 @@ impl Renderer {
             }
             draw_calls += self.soldiers.draw(&mut pass, true).0;
             draw_calls += draw_boxes(&mut pass, &self.block_shadow_pipeline);
+        }
+        if ground_use == settle::Use::Keep
+            && let Some(k) = &self.kept_ground
+        {
+            k.clear(&mut encoder);
         }
         if !bare {
             // Multisampled, then averaged down into the HDR image, which is
