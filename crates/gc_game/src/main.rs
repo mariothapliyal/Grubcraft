@@ -708,13 +708,7 @@ impl Options {
             return Some("--hidden-frames N needs N of 2 or more and --frames greater than N");
         }
         // The showroom is not a match: nothing to fight, host or join.
-        if self.showroom.is_some()
-            && (self.sandbox
-                || self.battle.is_some()
-                || self.conquest.is_some()
-                || self.host
-                || self.join.is_some())
-        {
+        if self.showroom.is_some() && (self.starts_a_match() || self.host || self.join.is_some()) {
             return Some("--showroom starts no match");
         }
         // The viewer is over the menu: it is not a match, or the showroom.
@@ -6154,8 +6148,11 @@ impl Running {
                 } => o.ping(from, tint(player), kind, at, now_ms),
                 gc_net::MatchEvent::Notice(text) => o.note(text),
                 gc_net::MatchEvent::Desync { tick } => {
-                    if o.desync.is_none() {
-                        o.desync = Some(tick);
+                    // A player who rejoined can part again at a later
+                    // turn: that turn gets a report of its own.
+                    o.desync.get_or_insert(tick);
+                    if o.reported_turn != Some(tick) {
+                        o.reported_turn = Some(tick);
                         new_desync = Some(tick);
                     }
                 }
