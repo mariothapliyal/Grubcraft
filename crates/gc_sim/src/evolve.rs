@@ -28,6 +28,7 @@
 
 use crate::conquest::{Conquest, ConquestUnit};
 use crate::regiments::Regiments;
+use crate::reinforce::Refill;
 use crate::structures::Refusal;
 use crate::{PlayerId, RegimentHandle, UnitId, UnitStats, morale};
 
@@ -193,7 +194,7 @@ impl Regiments {
         self.backing[i] = 0;
         self.cocoon_left[i] = ticks;
         self.cocoon_into[i] = into;
-        self.refill[i] = 0;
+        self.refill[i] = Refill::Idle;
     }
 
     /// Regiment `h`'s cocoon: ticks left and the unit type it comes out

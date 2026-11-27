@@ -63,7 +63,9 @@ pub struct Online {
     pub notice: Option<(String, Instant)>,
     /// Set once a state hash disagreed with the host's.
     pub desync: Option<u32>,
-    /// Where the desync report went (or why it couldn't be saved).
+    /// The turn of the latest desync report.
+    pub reported_turn: Option<u32>,
+    /// Where the latest desync report went (or why it couldn't be saved).
     pub report: Option<String>,
     /// Set when the match is over for this machine, with why.
     pub ended: Option<String>,
@@ -89,6 +91,7 @@ impl Online {
             host,
             notice: None,
             desync: None,
+            reported_turn: None,
             report: None,
             ended: None,
             last_turn: Instant::now(),

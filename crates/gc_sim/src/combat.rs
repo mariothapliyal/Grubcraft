@@ -2918,7 +2918,7 @@ impl Combat {
                     / u128::from(CHARGE_TICKS);
             let heart = u128::from(heart_percent(regs.morale_state[i]));
             let mut room = u128::from(attacker.weapon_room_percent(regs.formation[i]));
-            if regs.winded_left[i] > 0 {
+            if regs.stride[i].winded() {
                 room = room * u128::from(crate::regiments::WINDED_BLOW_PERCENT) / 100;
             }
             let mut ground = terrain.melee_percent(regs.position[i], regs.position[j]);

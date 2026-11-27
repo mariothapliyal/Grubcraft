@@ -34,6 +34,7 @@ use gc_fixed::{Fx, FxVec2};
 
 use crate::conquest::{Conquest, ConquestUnit};
 use crate::regiments::Regiments;
+use crate::state::packed_state;
 use crate::structures::{POWERS_FIELD, Role, Structures, nearest_point};
 use crate::veins::within;
 use crate::{PlayerId, UnitStats};
@@ -44,12 +45,56 @@ pub const REINFORCE_SECONDS: u8 = 3;
 pub const TOWN_REINFORCE_SECONDS: u8 = 2;
 /// How far from a reinforcing building's edge its reach goes, in tiles.
 pub const REINFORCE_REACH: i32 = 8;
-/// `Regiments::refill` while its owner can't pay for the next soldier
-/// (otherwise it counts the seconds towards him).
-pub(crate) const REFILL_SHORT: u8 = u8::MAX;
+/// The byte a [`Refill::Short`] is written as: above any count.
+const REFILL_SHORT: u8 = u8::MAX;
 /// How far out from a reinforcement point's edge a regiment sent to
 /// reinforce stands (see [`Conquest::reinforce_spot`]), in tiles.
 const SPOT_OUT: i32 = 3;
+
+/// How a regiment's reinforcing stands (`Regiments::refill`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Refill {
+    /// Not reinforcing.
+    Idle,
+    /// The seconds it has stood quiet in reach since its last new soldier
+    /// (1 up to [`REINFORCE_SECONDS`]; a snapshot may hold more). It is 1
+    /// straight after a new soldier joins, so the screen shows it
+    /// reinforcing throughout.
+    Counting(u8),
+    /// Its time is up but its owner can't pay for the next soldier: it
+    /// tries again every quiet second.
+    Short,
+}
+
+impl Refill {
+    /// A quiet second in reach goes by: how it counts on towards `need`,
+    /// or `None` once it is time to pay for a soldier. Short of pay counts
+    /// as past `need`, so it tries again.
+    fn count(self, need: u8) -> Option<Refill> {
+        let counted = match self {
+            Refill::Idle => 1,
+            Refill::Counting(seconds) => seconds.saturating_add(1),
+            Refill::Short => return None,
+        };
+        (counted <= need).then_some(Refill::Counting(counted))
+    }
+
+    /// The one byte it is hashed and written as: 0 idle, the seconds
+    /// counted, or [`REFILL_SHORT`].
+    fn byte(self) -> u8 {
+        match self {
+            Refill::Idle => 0,
+            Refill::Counting(seconds) => seconds,
+            Refill::Short => REFILL_SHORT,
+        }
+    }
+}
+
+packed_state!(Refill: u8, Refill::byte, |byte| Some(match byte {
+    0 => Refill::Idle,
+    REFILL_SHORT => Refill::Short,
+    seconds => Refill::Counting(seconds),
+}));
 
 /// Which building types reinforce, by building id: main buildings,
 /// outposts, and every building that trains a unit (or is a tier upgrade
@@ -161,7 +206,7 @@ impl Conquest {
                 regs.still(i) && regs.engaged[i].is_none() && !regs.morale_state[i].broken();
             let pay = self.refills_by(regs, units, i).filter(|_| quiet);
             let Some(pay) = pay else {
-                regs.refill[i] = 0;
+                regs.refill[i] = Refill::Idle;
                 continue;
             };
             let owner = regs.owner[i];
@@ -176,7 +221,7 @@ impl Conquest {
                 Pay::Tithe => self.tithes_at(owner, regs.position[i]),
             };
             if !reached {
-                regs.refill[i] = 0;
+                regs.refill[i] = Refill::Idle;
                 continue;
             }
             let need = if regs.in_town[i] {
@@ -184,9 +229,7 @@ impl Conquest {
             } else {
                 REINFORCE_SECONDS
             };
-            // Short of pay already counts past `need`, so it tries again.
-            let counted = regs.refill[i].saturating_add(1);
-            if counted <= need {
+            if let Some(counted) = regs.refill[i].count(need) {
                 regs.refill[i] = counted;
                 continue;
             }
@@ -202,13 +245,17 @@ impl Conquest {
                 Pay::Tithe => (self.tithe).try_spend(owner, crate::tithe::tithe_per_soldier(stats)),
             };
             if !paid {
-                regs.refill[i] = REFILL_SHORT;
+                regs.refill[i] = Refill::Short;
                 continue;
             }
             regs.add_soldier(i, stats.hp_per_model);
             // Still counting for the next one, so the screen shows it
             // reinforcing throughout.
-            regs.refill[i] = u8::from(models + 1 < full);
+            regs.refill[i] = if models + 1 < full {
+                Refill::Counting(1)
+            } else {
+                Refill::Idle
+            };
         }
         self.points = points;
     }
@@ -295,11 +342,40 @@ mod tests {
     use super::*;
     use crate::nav::CELLS_PER_TILE;
     use crate::scenario::{DRILL_UNITS, NORTH};
+    use crate::state::{State, written};
     use crate::structures::{Armour, Trap, WallTwist};
     use crate::{
         BuildingStats, Capacities, Command, ConquestSetup, MAX_PARTIES, MatchSetup, PlayerCommand,
         RegimentHandle, TICKS_PER_SECOND, Waiting, World,
     };
+
+    #[test]
+    fn refill_is_written_as_its_old_byte() {
+        let reachable = [(Refill::Idle, 0), (Refill::Short, u8::MAX)]
+            .into_iter()
+            .chain((1..=REINFORCE_SECONDS).map(|n| (Refill::Counting(n), n)));
+        for (refill, old) in reachable {
+            assert_eq!(written(refill), [old], "{refill:?}");
+        }
+        // And every byte reads back as itself.
+        for b in 0..=u8::MAX {
+            assert_eq!(Refill::read(&mut &[b][..]).map(written), Some(vec![b]));
+        }
+    }
+
+    /// A check that [`Refill`] counts as the old field did.
+    #[test]
+    fn refill_counts_as_the_old_byte_did() {
+        for b in 0..=u8::MAX {
+            let refill = Refill::read(&mut &[b][..]).unwrap();
+            for need in [TOWN_REINFORCE_SECONDS, REINFORCE_SECONDS] {
+                // The old count: short of pay (255) stays past `need`.
+                let counted = b.saturating_add(1);
+                let old = (counted <= need).then_some(vec![counted]);
+                assert_eq!(refill.count(need).map(written), old, "{b} {need}");
+            }
+        }
+    }
 
     const MAP: u32 = 96;
     const HALL: u16 = 0;

@@ -116,6 +116,28 @@ const CLEAR_RUN: usize = 6;
 /// A straight line of tiles, from one tile to another.
 type Line = ((i32, i32), (i32, i32));
 
+/// Where it stands with its bridge (see [`Steward::bridge`]).
+#[derive(Clone, Copy, Debug, Default)]
+enum Bridge {
+    /// It hasn't looked for a crossing yet.
+    #[default]
+    Unlooked,
+    /// The crossing it means to draw, and its tiles, not yet ordered.
+    Planned { line: Line, tiles: u32 },
+    /// Ordered last at `sent`, `tries` times in all: an order the sim
+    /// turned down (the Grub spent meanwhile, its worker taken) is sent
+    /// again, [`BRIDGE_TRIES`] times at most.
+    Ordered {
+        line: Line,
+        tiles: u32,
+        sent: u32,
+        tries: u8,
+    },
+    /// No bridge: it needs or can draw none, or has drawn it, or has run
+    /// out of tries. It looks no more.
+    Done,
+}
+
 /// The walls it has laid out round home (see [`ringwork`]).
 #[derive(Clone, Debug)]
 struct Works {
@@ -178,15 +200,8 @@ pub(super) struct Engineer {
     /// Regiments sent to plant stakes.
     staked: Vec<RegimentHandle>,
     traps: u8,
-    /// The bridge it means to draw: `None` until it has looked, then the
-    /// crossing and its tiles, or none where it needs or can draw none (or
-    /// has drawn it).
-    bridge: Option<Option<(Line, u32)>>,
-    /// When it last ordered that bridge, and how often: an order the sim
-    /// turned down (the Grub spent meanwhile, its worker taken) is sent
-    /// again, [`BRIDGE_TRIES`] times at most.
-    bridge_sent: Option<u32>,
-    bridge_tries: u8,
+    /// The bridge it means to draw, and how far it has got with it.
+    bridge: Bridge,
     /// When it next looks for thicket in the way, and the worker it last
     /// sent to clear some (no other is sent while that one is at it).
     next_clear: u32,
@@ -670,34 +685,58 @@ impl Steward {
     /// crossing near the straight way to the nearest. It looks once.
     fn bridge(&mut self, s: &Sense, look: &Look, home: Vec2, spare: u32) -> Option<Order> {
         let b = s.kit.works(Role::Bridge)?;
-        let line = (*self.engineer.bridge.get_or_insert_with(|| {
-            let target = super::super::nearest_other_start(s, home)?;
-            if !s.terrain.cut_off(home, super::super::other_starts(s, home)) {
-                return None;
+        let (line, tiles, tries) = match self.engineer.bridge {
+            Bridge::Done => return None,
+            // Its one look: the crossing it finds is planned, and ordered
+            // below if it can be now.
+            Bridge::Unlooked => {
+                let crossing = || {
+                    let target = super::super::nearest_other_start(s, home)?;
+                    if !s.terrain.cut_off(home, super::super::other_starts(s, home)) {
+                        return None;
+                    }
+                    narrowest_crossing(s, b.id, home, target)
+                };
+                let Some((line, tiles)) = crossing() else {
+                    self.engineer.bridge = Bridge::Done;
+                    return None;
+                };
+                self.engineer.bridge = Bridge::Planned { line, tiles };
+                (line, tiles, 0)
             }
-            narrowest_crossing(s, b.id, home, target)
-        }))?;
-        let ((from, to), tiles) = line;
-        // Ordered: drawn once a deck of its own lies there, else the order
-        // is sent again after a while.
-        if let Some(sent) = self.engineer.bridge_sent {
-            let drawn = look.mine.iter().any(|m| m.stats.role == Role::Bridge);
-            if drawn || self.engineer.bridge_tries >= BRIDGE_TRIES {
-                self.engineer.bridge = Some(None);
-                return None;
+            Bridge::Planned { line, tiles } => (line, tiles, 0),
+            // Ordered: drawn once a deck of its own lies there, else the
+            // order is sent again after a while.
+            Bridge::Ordered {
+                line,
+                tiles,
+                sent,
+                tries,
+            } => {
+                let drawn = look.mine.iter().any(|m| m.stats.role == Role::Bridge);
+                if drawn || tries >= BRIDGE_TRIES {
+                    self.engineer.bridge = Bridge::Done;
+                    return None;
+                }
+                if s.now < sent + BRIDGE_RETRY {
+                    return None;
+                }
+                (line, tiles, tries)
             }
-            if s.now < sent + BRIDGE_RETRY {
-                return None;
-            }
-        }
+        };
+        let (from, to) = line;
         if spare < u32::from(b.stats.cost_grub) * tiles {
             return None;
         }
         // Standard width, so its army crosses a few files abreast.
         let deck = bridge_line(from, to);
         let w = self.builder_at(s, look, from)?;
-        self.engineer.bridge_sent = Some(s.now);
-        self.engineer.bridge_tries += 1;
+        self.engineer.bridge = Bridge::Ordered {
+            line,
+            tiles,
+            sent: s.now,
+            tries: tries + 1,
+        };
         let order = Command::DrawLine {
             regiment: Some(w),
             building: b.id,
