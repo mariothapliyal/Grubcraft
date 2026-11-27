@@ -1679,11 +1679,16 @@ impl Combat {
             if engaged != previous {
                 // A new fight, or none: who is winning starts afresh, and
                 // so do its crowded turns (they count in a row, in one
-                // fight; see `crowded_out`).
+                // fight; see `crowded_out`). On the way round the count is
+                // its ticks going round instead, and leaving the fight is
+                // part of going round: that count runs on, or the round
+                // would never time out.
                 regs.pressing[i] = 0;
                 regs.pressed[i] = 0;
                 regs.giving[i] = 0;
-                regs.crowded[i] = 0;
+                if regs.round[i].is_none() {
+                    regs.crowded[i] = 0;
+                }
             }
             regs.engaged[i] = engaged;
             if let Some(j) = best {

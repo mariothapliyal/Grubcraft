@@ -596,7 +596,7 @@ regiment_fields! {
     /// (no room on the foe's side, or only a corner touching) and free to
     /// go round (see `combat::crowded_out`); while going round, ticks spent
     /// on the way. Back to 0 whenever its foe changes in `Combat::before_move`
-    /// (a new fight, or none) and whenever its going round ends (see
+    /// (a new fight, or none) while it is not going round, and whenever its going round ends (see
     /// [`Regiments::end_round`]), so no fight inherits the turns of
     /// another. A fight left elsewhere (falling back, swept off, onto a
     /// wall) keeps the count until the next fight starts, which then resets
