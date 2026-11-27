@@ -926,13 +926,15 @@ struct Land {
     tilt: vec2<f32>,
     glow: vec3<f32>,
     rough: f32,
+    // Its look changes with the time (pulses, glints, rings).
+    moves: bool,
 };
 
 // A function, not a `const`: Metal cannot hold a struct with a vec3 as a
 // program-wide constant (it would need a global constructor), and the
 // terrain pipeline failed to build on every Mac.
 fn no_land() -> Land {
-    return Land(vec3<f32>(0.0), 0.0, vec2<f32>(0.0), vec3<f32>(0.0), 1.0);
+    return Land(vec3<f32>(0.0), 0.0, vec2<f32>(0.0), vec3<f32>(0.0), 1.0, false);
 }
 
 // 1 along a crease of the noise `nz` at `p`, 0 off it, `width` wide.
@@ -981,6 +983,7 @@ fn brood_land(xz: vec2<f32>, dist: f32) -> Land {
     // the others' time by place.
     let pulse = 0.5 + 0.5 * sin(dist * 0.7 + g.misc.y * 2.2 + vnoise(xz * 0.35) * 5.0);
     l.glow = vec3<f32>(1.0, 0.16, 0.26) * vein * (0.2 + 0.8 * pulse * pulse) * 1.1;
+    l.moves = true;
     // Wet.
     l.rough = 0.45;
     return l;
@@ -1032,6 +1035,7 @@ fn choir_land(xz: vec2<f32>, dist: f32, px: f32) -> Land {
     let glint = speck(grain, 0.1, 0.3) * (1.0 - smoothstep(0.1, 0.25, px)) * (0.5 + 0.5 * sin(g.misc.y * 3.0 + hash2(floor(grain)) * 60.0));
     // Rings spread outwards from the source and die away.
     let ring = smoothstep(0.88, 1.0, sin(dist * 1.1 - g.misc.y * 1.6)) * (1.0 - smoothstep(0.0, 10.0, dist));
+    l.moves = true;
     l.glow = vec3<f32>(0.55, 0.75, 1.0) * glint * 1.6 + vec3<f32>(0.3, 0.5, 1.0) * crack * 0.15 + vec3<f32>(0.3, 0.5, 1.0) * ring * 0.2;
     return l;
 }
@@ -1086,12 +1090,126 @@ fn faction_land(xz: vec2<f32>, spread: f32, dist: f32, px: f32) -> Land {
     return l;
 }
 
+// The ground at a pixel, ready to be lit: what `ground_material` works out
+// and `light_ground` lights.
+struct GroundMat {
+    albedo: vec3<f32>,
+    n: vec3<f32>,
+    // PLAIN_GROUND for bare, dry ground, lit by `shade`.
+    rough: f32,
+    ao: f32,
+    glow: vec3<f32>,
+    // The drawn height, relief and all: the water's depth is measured from it.
+    ground: f32,
+    // It changes from frame to frame even while nothing else does.
+    moves: bool,
+};
+
+const PLAIN_GROUND: f32 = 2.0;
+
 @fragment
 fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     // Derivatives first, while control flow is uniform.
     let dpx = dpdx(in.world);
     let dpy = dpdy(in.world);
-    let xz = in.world.xz;
+    return light_ground(in.world, ground_material(in.world, dpx, dpy));
+}
+
+// ------------------------------------------------------- the kept ground
+//
+// While the camera, the ground and the weather hold still, what the ground
+// is at each pixel does too, and it is most of the ground's cost: the frame
+// after they settle stores it (`fs_terrain_keep`) and the frames after that
+// read it back (`fs_terrain_kept`), lighting it afresh, so shadows, lights
+// and water still move. Each pixel keeps the distance of the ground it
+// stored, and a pixel whose ground is at another distance (one a soldier
+// stood in front of, say, or a hill behind a hill) works it out as before.
+// Ground that changes by itself (a faction's living land, puddles) is never
+// stored. See docs/10-architecture.md ("the kept ground").
+
+// Two images, each with the distance of the ground it holds: a pixel's
+// fragments (a near slope and the far one behind it) write in no set order,
+// so a pixel is read back only where both hold the same ground. A texel is
+// written whole. `a` holds the colour as it is, `b` the normal (octahedral,
+// 16 bits a component), the roughness and the occlusion (16 bits each) and
+// the drawn height.
+@group(1) @binding(0) var keep_a: texture_storage_2d<rgba32uint, write>;
+@group(1) @binding(1) var keep_b: texture_storage_2d<rgba32uint, write>;
+@group(1) @binding(2) var kept_a: texture_2d<u32>;
+@group(1) @binding(3) var kept_b: texture_2d<u32>;
+
+// A unit vector folded onto a square (-1 to 1 each way): Cigolle et al.,
+// "A Survey of Efficient Representations for Independent Unit Vectors"
+// (JCGT, 2014), with y up.
+fn oct_fold(n: vec3<f32>) -> vec2<f32> {
+    let p = n.xz / (abs(n.x) + abs(n.y) + abs(n.z));
+    return select(oct_wrap(p), p, n.y >= 0.0);
+}
+
+fn oct_unfold(e: vec2<f32>) -> vec3<f32> {
+    let y = 1.0 - abs(e.x) - abs(e.y);
+    let xz = select(e, oct_wrap(e), y < 0.0);
+    return normalize(vec3<f32>(xz.x, y, xz.y));
+}
+
+// The lower half of the sphere folded over the upper's square.
+fn oct_wrap(v: vec2<f32>) -> vec2<f32> {
+    return (1.0 - abs(v.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), v >= vec2<f32>(0.0));
+}
+
+@fragment
+fn fs_terrain_keep(in: TerrainOut) -> @location(0) vec4<f32> {
+    let dpx = dpdx(in.world);
+    let dpy = dpdy(in.world);
+    let m = ground_material(in.world, dpx, dpy);
+    if !m.moves {
+        let at = vec2<i32>(in.clip.xy);
+        let tag = bitcast<u32>(distance(in.world, g.camera_pos.xyz));
+        textureStore(keep_a, at, vec4<u32>(tag, bitcast<vec3<u32>>(m.albedo)));
+        textureStore(keep_b, at, vec4<u32>(
+            tag,
+            pack2x16snorm(oct_fold(m.n)),
+            pack2x16unorm(vec2<f32>(m.rough / PLAIN_GROUND, m.ao)),
+            bitcast<u32>(m.ground),
+        ));
+    }
+    return light_ground(in.world, m);
+}
+
+@fragment
+fn fs_terrain_kept(in: TerrainOut) -> @location(0) vec4<f32> {
+    let dpx = dpdx(in.world);
+    let dpy = dpdy(in.world);
+    let at = vec2<i32>(in.clip.xy);
+    let a = textureLoad(kept_a, at, 0);
+    let b = textureLoad(kept_b, at, 0);
+    let dist = distance(in.world, g.camera_pos.xyz);
+    var m: GroundMat;
+    if a.x == b.x && abs(bitcast<f32>(a.x) - dist) <= dist * KEPT_MATCH {
+        let rough_ao = unpack2x16unorm(b.z);
+        m = GroundMat(
+            bitcast<vec3<f32>>(a.yzw),
+            oct_unfold(unpack2x16snorm(b.y)),
+            rough_ao.x * PLAIN_GROUND,
+            rough_ao.y,
+            vec3<f32>(0.0),
+            bitcast<f32>(b.w),
+            false,
+        );
+    } else {
+        m = ground_material(in.world, dpx, dpy);
+    }
+    return light_ground(in.world, m);
+}
+
+// How near, as a share of the distance, a pixel's ground must be to the
+// kept ground's to be the same: a few times a float's precision.
+const KEPT_MATCH: f32 = 4e-6;
+
+// What the ground is at `world`, before it is lit. `dpx` and `dpy` are the
+// position's screen derivatives, taken by the caller in uniform control flow.
+fn ground_material(world: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>) -> GroundMat {
+    let xz = world.xz;
     // The ground's true height, not the mesh's: a coarse chunk's triangles sit
     // a little off it, and colour, lighting and shoreline must not change when
     // a chunk changes level, so all of it is worked out here, per pixel.
@@ -1269,6 +1387,8 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     var land_rough = 1.0;
     var landed = false;
     var land_k = 0.0;
+    var land_moves = false;
+    var puddled = false;
     let land = textureSampleLevel(land_map, soft_sampler, xz / f32(textureDimensions(land_map).x), 0.0);
     // The noise moves the edge by at most a quarter, so under 0.05 of cover
     // is bare for certain.
@@ -1283,6 +1403,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         land_glow = l.glow * keep;
         land_rough = mix(1.0, l.rough, k);
         landed = k > 0.0;
+        land_moves = l.moves && k > 0.0;
     }
     // Rain that has fallen: the earth darkens and shines, and puddles
     // collect in the hollows of flat ground, mirroring the sky. Rock sheds it.
@@ -1296,11 +1417,12 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         if pool > 0.0 {
             nd = normalize(mix(nd, vec3<f32>(0.0, 1.0, 0.0), pool));
             wet = max(wet, pool);
-            let to_eye = normalize(g.camera_pos.xyz - in.world);
+            let to_eye = normalize(g.camera_pos.xyz - world);
             let r = reflect(-to_eye, nd);
             let mirror = 0.06 + 0.5 * pow(1.0 - max(dot(to_eye, nd), 0.0), 4.0);
             land_glow = land_glow + sky_color(vec3<f32>(r.x, abs(r.y), r.z), false) * mirror * pool;
             landed = true;
+            puddled = true;
         }
     }
     // Snow that has settled: patches that grow into a blanket as more lies,
@@ -1324,12 +1446,18 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         landed = true;
     }
 
-    var c: vec3<f32>;
+    var m: GroundMat;
+    m.ground = ground;
+    m.ao = 1.0;
+    m.glow = land_glow;
+    // A faction's land that pulses or glints, and puddles mirroring the
+    // sky, change from frame to frame: they are never kept.
+    m.moves = land_moves || puddled;
     if rock > 0.0 {
-        let r = rock_surface(in.world, n, dpx, dpy);
+        let r = rock_surface(world, n, dpx, dpy);
         // Strata: bands of colour by height, wobbled sideways.
-        let band = vnoise(vec2<f32>(in.world.y * 1.5 + vnoise(xz * 0.25) * 3.0, 3.0));
-        let warm = vnoise(vec2<f32>(in.world.y * 0.4, 9.0));
+        let band = vnoise(vec2<f32>(world.y * 1.5 + vnoise(xz * 0.25) * 3.0, 3.0));
+        let warm = vnoise(vec2<f32>(world.y * 0.4, 9.0));
         // Rock035's own colour is near black (mean 0.01 linear), so it gives the
         // pattern only: its brightness, relative to its mean, scales a stone
         // colour from the game's palette.
@@ -1348,20 +1476,33 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         rc = mix(rc, soil * 0.9, smoothstep(0.82, 0.95, n.y) * 0.3);
         // Snow lies on the ledges and crests.
         rc = mix(rc, SNOW_ALBEDO, lying * smoothstep(0.8, 0.95, n.y) * 0.6);
-        let ns = normalize(mix(nd, r.n, rock));
-        let rough = mix(1.0, max(r.rough, 0.75), rock);
-        let ao = mix(1.0, cavity * tall, rock);
-        c = shade_material(mix(albedo, rc, rock), ns, in.world, rough, 0.0, ao, land_glow);
-    } else if landed {
-        c = shade_material(albedo, nd, in.world, land_rough, 0.0, 1.0, land_glow);
+        m.albedo = mix(albedo, rc, rock);
+        m.n = normalize(mix(nd, r.n, rock));
+        m.rough = mix(1.0, max(r.rough, 0.75), rock);
+        m.ao = mix(1.0, cavity * tall, rock);
     } else {
-        c = shade(albedo, nd, in.world);
+        m.albedo = albedo;
+        m.n = nd;
+        m.rough = select(PLAIN_GROUND, land_rough, landed);
+    }
+    return m;
+}
+
+// The ground's pixel lit, under its water, through the fog of war.
+fn light_ground(world: vec3<f32>, m: GroundMat) -> vec4<f32> {
+    let xz = world.xz;
+    let ground = m.ground;
+    var c: vec3<f32>;
+    if m.rough > 1.5 {
+        c = shade(m.albedo, m.n, world);
+    } else {
+        c = shade_material(m.albedo, m.n, world, m.rough, 0.0, m.ao, m.glow);
     }
 
     // Valleys and the feet of slopes get less light.
     let skyward = textureSampleLevel(ground_occlusion, soft_sampler, xz / f32(textureDimensions(ground_occlusion).x), 0.0).r;
     // (Fogged ground is the air's colour, not lit ground: it keeps less of this.)
-    let unfogged = 1.0 - air_amount(in.world, distance(in.world, g.camera_pos.xyz));
+    let unfogged = 1.0 - air_amount(world, distance(world, g.camera_pos.xyz));
     c = c * mix(1.0, skyward, g.air.y * unfogged);
 
     // Water below the water level: deep teal with a soft shoreline, a
@@ -1371,7 +1512,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     let depth = surface - ground;
     if depth > 0.0 {
         let water = srgb_to_linear(vec3<f32>(0.16, 0.36, 0.4));
-        let wp = vec3<f32>(in.world.x, surface, in.world.z);
+        let wp = vec3<f32>(world.x, surface, world.z);
         let dist = distance(wp, g.camera_pos.xyz);
         let wn = water_normal(wp.xz, g.misc.y, 1.0 / (1.0 + dist * 0.04));
         let v = (g.camera_pos.xyz - wp) / max(dist, 1e-4);
