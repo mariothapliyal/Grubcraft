@@ -595,8 +595,8 @@ regiment_fields! {
     /// Turns in a row it was locked in one fight with nobody able to strike
     /// (no room on the foe's side, or only a corner touching) and free to
     /// go round (see `combat::crowded_out`); while going round, ticks spent
-    /// on the way. Back to 0 when it has no foe left in `Combat::before_move`
-    /// (not going round) and whenever its going round ends (see
+    /// on the way. Back to 0 in `Combat::before_move` when its fight is
+    /// over or one begins after none, and whenever its going round ends (see
     /// [`Regiments::end_round`]), so no fight inherits the turns of
     /// another; turning from one foe to the next in the same press keeps
     /// them.
@@ -1531,7 +1531,7 @@ impl Regiments {
             // `combat::Round`): an order repeated keeps it on its way. Not
             // going round, its crowded turns are those of the fight it is
             // locked in, whatever it is ordered onto (`Combat::before_move`
-            // resets them when its foe changes).
+            // resets them when that fight is over).
             self.end_round(i);
         }
         self.take_on(i, target);

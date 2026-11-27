@@ -1681,12 +1681,14 @@ impl Combat {
                 regs.pressing[i] = 0;
                 regs.pressed[i] = 0;
                 regs.giving[i] = 0;
-                // A fight over leaves no crowded turns for the next one
-                // (`crowded_out`). Turning from one foe to the next in the
-                // same press keeps them: in a crush the nearest foe changes
-                // often, and a block behind would never go round. On the way
-                // round the count is its ticks going round, which run on.
-                if engaged.is_none() && regs.round[i].is_none() {
+                // A fight over, or one begun after none (however the last
+                // one ended: falling back, swept off, its foe vanished),
+                // leaves no crowded turns from before (`crowded_out`).
+                // Turning straight from one foe to the next in the same
+                // press keeps them: in a crush the nearest foe changes
+                // often, and a block behind would never go round. (Going
+                // round, it never comes here: see above.)
+                if engaged.is_none() || previous.is_none() {
                     regs.crowded[i] = 0;
                 }
             }
@@ -4042,6 +4044,38 @@ mod tests {
         assert!(w.regiments.despawn(b));
         w.tick(&[]);
         assert_eq!(w.regiments.engaged[i], None);
+        assert_eq!(w.regiments.crowded[i], 0);
+    }
+
+    /// A fight left outside the combat step (here by `leave_fight`, as a
+    /// fall back, a river or a vanishing foe leave it) keeps no crowded
+    /// turns either: the next fight starts its count afresh.
+    #[test]
+    fn a_fight_left_elsewhere_leaves_no_crowded_turns() {
+        let mut w = world();
+        let a = spawn(&mut w, 0, FOOT, 60, 60);
+        let b = spawn(&mut w, 1, FOOT, 60, 40);
+        let i = w.regiments.resolve(a).unwrap();
+        assert!(order(
+            &mut w,
+            0,
+            Command::Attack {
+                regiment: a,
+                target: b,
+            }
+        ));
+        for _ in 0..400 {
+            if w.regiments.engaged[i].is_some() {
+                break;
+            }
+            w.tick(&[]);
+        }
+        assert_eq!(w.regiments.engaged[i], Some(b), "never came to blows");
+        w.regiments.crowded[i] = CROWDED_TURNS - 1;
+        w.regiments.round[i] = None;
+        w.regiments.leave_fight(i);
+        w.tick(&[]);
+        assert_eq!(w.regiments.engaged[i], Some(b), "took the fight up again");
         assert_eq!(w.regiments.crowded[i], 0);
     }
 
