@@ -23,8 +23,8 @@ const GOLDEN: [(u32, u64); 4] = [
 const GOLDEN_RIBS: [(u32, u64); 4] = [
     (600, 0x73ceae04948e2db8),
     (1200, 0xaa66f1bce3198a78),
-    (1800, 0x42b6a24e3cf3585f),
-    (2400, 0x55e44f37f61cb880),
+    (1800, 0xcbcb574f1242bb4d),
+    (2400, 0xc9f99c00dd612853),
 ];
 
 /// The same drill on terraced, river-cut ground, where high ground and
