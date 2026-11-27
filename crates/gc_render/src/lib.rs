@@ -75,6 +75,7 @@ pub use post::Cinema;
 pub use timing::GpuTimes;
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
+use scenery::Part;
 pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
 pub use soldiers::{
     FEET_AS_POSED, GHOST_HIGHLIGHT, LAYER_ADDITIVE, MAX_SOLDIER_INSTANCES, POSE_LAYERS, PoseLayer,
@@ -419,6 +420,26 @@ pub struct Renderer {
     block_shadow_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     shadow_map: wgpu::TextureView,
+    shadow_texture: wgpu::Texture,
+    /// The sun's view of what holds still (the ground, and scenery that
+    /// does not sway), kept between frames and copied into the shadow map
+    /// before what moves is drawn over it, and what it was drawn for. Most
+    /// of the sun's work is the ground and the rocks, which only need
+    /// drawing again when the camera, the sun or the land moves. It is
+    /// kept only once that key holds for two frames running (`still_seen`
+    /// is last frame's): while the camera moves, one pass draws everything
+    /// straight into the shadow map, as without it.
+    shadow_still: wgpu::Texture,
+    shadow_still_view: wgpu::TextureView,
+    still_drawn: Option<StillKey>,
+    still_seen: Option<StillKey>,
+    /// Last frame's chunks the sun saw, and a count of the frames they
+    /// differed from the one before.
+    sun_chunks_before: ChunkList,
+    chunk_changes: u64,
+    /// Counts the ground's reshapings (`set_terrain`, `set_river_water`),
+    /// which the kept shadow map is drawn again after.
+    land_changes: u64,
     shadow_sampler: wgpu::Sampler,
     /// Soft edges for the fog map, and the ground tint blended between
     /// its texels.
@@ -674,7 +695,14 @@ impl Renderer {
             // Frames in flight. Each one can hold a full-window drawable
             // (about 15 MB at Retina resolution).
             desired_maximum_frame_latency: options.frame_latency,
-            alpha_mode: caps.alpha_modes[0],
+            // Opaque where offered: the system may then show the frames
+            // without blending them over the desktop (on a Mac, straight to
+            // the display in fullscreen).
+            alpha_mode: if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
+                wgpu::CompositeAlphaMode::Opaque
+            } else {
+                caps.alpha_modes[0]
+            },
             view_formats: vec![],
             ..surface.get_default_config(&adapter, width, height).unwrap()
         };
@@ -1003,28 +1031,37 @@ impl Renderer {
         let soldiers = soldiers::make(&device, &bind_group_layout, &layout, &shader, hdr_target);
         let scenery = scenery::make(&device, &layout, hdr_target);
         let particles = particles::make(&device, &queue, &bind_group_layout, hdr_target);
-        let shadow_texture = |label, side| {
-            device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width: side,
-                        height: side,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: SHADOW_FORMAT,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                })
-                .create_view(&Default::default())
+        let depth_map = |label, side, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: side,
+                    height: side,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: SHADOW_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | usage,
+                view_formats: &[],
+            })
         };
         let shadow_side = if options.shadows { SHADOW_SIZE } else { 1 };
-        let shadow_map = shadow_texture("sun shadow map", shadow_side);
-        let no_shadow_map = shadow_texture("no shadow map", 1);
+        let shadow_texture = depth_map(
+            "sun shadow map",
+            shadow_side,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        let shadow_map = shadow_texture.create_view(&Default::default());
+        let shadow_still = depth_map(
+            "sun shadow of what holds still",
+            shadow_side,
+            wgpu::TextureUsages::COPY_SRC,
+        );
+        let shadow_still_view = shadow_still.create_view(&Default::default());
+        let no_shadow_map = depth_map("no shadow map", 1, wgpu::TextureUsages::TEXTURE_BINDING)
+            .create_view(&Default::default());
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("sun shadow"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -1096,7 +1133,7 @@ impl Renderer {
             + ground.bytes
             + scenery_detail.bytes
             + 2 * size_of::<Globals>() as u64
-            + u64::from(shadow_side)
+            + 2 * u64::from(shadow_side)
                 * u64::from(shadow_side)
                 * u64::from(SHADOW_FORMAT.block_copy_size(None).unwrap_or(4))
             + chunk_indices.size()
@@ -1124,6 +1161,14 @@ impl Renderer {
             block_shadow_pipeline,
             sky_pipeline,
             shadow_map,
+            shadow_texture,
+            shadow_still,
+            shadow_still_view,
+            still_drawn: None,
+            still_seen: None,
+            sun_chunks_before: ChunkList::default(),
+            chunk_changes: 0,
+            land_changes: 0,
             shadow_sampler,
             soft_sampler,
             rock,
@@ -1493,6 +1538,7 @@ impl Renderer {
             },
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.land_changes += 1;
         // The ground's slope at each height sample, for its normal (see
         // `ground_slopes`).
         let slope_map = self.tile_map("ground slope", wgpu::TextureFormat::Rg16Float, t.size);
@@ -1896,6 +1942,8 @@ impl Renderer {
         };
         Self::write_tile_map(&self.queue, &terrain.river_map, tiles, 4, &texels);
         terrain.rivered = values.is_some();
+        // Scenery in a river stands on its water.
+        self.land_changes += 1;
     }
 
     /// A frame left undrawn still hands the GPU the uploads queued since the
@@ -2193,6 +2241,28 @@ impl Renderer {
             }
         }
 
+        // What the kept shadow map would hold: the sun's square, the ground
+        // under it, the chunks it is drawn with and the still scenery on it.
+        if self.sun_chunks != self.sun_chunks_before {
+            self.chunk_changes += 1;
+            self.sun_chunks_before.clone_from(&self.sun_chunks);
+        }
+        let still_key = StillKey {
+            sun: sun_view_proj.to_cols_array().map(f32::to_bits),
+            land: self.land_changes,
+            water: terrain.water_level.to_bits(),
+            chunks: self.chunk_changes,
+            scenery: self.scenery.still_version(),
+        };
+        let kept = self.still_drawn == Some(still_key);
+        let settled = self.still_seen == Some(still_key);
+        self.still_seen = Some(still_key);
+        let redraw_still = shadows && !bare && !kept && settled;
+        if redraw_still {
+            self.still_drawn = Some(still_key);
+        }
+        let use_still = kept || redraw_still;
+
         let view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -2251,26 +2321,57 @@ impl Renderer {
             self.soldiers
                 .skin(&mut encoder, &terrain.bind_group, timer.as_mut());
         }
-        if shadows && !bare {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("sun shadow"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_map,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: timer.as_mut().and_then(|t| t.render_pass("shadow")),
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+        if shadows && !bare && !use_still {
+            let mut pass = depth_pass(
+                &mut encoder,
+                "sun shadow",
+                &self.shadow_map,
+                wgpu::LoadOp::Clear(1.0),
+                timer.as_mut().and_then(|t| t.render_pass("shadow")),
+            );
             pass.set_bind_group(0, &terrain.shadow_bind_group, &[]);
             draw_calls += draw_terrain(&mut pass, true);
             if self.options.draw_blocks {
-                draw_calls += self.scenery.draw(&mut pass, true).0;
+                draw_calls += self.scenery.draw(&mut pass, Part::Shadow).0;
+            }
+            draw_calls += self.soldiers.draw(&mut pass, true).0;
+            draw_calls += draw_boxes(&mut pass, &self.block_shadow_pipeline);
+        }
+        if shadows && !bare && use_still {
+            // What holds still, when it has changed; then a copy of it with
+            // what moves drawn over. Depth keeps the nearest caster whatever
+            // the order, so the map is the one a single pass draws.
+            if redraw_still {
+                let mut pass = depth_pass(
+                    &mut encoder,
+                    "sun shadow of what holds still",
+                    &self.shadow_still_view,
+                    wgpu::LoadOp::Clear(1.0),
+                    timer.as_mut().and_then(|t| t.render_pass("shadow still")),
+                );
+                pass.set_bind_group(0, &terrain.shadow_bind_group, &[]);
+                draw_calls += draw_terrain(&mut pass, true);
+                if self.options.draw_blocks {
+                    draw_calls += self.scenery.draw(&mut pass, Part::StillShadow).0;
+                }
+            }
+            // (Untimed: a copy is no pass. 8 MB, a fraction of a
+            // millisecond on a real GPU.)
+            encoder.copy_texture_to_texture(
+                self.shadow_still.as_image_copy(),
+                self.shadow_texture.as_image_copy(),
+                self.shadow_texture.size(),
+            );
+            let mut pass = depth_pass(
+                &mut encoder,
+                "sun shadow",
+                &self.shadow_map,
+                wgpu::LoadOp::Load,
+                timer.as_mut().and_then(|t| t.render_pass("shadow")),
+            );
+            pass.set_bind_group(0, &terrain.shadow_bind_group, &[]);
+            if self.options.draw_blocks {
+                draw_calls += self.scenery.draw(&mut pass, Part::MovingShadow).0;
             }
             draw_calls += self.soldiers.draw(&mut pass, true).0;
             draw_calls += draw_boxes(&mut pass, &self.block_shadow_pipeline);
@@ -2328,7 +2429,7 @@ impl Renderer {
             // then fail the depth test before they are shaded. (Apple's
             // GPUs sort this out themselves; others do not.)
             let (calls, scenery_instances, scenery_tris) = if self.options.draw_blocks {
-                self.scenery.draw(&mut pass, false)
+                self.scenery.draw(&mut pass, Part::World)
             } else {
                 (0, 0, 0)
             };
@@ -2888,9 +2989,52 @@ fn chunk_instance(levels: &[u8], chunks_per_side: u32, chunk: [u32; 2]) -> [u32;
     [x, z, own | west << 2 | east << 4 | north << 6 | south << 8]
 }
 
+/// What the kept shadow map of what holds still was drawn for
+/// (`Renderer::shadow_still`): everything the terrain and still scenery
+/// shadow shaders read that can change. A new input to them goes here too.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct StillKey {
+    /// The sun's view and projection, bit for bit.
+    sun: [u32; 16],
+    /// `Renderer::land_changes`.
+    land: u64,
+    /// The water line, which scenery standing in water is set on.
+    water: u32,
+    /// `Renderer::chunk_changes`.
+    chunks: u64,
+    /// `SceneryGpu::still_version`.
+    scenery: u64,
+}
+
+/// A pass that draws only into the depth map `view` (the sun's), named
+/// `label`.
+fn depth_pass<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    label: &str,
+    view: &'a wgpu::TextureView,
+    load: wgpu::LoadOp<f32>,
+    timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'a>>,
+) -> wgpu::RenderPass<'a> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view,
+            depth_ops: Some(wgpu::Operations {
+                load,
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
+}
+
 /// The chunks one pass draws, grouped by level of detail so that each
 /// level is one instanced draw.
-#[derive(Default)]
+#[derive(Clone, Default, PartialEq)]
 struct ChunkList {
     levels: [Vec<[u32; 3]>; TERRAIN_LEVELS],
 }

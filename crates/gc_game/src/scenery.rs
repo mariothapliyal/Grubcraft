@@ -637,8 +637,8 @@ impl Scenery {
                 [a.cos(), a.sin()]
             }),
             near: Vec::new(),
-            counts: vec![0; models.len() * LODS],
-            cursor: vec![0; models.len() * LODS],
+            counts: vec![0; models.len() * BINS],
+            cursor: vec![0; models.len() * BINS],
             instances: Vec::new(),
             batches: Vec::new(),
         }
@@ -896,7 +896,13 @@ impl Scenery {
                     }
                     f(
                         p,
-                        usize::from(p.model) * LODS + usize::from(lod),
+                        Bin {
+                            model: usize::from(p.model),
+                            lod,
+                            on_screen: n.screen,
+                            extra: false,
+                        }
+                        .index(),
                         [ox as f32, oy as f32],
                     );
                 }
@@ -929,10 +935,18 @@ impl Scenery {
             } else {
                 radius + half
             };
-            if !cull.sees(centre, round * n.scale) {
+            let on_screen = cull.on_screen(centre, round * n.scale);
+            // Off screen, only the sun sees it: shadow casters alone.
+            if !on_screen && !(info.shadow && cull.sees(centre, round * n.scale)) {
                 continue;
             }
-            let bin = id * LODS + usize::from(lod_for(usize::from(info.class), d.hypot(distance)));
+            let bin = Bin {
+                model: id,
+                lod: lod_for(usize::from(info.class), d.hypot(distance)),
+                on_screen,
+                extra: true,
+            }
+            .index();
             counts[bin] += 1;
             total += 1;
             extra_bins.push((bin, k));
@@ -960,10 +974,13 @@ impl Scenery {
         for (bin, &count) in counts.iter().enumerate() {
             cursor[bin] = at;
             if count > 0 {
+                let b = Bin::of(bin);
                 batches.push(SceneryBatch {
-                    model: (bin / LODS) as u16,
-                    lod: (bin % LODS) as u8,
-                    shadow: models.info[bin / LODS].shadow,
+                    model: b.model as u16,
+                    lod: b.lod,
+                    shadow: models.info[b.model].shadow,
+                    on_screen: b.on_screen,
+                    moves: b.extra,
                     first: at,
                     count,
                 });
@@ -980,7 +997,7 @@ impl Scenery {
                 facing: facings[usize::from(n.turn)],
                 scale: n.scale,
                 tint: [r, g, b, n.phase],
-                kind: models.info[bin / LODS].detail
+                kind: models.info[Bin::of(bin).model].detail
                     | u32::from(n.lean) << 8
                     | u32::from(n.fall) << 16,
             };
@@ -997,11 +1014,44 @@ impl Scenery {
                     facing: facings[usize::from(p.angle)],
                     scale: f32::from(p.scale) / 100.0,
                     tint: p.tint,
-                    kind: models.info[bin / LODS].detail,
+                    kind: models.info[Bin::of(bin).model].detail,
                 };
             });
         }
         (&self.instances[..total], &self.batches)
+    }
+}
+
+/// Bins a model has: one per level of detail for each of the four kinds
+/// of [`Bin`].
+const BINS: usize = LODS * 4;
+
+/// Which batch an instance goes in: its model and level, whether the camera
+/// may see it (shadow casters only the sun sees are left out of the world
+/// pass), and whether it is one of the game's extras, which may move from
+/// frame to frame (kept out of the renderer's still shadows).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Bin {
+    model: usize,
+    lod: u8,
+    on_screen: bool,
+    extra: bool,
+}
+
+impl Bin {
+    fn index(self) -> usize {
+        (self.model * LODS + usize::from(self.lod)) * 4
+            + usize::from(!self.on_screen)
+            + 2 * usize::from(self.extra)
+    }
+
+    fn of(index: usize) -> Bin {
+        Bin {
+            model: index / BINS,
+            lod: (index % BINS / 4) as u8,
+            on_screen: index.is_multiple_of(2),
+            extra: index % 4 >= 2,
+        }
     }
 }
 
@@ -1744,11 +1794,35 @@ mod tests {
         assert!(lod_for(2, 60.0) > lod_for(0, 60.0));
     }
 
+    #[test]
+    fn bins_keep_model_level_and_screen_apart() {
+        let mut seen = std::collections::HashSet::new();
+        for model in 0..3 {
+            for lod in 0..LODS as u8 {
+                for (on_screen, extra) in
+                    [(true, false), (false, false), (true, true), (false, true)]
+                {
+                    let bin = Bin {
+                        model,
+                        lod,
+                        on_screen,
+                        extra,
+                    };
+                    let i = bin.index();
+                    assert!(seen.insert(i) && i < (model + 1) * BINS);
+                    assert_eq!(Bin::of(i), bin);
+                }
+            }
+        }
+    }
+
     fn check_batches(s: &Scenery, instances: &[SceneryInstance], batches: &[SceneryBatch]) {
         let mut covered = vec![0u8; instances.len()];
         for b in batches {
             assert!(b.count > 0 && usize::from(b.lod) < LODS);
             assert_eq!(b.shadow, s.models.info[usize::from(b.model)].shadow);
+            // Off screen, only what casts a shadow is wanted.
+            assert!(b.on_screen || b.shadow);
             for i in b.first..b.first + b.count {
                 covered[i as usize] += 1;
             }

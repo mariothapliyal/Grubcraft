@@ -1123,6 +1123,8 @@ struct Running {
     /// When the next frame may start under Settings' frame cap (see
     /// [`Running::next_frame_due`]); `None` when uncapped.
     frame_due: Option<Instant>,
+    /// Whether the window was last made fullscreen (it opens windowed).
+    fullscreen: bool,
     /// When the screen's refresh rate was last asked for, and the rate
     /// (0 when the OS does not say).
     refresh: Option<(Instant, u32)>,
@@ -1735,6 +1737,8 @@ struct Input {
     shift: bool,
     /// Ctrl, or Cmd on a Mac.
     command: bool,
+    /// Ctrl and Cmd together (the Mac's fullscreen chord with F).
+    ctrl_cmd: bool,
     arrows: [bool; 4], // up, down, left, right
     /// `,` turns the view left, `.` right.
     turn: [bool; 2],
@@ -2150,6 +2154,7 @@ impl App {
             resume_at: None,
             frame_due: None,
             refresh: None,
+            fullscreen: false,
             seed: opts.seed,
             capacities,
             menu,
@@ -2283,6 +2288,20 @@ impl ApplicationHandler for App {
         let Some(r) = self.running.as_mut() else {
             return;
         };
+        // Alt+Enter, or Ctrl+Cmd+F on a Mac, switches fullscreen anywhere.
+        // (Held down, its repeats go nowhere.)
+        if let WindowEvent::KeyboardInput { event: key, .. } = &event
+            && key.state == ElementState::Pressed
+            && let PhysicalKey::Code(code) = key.physical_key
+            && ((matches!(code, KeyCode::Enter | KeyCode::NumpadEnter) && r.input.alt)
+                || (code == KeyCode::KeyF && r.input.ctrl_cmd))
+        {
+            if !key.repeat {
+                let on = !r.menu.settings().fullscreen;
+                r.menu.set_fullscreen(on);
+            }
+            return;
+        }
         if r.guide.is_some() && r.guide_event(&event) {
             return;
         }
@@ -2329,6 +2348,7 @@ impl ApplicationHandler for App {
                 r.input.alt = m.state().alt_key();
                 r.input.shift = m.state().shift_key();
                 r.input.command = m.state().control_key() || m.state().super_key();
+                r.input.ctrl_cmd = m.state().control_key() && m.state().super_key();
             }
             WindowEvent::CursorLeft { .. } => {
                 r.input.cursor = None;
@@ -2789,6 +2809,19 @@ impl Running {
             before: gc_platform::memory::process_memory().current,
             halfway: None,
         });
+    }
+
+    /// Follow Settings' Fullscreen when it changes: borderless over the
+    /// whole screen (its own space on a Mac), where the system can show the
+    /// game's frames without composing them with the desktop, which saves
+    /// the GPU a copy of every frame.
+    fn apply_fullscreen(&mut self) {
+        let want = self.menu.settings().fullscreen;
+        if self.fullscreen != want {
+            self.fullscreen = want;
+            self.window
+                .set_fullscreen(want.then_some(winit::window::Fullscreen::Borderless(None)));
+        }
     }
 
     /// The frames a second the game draws at: `(rate, held)`, where `held`
@@ -4399,6 +4432,7 @@ impl Running {
         self.frame_due = self.next_frame_due(now);
         let vsync = self.menu.settings().vsync;
         self.renderer.set_vsync(vsync);
+        self.apply_fullscreen();
         self.update_camera(dt.as_secs_f32());
         self.stage_siege();
         self.stage_gate_march();
