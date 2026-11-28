@@ -974,21 +974,31 @@ rules number, replay or network message changed.
 
 ### What the player does
 
-Hold `Ctrl` (`Cmd` on a Mac) and right-drag the way the army should go.
-While drawing, the line shows dotted with a plate at each waypoint and
-ghost plates where the army will stand at its end. Let go and the army
-goes by that road; with `Shift` held too, after its current orders.
-While the armies deploy an order places, so only the road's end is
-ordered. A drag shorter than 12 tiles is an ordinary order.
+Press the right button with `Ctrl` (`Cmd` on a Mac) held and drag the
+way the army should go (letting go of `Ctrl` before the button keeps the
+road). While drawing, the line shows dotted with a plate at each
+waypoint and ghost plates where the army will stand at its end. Let go
+and the army goes by that road; with `Shift` held too, after its current
+orders. A drag shorter than 12 tiles is an ordinary line order, and
+while the armies deploy (an order places) or a power or wall is being
+aimed, `Ctrl` draws no road.
 
 ### How it works (`gc_game::road`)
 
 - **Waypoints.** The drawn line is cut to its bends: a point that stands
   more than 3 tiles out of the straight line between its neighbours is
-  kept (Douglas-Peucker), and kept points nearer than 10 tiles to the
-  one before merge into the later, so the army is not halted to re-form
-  every few steps. The line's start is a waypoint only when it lies a
-  leg or more from the army; the end always is.
+  kept (Douglas-Peucker), and a kept point nearer than 8 tiles to the
+  one before takes its place, so the army is not made to re-form every
+  few steps. The line's start is a waypoint only when it lies a leg or
+  more from the army; the end always is. A regiment holds at most four
+  orders queued behind the one it carries out (`orders::QUEUE_LEN`), so
+  a road has at most five legs (with `Shift`, as many as its fullest
+  queue has room for): one with more bends is cut again with a looser
+  tolerance (half as much again each time) until it fits.
+- **Room for orders ahead.** Each regiment with orders queued takes one
+  of its side's 32 plans for them (`orders::PLANS_EACH`). A road for more
+  regiments than the plans left says so and sends them straight to its
+  end.
 - **Legs.** Each waypoint is one group order, in the selection's shape (a
   standing army's own, else the shape chosen with `O`), facing on toward
   the next waypoint and at the end along the road's last leg. The first
@@ -1024,6 +1034,10 @@ Along the road the army's middle kept within 4 tiles of the drawn line.
 - An attack-move (`A`) cannot be drawn: a road is always a plain move.
 - The army forms its shape at each waypoint as it passes (it does not
   halt there, but a line re-dresses at every bend). A road drawn with
-  many sharp bends close together is followed by fewer waypoints than
-  it has bends.
+  many sharp bends close together, or more than five, is followed by
+  fewer waypoints than it has bends, so the army may cut a corner the
+  player drew. Keeping more would need longer queues in the simulation.
+- A regiment that is turned the other way from the rest of the army
+  still counts toward the way the army faces (their mean) when the road
+  sets off.
 - Dots drawn in woods hide under the trees, as a route's do.

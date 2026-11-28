@@ -1131,6 +1131,13 @@ struct Running {
     /// The road being drawn with Ctrl+right-drag, as ground points
     /// (docs/42-armies-that-march.md, "Draw the road").
     road: Vec<Vec2>,
+    /// The right button went down with Ctrl (Cmd): its drag draws a road,
+    /// whether or not Ctrl is still held when it is let go.
+    road_on: bool,
+    /// The road preview last planned, kept while the road has as many
+    /// points and Shift is as it was: (points, shift, waypoints, the last
+    /// leg's moves).
+    road_preview: Option<(usize, bool, Vec<Vec2>, Vec<gc_sim::Command>)>,
     last_group_key: Option<(usize, Instant)>,
     /// When the last right-click order was given, and to whom: a second
     /// one to the same selection soon after runs (see [`Self::run`]).
@@ -2163,6 +2170,8 @@ impl App {
             armies: Default::default(),
             army_plan: None,
             road: Vec::new(),
+            road_on: false,
+            road_preview: None,
             last_group_key: None,
             last_right: None,
             attack_mark: None,
@@ -3115,6 +3124,14 @@ impl Running {
             (MouseButton::Right, ElementState::Pressed) => {
                 self.input.right_down = self.input.cursor.zip(self.ground_under_cursor());
                 self.road.clear();
+                self.road_preview = None;
+                // While the armies deploy an order places, and a power or
+                // wall being aimed takes the right button: no road then.
+                let aiming = matches!(
+                    self.hud.armed,
+                    Some(hud::Armed::Power(_) | hud::Armed::Wall(..))
+                );
+                self.road_on = self.input.command && !aiming && !self.world.deploying();
             }
             (MouseButton::Right, ElementState::Released) => {
                 // A right-click puts down a power being aimed, and orders
@@ -3131,7 +3148,7 @@ impl Running {
                 // Ctrl+right-drag: the army goes by the road drawn.
                 if self.drawing_road() {
                     self.record_road();
-                    if road::length(&self.road) >= road::MIN_ROAD {
+                    if self.road_drawn() {
                         self.issue_road(self.input.shift);
                         self.road.clear();
                         self.input.right_down = None;
@@ -3308,7 +3325,7 @@ impl Running {
         }
         self.plan_order(order);
         self.keep_army_places();
-        self.send_planned(hunt, queue);
+        self.send_planned(hunt, queue, false);
     }
 
     /// After planning a group order about to be sent: an army ordered as
@@ -3328,9 +3345,14 @@ impl Running {
         }
     }
 
-    /// Whether a road is being drawn: Ctrl (Cmd) held on a right-drag.
+    /// Whether a road is being drawn: a right-drag begun with Ctrl (Cmd).
     fn drawing_road(&self) -> bool {
-        self.input.right_down.is_some() && self.input.command
+        self.input.right_down.is_some() && self.road_on
+    }
+
+    /// Whether the road being drawn is long enough to be one.
+    fn road_drawn(&self) -> bool {
+        self.drawing_road() && road::length(&self.road) >= road::MIN_ROAD
     }
 
     /// Add the ground under the cursor to the road being drawn, once it is
@@ -3343,6 +3365,7 @@ impl Running {
             self.road.push(start);
         }
         if let Some(p) = self.ground_under_cursor()
+            && self.road.len() < road::MAX_POINTS
             && self.road.last().is_none_or(|l| l.distance(p) >= road::STEP)
         {
             self.road.push(p);
@@ -3354,14 +3377,25 @@ impl Running {
     /// arrangement: a standing army's own shape (its places kept in
     /// `army_plan` until sent), else the army shape chosen with `O`. With
     /// `numbered`, each leg of two or more regiments is a new brigade.
-    fn plan_road(&mut self, numbered: bool) -> (Vec<Vec2>, Vec<Vec<gc_sim::Command>>) {
+    fn plan_road(&mut self, numbered: bool, queue: bool) -> (Vec<Vec2>, Vec<Vec<gc_sim::Command>>) {
         self.fill_group();
         self.army_plan = None;
         if self.group.is_empty() {
             return Default::default();
         }
+        // Legs past the first are queued, and a regiment holds only so many
+        // orders ahead (with Shift, after what it has queued already).
+        let queued = (self.group.iter())
+            .map(|m| self.world.regiments.queued(m.handle).map_or(0, |q| q.len()))
+            .max()
+            .unwrap_or(0);
+        let most = if queue {
+            gc_sim::orders::QUEUE_LEN.saturating_sub(queued)
+        } else {
+            1 + gc_sim::orders::QUEUE_LEN
+        };
         let from = from_fx_vec(gc_sim::formation::centre_of(&self.group));
-        let way = road::waypoints(from, &self.road);
+        let way = road::waypoints(from, &self.road, most);
         let brigades: Vec<u16> = if numbered && self.group.len() > 1 {
             way.iter().map(|_| self.next_brigade()).collect()
         } else {
@@ -3398,32 +3432,54 @@ impl Running {
             self.issue_march(hud::move_order(end), false, false);
             return;
         }
-        let (_, legs) = self.plan_road(true);
+        // Each regiment given orders ahead takes one of its side's few
+        // plans for them (see `gc_sim::orders`); a road too big for those
+        // left is sent straight to its end.
+        let side = self.sandbox.side;
+        let selected = self.selected.regiments();
+        let others = (self.world.regiments.iter())
+            .filter(|r| r.owner == side && !selected.contains(&r.handle))
+            .filter(|r| {
+                r.hunting
+                    || self
+                        .world
+                        .regiments
+                        .queued(r.handle)
+                        .is_some_and(|q| !q.is_empty())
+            })
+            .count();
+        let room = gc_sim::orders::PLANS_EACH.saturating_sub(others);
+        if selected.len() > room {
+            self.say(format!(
+                "A drawn road can take {room} regiments now (others have orders queued): sent straight to its end."
+            ));
+            self.issue_march(hud::move_order(end), false, queue);
+            return;
+        }
+        let (_, legs) = self.plan_road(true, queue);
         self.keep_army_places();
         for (k, leg) in legs.into_iter().enumerate() {
             self.group_commands = leg;
-            self.send_planned(false, queue || k > 0);
+            self.send_planned(false, queue || k > 0, k > 0);
         }
     }
 
     /// The road being drawn, dotted, with a plate at each waypoint, and
     /// ghost plates where the army will stand at its end.
     fn push_road_preview(&mut self) {
-        let (way, mut legs) = self.plan_road(false);
+        let shift = self.input.shift;
+        let fresh =
+            matches!(&self.road_preview, Some((n, q, ..)) if *n == self.road.len() && *q == shift);
+        if !fresh {
+            let (way, mut legs) = self.plan_road(false, shift);
+            self.road_preview = Some((self.road.len(), shift, way, legs.pop().unwrap_or_default()));
+        }
+        let Some((_, _, way, last)) = &self.road_preview else {
+            return;
+        };
         let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
         let color = [cr, cg, cb, 200];
-        // A dot every ROUTE_DOT_SPACING along the line (its recorded
-        // steps are shorter than that).
-        let mut dots = 0;
-        let mut last = self.road[0];
-        for &p in &self.road[1..] {
-            if p.distance(last) >= ROUTE_DOT_SPACING {
-                if !push_dots(&mut self.instances, last, p, color, &mut dots) {
-                    break;
-                }
-                last = p;
-            }
-        }
+        push_line_dots(&mut self.instances, &self.road, color);
         for p in way {
             self.instances.push(BoxInstance {
                 pos: p.to_array(),
@@ -3433,7 +3489,7 @@ impl Running {
                 lift: 0.0,
             });
         }
-        self.group_commands = legs.pop().unwrap_or_default();
+        self.group_commands.clone_from(last);
         self.push_order_preview();
     }
 
@@ -3447,8 +3503,8 @@ impl Running {
 
     /// Send `self.group_commands` (a planned group order), each shown at
     /// once by its mark; `hunt` and `queue` as [`Self::issue_march`].
-    fn send_planned(&mut self, hunt: bool, queue: bool) {
-        if !self.group_commands.is_empty() {
+    fn send_planned(&mut self, hunt: bool, queue: bool, quiet: bool) {
+        if !quiet && !self.group_commands.is_empty() {
             self.ui_sound(sounds::UiSound::Move);
         }
         let now = Instant::now();
@@ -3725,7 +3781,7 @@ impl Running {
     /// The line order a right-drag in progress describes, once it is long
     /// enough to be a drag rather than a click.
     fn drag_order(&self) -> Option<GroupOrder> {
-        if self.drawing_road() {
+        if self.road_drawn() {
             return None;
         }
         let (_, start) = self.input.right_down?;
@@ -3936,7 +3992,7 @@ impl Running {
         self.control_groups[n].extend_from_slice(&newcomers);
         let k = newcomers.len();
         self.selected = Picked::from(newcomers);
-        self.send_planned(false, false);
+        self.send_planned(false, false, false);
         self.say(format!(
             "Sent {k} {} to join army {}.",
             buildings::plural(k, "regiment", "regiments"),
@@ -4796,9 +4852,9 @@ impl Running {
         }
         if self.drawing_road() {
             self.record_road();
-            if road::length(&self.road) >= road::MIN_ROAD {
-                self.push_road_preview();
-            }
+        }
+        if self.road_drawn() {
+            self.push_road_preview();
         } else if let Some(order) = self.drag_order() {
             self.plan_order(order);
             self.push_order_preview();
@@ -11037,6 +11093,31 @@ fn push_dots(
     }
     true
 }
+/// A dot every [`ROUTE_DOT_SPACING`] along the line through `points`, at
+/// most [`MAX_ROUTE_DOTS`].
+fn push_line_dots(instances: &mut Vec<BoxInstance>, points: &[Vec2], color: [u8; 4]) {
+    let (mut at, mut dots) = (ROUTE_DOT_SPACING, 0);
+    for w in points.windows(2) {
+        let leg = w[1] - w[0];
+        let len = leg.length();
+        while at <= len {
+            if dots == MAX_ROUTE_DOTS {
+                return;
+            }
+            dots += 1;
+            instances.push(BoxInstance {
+                pos: (w[0] + leg * (at / len)).to_array(),
+                facing: [0.0, 1.0],
+                size: ROUTE_DOT,
+                color,
+                lift: 0.0,
+            });
+            at += ROUTE_DOT_SPACING;
+        }
+        at -= len;
+    }
+}
+
 /// Just the position of [`drawn_pose`], for the many callers that need no
 /// facing (the minimap runs it over every regiment each frame).
 fn drawn_position(

@@ -22,11 +22,15 @@ pub const STEP: f32 = 1.0;
 /// order.
 pub const MIN_ROAD: f32 = 12.0;
 /// How far the drawn line may stray from the straight leg between two
-/// waypoints before a bend between them is kept as a waypoint, in tiles.
+/// waypoints before a bend between them is kept as a waypoint, in tiles
+/// (more, when the road has more bends than legs can be given).
 const BEND: f32 = 3.0;
 /// The shortest leg kept, in tiles: closer waypoints merge into one (the
 /// later) so the army is not halted to re-form every few steps.
-const LEG: f32 = 10.0;
+const LEG: f32 = 8.0;
+/// The most points a drawn road keeps (the rest of the drag is not
+/// recorded).
+pub const MAX_POINTS: usize = 2_000;
 
 /// How long a drawn line is, in tiles.
 pub fn length(points: &[Vec2]) -> f32 {
@@ -34,40 +38,55 @@ pub fn length(points: &[Vec2]) -> f32 {
 }
 
 /// The waypoints of a road drawn as `points`, for an army whose middle is
-/// at `from`: the bends of the line (Douglas-Peucker, within [`BEND`]),
-/// none nearer than [`LEG`] to the one before (or to `from`), always
-/// ending at the line's end. The line's start is a waypoint only when it
-/// lies a leg or more away from the army.
-pub fn waypoints(from: Vec2, points: &[Vec2]) -> Vec<Vec2> {
-    let Some(&end) = points.last() else {
+/// at `from`, at most `most` of them (a regiment can be given only so many
+/// orders ahead): the bends of the line (Douglas-Peucker, within [`BEND`],
+/// or as much more as keeps it to `most`), a bend nearer than [`LEG`] to
+/// the one before merged into the later, always ending at the line's end.
+/// The line's start is a waypoint only when it lies a leg or more away
+/// from the army.
+pub fn waypoints(from: Vec2, points: &[Vec2], most: usize) -> Vec<Vec2> {
+    let most = most.max(1);
+    let mut bend = BEND;
+    loop {
+        let mut out = waypoints_within(from, points, bend);
+        if out.len() <= most {
+            return out;
+        }
+        // Past the whole map's width no bend is left: what remains is the
+        // line's start and end, of which the end is kept.
+        if bend > 4096.0 {
+            out.drain(..out.len() - most);
+            return out;
+        }
+        bend *= 1.5;
+    }
+}
+
+fn waypoints_within(from: Vec2, points: &[Vec2], bend: f32) -> Vec<Vec2> {
+    if points.is_empty() {
         return Vec::new();
-    };
+    }
     let mut keep = vec![false; points.len()];
     keep[0] = true;
     keep[points.len() - 1] = true;
-    bends(points, 0, points.len() - 1, &mut keep);
+    bends(points, 0, points.len() - 1, bend, &mut keep);
     let mut out: Vec<Vec2> = Vec::new();
     for (k, &p) in points.iter().enumerate() {
         if !keep[k] {
             continue;
         }
-        let last = out.last().copied().unwrap_or(from);
-        if p.distance(last) >= LEG {
-            out.push(p);
+        match out.last_mut() {
+            None if p.distance(from) < LEG && k + 1 < points.len() => {}
+            Some(last) if p.distance(*last) < LEG => *last = p,
+            _ => out.push(p),
         }
-    }
-    // The end always (the loop kept it, or one less than a leg short of
-    // it, which it takes the place of).
-    match out.last_mut() {
-        Some(last) => *last = end,
-        None => out.push(end),
     }
     out
 }
 
 /// Douglas-Peucker: mark the points of `points[a..=b]` that stand out of
-/// the straight line from `a` to `b` by more than [`BEND`].
-fn bends(points: &[Vec2], a: usize, b: usize, keep: &mut [bool]) {
+/// the straight line from `a` to `b` by more than `bend`.
+fn bends(points: &[Vec2], a: usize, b: usize, bend: f32, keep: &mut [bool]) {
     if b <= a + 1 {
         return;
     }
@@ -86,10 +105,10 @@ fn bends(points: &[Vec2], a: usize, b: usize, keep: &mut [bool]) {
     else {
         return;
     };
-    if far > BEND {
+    if far > bend {
         keep[k] = true;
-        bends(points, a, k, keep);
-        bends(points, k, b, keep);
+        bends(points, a, k, bend, keep);
+        bends(points, k, b, bend, keep);
     }
 }
 
@@ -113,7 +132,21 @@ pub fn legs(
         return out;
     };
     let mut from = centre_of(members);
-    let mut facing = first.facing;
+    // The way the army faces: its regiments' mean.
+    let (x, y) = members.iter().fold((0i64, 0i64), |(x, y), m| {
+        let v = m.facing.to_vec();
+        (x + i64::from(v.x.raw()), y + i64::from(v.y.raw()))
+    });
+    let mut facing = if x == 0 && y == 0 {
+        first.facing
+    } else {
+        // (Only the direction matters: the sums are scaled down to fit.)
+        let k = (x.abs().max(y.abs()) >> 30) + 1;
+        Angle::of_vec(FxVec2::new(
+            gc_fixed::Fx::from_raw((x / k) as i32),
+            gc_fixed::Fx::from_raw((y / k) as i32),
+        ))
+    };
     for (k, &at) in waypoints.iter().enumerate() {
         let next = waypoints.get(k + 1).copied();
         let way = match next {
@@ -187,7 +220,7 @@ mod tests {
     #[test]
     fn a_dogleg_keeps_its_corners_and_its_end() {
         let drawn = line(&[(64.0, 100.0), (24.0, 80.0), (24.0, 40.0), (64.0, 24.0)]);
-        let w = waypoints(Vec2::new(64.0, 104.0), &drawn);
+        let w = waypoints(Vec2::new(64.0, 104.0), &drawn, 5);
         // The start lies within a leg of the army; the three corners stay.
         assert_eq!(w.len(), 3, "{w:?}");
         assert!(w[0].distance(Vec2::new(24.0, 80.0)) < 0.5);
@@ -200,15 +233,29 @@ mod tests {
         let drawn: Vec<Vec2> = (0..60)
             .map(|i| Vec2::new(10.0 + i as f32, 50.0 + if i % 2 == 0 { 1.0 } else { -1.0 }))
             .collect();
-        let w = waypoints(Vec2::new(0.0, 50.0), &drawn);
+        let w = waypoints(Vec2::new(0.0, 50.0), &drawn, 5);
         assert_eq!(w.len(), 2, "{w:?}");
         assert_eq!(*w.last().unwrap(), *drawn.last().unwrap());
     }
 
     #[test]
+    fn a_road_of_many_bends_is_cut_to_the_legs_allowed() {
+        // A zigzag of nine bends, 20 tiles apart.
+        let corners: Vec<(f32, f32)> = (0..10)
+            .map(|i| (i as f32 * 20.0, if i % 2 == 0 { 0.0 } else { 15.0 }))
+            .collect();
+        let drawn = line(&corners);
+        for most in [1, 3, 5] {
+            let w = waypoints(Vec2::new(-20.0, 0.0), &drawn, most);
+            assert!(w.len() <= most, "{most}: {w:?}");
+            assert_eq!(*w.last().unwrap(), *drawn.last().unwrap());
+        }
+    }
+
+    #[test]
     fn close_bends_merge_into_the_later() {
         let drawn = line(&[(0.0, 0.0), (4.0, 6.0), (8.0, 0.0), (40.0, 0.0)]);
-        let w = waypoints(Vec2::new(-20.0, 0.0), &drawn);
+        let w = waypoints(Vec2::new(-20.0, 0.0), &drawn, 5);
         assert!(w.windows(2).all(|p| p[0].distance(p[1]) >= LEG), "{w:?}");
         assert_eq!(*w.last().unwrap(), Vec2::new(40.0, 0.0));
     }

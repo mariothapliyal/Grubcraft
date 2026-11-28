@@ -116,9 +116,10 @@ fn walk(real: &Real, report: &mut Report, by_road: bool) -> Walk {
     let drawn = road::stepped(&ROAD.map(Vec2::from));
     let from = crate::from_fx_vec(gc_sim::formation::centre_of(&members));
     let legs = if by_road {
-        let way: Vec<FxVec2> = (road::waypoints(from, &drawn).into_iter())
-            .map(crate::fx_vec)
-            .collect();
+        let way: Vec<FxVec2> = (road::waypoints(from, &drawn, 1 + gc_sim::orders::QUEUE_LEN)
+            .into_iter())
+        .map(crate::fx_vec)
+        .collect();
         let brigades: Vec<u16> = (1..=way.len() as u16).collect();
         road::legs(&mut members, &way, &brigades, arrange)
     } else {
