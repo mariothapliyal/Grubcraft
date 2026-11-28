@@ -11,7 +11,7 @@ use crate::lobby::{
     RosterUnit, SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, WeatherSetting, YearSetting,
     army_points, field_map_tiles, fresh_map_seed, map_code, maps_for, parse_map_code, thousands,
 };
-use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
+use crate::settings::{FRAME_CAPS, GraphicsPreset, LOOK_SPEEDS, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
 
 /// One team for each lobby slot.
@@ -1728,7 +1728,7 @@ impl<N: Network> Menu<N> {
     fn settings_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
         let k = (ui.screen.1 as f32 / 720.0).clamp(0.62, 1.0);
         let sp = |n: i32| (n as f32 * k).round() as i32;
-        let panel = centered(ui.screen, 880, sp(640));
+        let panel = centered(ui.screen, 880, sp(680));
         ui.panel(panel);
         ui.header(panel, "Settings", "Changes are saved when you go back.");
         let col_w = (panel.w - 72) / 2;
@@ -1849,6 +1849,24 @@ impl<N: Network> Menu<N> {
             "Full blood: heavier wounds",
             &mut s.full_blood,
         );
+        // One row: Off, or on with the mouse look speed (hero's eye, F6).
+        let mut names: Vec<String> = vec!["Off".into()];
+        names.extend(LOOK_SPEEDS.iter().map(|v| format!("{v}% look")));
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut li = if s.take_command {
+            1 + LOOK_SPEEDS
+                .iter()
+                .position(|&v| v == s.look_speed)
+                .unwrap_or(2)
+        } else {
+            0
+        };
+        if ui.stepper(st.next(row), "Hero view (F6)", &mut li, &refs) {
+            s.take_command = li > 0;
+            if li > 0 {
+                s.look_speed = LOOK_SPEEDS[li - 1];
+            }
+        }
 
         let note_y = panel.bottom() - 52 - 36;
         ui.label(

@@ -86,6 +86,15 @@ pub struct Settings {
     pub larger_text: bool,
     pub reduced_shake: bool,
     pub hints: bool,
+    /// Take command of a hero in first person (docs/46). Off by default
+    /// until the whole mode has landed.
+    pub take_command: bool,
+    /// Mouse look speed in first person, percent of the standard speed.
+    pub look_speed: u16,
+    /// Mouse up looks down in first person.
+    pub look_invert_y: bool,
+    /// First person's vertical field of view, degrees.
+    pub eye_fov: u16,
     /// The address (or join code) of the game this player last joined, for
     /// the Play screen's Rejoin button after a crash or restart; empty for
     /// none. The password is never saved.
@@ -116,12 +125,29 @@ impl Default for Settings {
             larger_text: false,
             reduced_shake: false,
             hints: true,
+            take_command: false,
+            look_speed: 100,
+            look_invert_y: false,
+            eye_fov: 75,
             last_game: String::new(),
         }
     }
 }
 
+/// The mouse look speeds the settings screen steps through, percent.
+pub const LOOK_SPEEDS: [u16; 6] = [50, 75, 100, 150, 200, 300];
+/// The first-person fields of view it offers, degrees (vertical).
+pub const EYE_FOVS: [u16; 5] = [60, 70, 75, 90, 100];
+
 impl Settings {
+    /// Mouse look speed as a multiplier, clamped to what the screen offers.
+    pub fn look_scale(&self) -> f32 {
+        f32::from(
+            self.look_speed
+                .clamp(LOOK_SPEEDS[0], LOOK_SPEEDS[LOOK_SPEEDS.len() - 1]),
+        ) / 100.0
+    }
+
     /// The UI scale to draw at, with Larger text counted in.
     pub fn effective_ui_scale(&self) -> f32 {
         let base = f32::from(self.ui_scale.clamp(75, 150)) / 100.0;

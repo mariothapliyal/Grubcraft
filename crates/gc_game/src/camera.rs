@@ -373,7 +373,38 @@ pub struct FollowCamera {
     ground: f32,
     /// Lowest the eye may be: true ground under it plus the clearance.
     floor: f32,
+    /// How the view is set up: behind a block (the ride) or at a hero's own
+    /// eye (docs/46).
+    view: ViewKind,
 }
+
+/// What a `FollowCamera` shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ViewKind {
+    /// Behind and above a regiment, heading eased from its facing.
+    Behind,
+    /// At the eye of the regiment's one man, looking where the mouse says.
+    InPerson(InPerson),
+}
+
+/// A first-person view: the mouse owns where it looks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct InPerson {
+    /// Looking up (positive) or down, radians.
+    pitch: f32,
+    /// Height of the eye above the ground, in tiles.
+    height: f32,
+    /// Vertical field of view, radians.
+    fov_y: f32,
+}
+
+/// First person looks no further up or down than this, short of straight.
+pub const EYE_PITCH_LIMIT: f32 = 80.0 * std::f32::consts::PI / 180.0;
+/// The first-person fields of view settings may choose, degrees (vertical).
+pub const EYE_FOV_RANGE: (f32, f32) = (55.0, 100.0);
+/// First person's near plane: the hero's own head is hidden, so the eye can
+/// sit close to things.
+const EYE_NEAR: f32 = 0.12;
 
 impl FollowCamera {
     /// Start exactly on the target (no swoop in from somewhere else).
@@ -384,6 +415,7 @@ impl FollowCamera {
             back: back_for(target),
             ground: 0.0,
             floor: 0.0,
+            view: ViewKind::Behind,
         };
         let g = ground_at(cam.eye_xz());
         cam.ground = g;
@@ -391,14 +423,54 @@ impl FollowCamera {
         cam
     }
 
+    /// Start at the eye of the regiment's man, `height` tiles above the
+    /// ground, looking along its facing, on a lens of `fov_deg` degrees
+    /// (vertical, clamped to the settings' range).
+    pub fn in_person(
+        target: RideTarget,
+        height: f32,
+        fov_deg: f32,
+        ground_at: impl Fn(Vec2) -> f32,
+    ) -> FollowCamera {
+        let mut cam = FollowCamera::new(target, ground_at);
+        cam.back = 0.0;
+        cam.view = ViewKind::InPerson(InPerson {
+            pitch: 0.0,
+            height,
+            fov_y: fov_deg.clamp(EYE_FOV_RANGE.0, EYE_FOV_RANGE.1).to_radians(),
+        });
+        cam
+    }
+
+    /// Whether the view is at a hero's eye.
+    pub fn is_in_person(&self) -> bool {
+        matches!(self.view, ViewKind::InPerson(_))
+    }
+
+    /// Turn the view by the mouse: `yaw` radians round the map (positive
+    /// turns towards +y, the sim's angle) and `pitch` radians up. Does
+    /// nothing behind a block.
+    pub fn look(&mut self, yaw: f32, pitch: f32) {
+        if let ViewKind::InPerson(p) = &mut self.view {
+            self.heading = wrap_angle(self.heading + yaw);
+            p.pitch = (p.pitch + pitch).clamp(-EYE_PITCH_LIMIT, EYE_PITCH_LIMIT);
+        }
+    }
+
     /// Ease towards `target` over `dt` seconds. Frame-rate independent: two
     /// half-length steps land in the same place as one whole one.
     pub fn update(&mut self, dt: f32, target: RideTarget, ground_at: impl Fn(Vec2) -> f32) {
         let ease = |rate: f32| 1.0 - (-dt.max(0.0) * rate).exp();
-        self.anchor += (target.centre - self.anchor) * ease(RIDE_MOVE_RATE);
-        let want = heading_of(target.facing);
-        self.heading += wrap_angle(want - self.heading) * ease(RIDE_TURN_RATE);
-        self.back += (back_for(target) - self.back) * ease(RIDE_MOVE_RATE);
+        if self.is_in_person() {
+            // The eye is the man's own: exactly where he is drawn, looking
+            // where the mouse says.
+            self.anchor = target.centre;
+        } else {
+            self.anchor += (target.centre - self.anchor) * ease(RIDE_MOVE_RATE);
+            let want = heading_of(target.facing);
+            self.heading += wrap_angle(want - self.heading) * ease(RIDE_TURN_RATE);
+            self.back += (back_for(target) - self.back) * ease(RIDE_MOVE_RATE);
+        }
         let g = ground_at(self.eye_xz());
         self.ground += (g - self.ground) * ease(RIDE_GROUND_RATE);
         self.floor = g + RIDE_MIN_CLEARANCE;
@@ -420,7 +492,11 @@ impl FollowCamera {
 
     pub fn eye(&self) -> Vec3 {
         let xz = self.eye_xz();
-        Vec3::new(xz.x, (self.ground + RIDE_EYE_HEIGHT).max(self.floor), xz.y)
+        let height = match self.view {
+            ViewKind::Behind => RIDE_EYE_HEIGHT,
+            ViewKind::InPerson(p) => p.height,
+        };
+        Vec3::new(xz.x, (self.ground + height).max(self.floor), xz.y)
     }
 
     /// How high the ground is under the eye (smoothed), for working out
@@ -432,7 +508,21 @@ impl FollowCamera {
     /// How many pixels tall something 1 tile tall shows, 1 tile from the
     /// eye, on a viewport `height` pixels tall (as `RtsCamera::pixel_scale`).
     pub fn pixel_scale(&self, height: f32) -> f32 {
-        height / (2.0 * (RIDE_FOV_Y * 0.5).tan())
+        height / (2.0 * (self.fov_y() * 0.5).tan())
+    }
+
+    fn fov_y(&self) -> f32 {
+        match self.view {
+            ViewKind::Behind => RIDE_FOV_Y,
+            ViewKind::InPerson(p) => p.fov_y,
+        }
+    }
+
+    fn pitch(&self) -> f32 {
+        match self.view {
+            ViewKind::Behind => -RIDE_PITCH,
+            ViewKind::InPerson(p) => p.pitch,
+        }
     }
 
     /// The ground point and "zoom distance" to draw the scenery for: trees
@@ -448,18 +538,19 @@ impl FollowCamera {
     /// The direction the camera looks.
     pub fn forward(&self) -> Vec3 {
         let f = self.forward_xz();
-        Vec3::new(
-            f.x * RIDE_PITCH.cos(),
-            -RIDE_PITCH.sin(),
-            f.y * RIDE_PITCH.cos(),
-        )
+        let pitch = self.pitch();
+        Vec3::new(f.x * pitch.cos(), pitch.sin(), f.y * pitch.cos())
     }
 
     /// The view and projection matrix on a viewport of this `aspect` ratio.
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let eye = self.eye();
         let view = look_at_mat4(eye, eye + self.forward(), Vec3::Y);
-        let proj = perspective(RIDE_FOV_Y, aspect, RIDE_NEAR, RIDE_FAR);
+        let near = match self.view {
+            ViewKind::Behind => RIDE_NEAR,
+            ViewKind::InPerson(_) => EYE_NEAR,
+        };
+        let proj = perspective(self.fov_y(), aspect, near, RIDE_FAR);
         proj * view
     }
 
@@ -636,6 +727,68 @@ mod tests {
         assert!((eye.z - 100.0).abs() < 1e-4);
         assert!((eye.y - (3.0 + RIDE_EYE_HEIGHT)).abs() < 1e-4);
         const { assert!(RIDE_EYE_HEIGHT > 1.6, "above the tallest soldier's head") };
+    }
+
+    #[test]
+    fn in_person_eye_is_at_the_mans_own_position_and_height() {
+        let t = target(Vec2::new(100.0, 60.0), Vec2::X);
+        let mut cam = FollowCamera::in_person(t, 1.4, 75.0, flat);
+        assert!(cam.is_in_person());
+        let eye = cam.eye();
+        assert!(
+            (eye.x - 100.0).abs() < 1e-4 && (eye.z - 60.0).abs() < 1e-4,
+            "{eye}"
+        );
+        assert!((eye.y - (3.0 + 1.4)).abs() < 1e-4);
+        // It follows the man exactly, with no easing.
+        let moved = target(Vec2::new(103.0, 61.0), Vec2::X);
+        cam.update(0.016, moved, flat);
+        let eye = cam.eye();
+        assert!(
+            (eye.x - 103.0).abs() < 1e-4 && (eye.z - 61.0).abs() < 1e-4,
+            "{eye}"
+        );
+    }
+
+    #[test]
+    fn in_person_looks_where_the_mouse_says_not_where_the_man_faces() {
+        let t = target(Vec2::new(50.0, 50.0), Vec2::X);
+        let mut cam = FollowCamera::in_person(t, 1.4, 75.0, flat);
+        cam.look(std::f32::consts::FRAC_PI_2, 0.0);
+        // The man still faces +x; the view now looks along +y.
+        cam.update(1.0, t, flat);
+        let f = cam.forward();
+        assert!(f.x.abs() < 1e-4 && (f.z - 1.0).abs() < 1e-4, "{f}");
+    }
+
+    #[test]
+    fn in_person_pitch_is_clamped_short_of_straight_up_or_down() {
+        let t = target(Vec2::new(50.0, 50.0), Vec2::X);
+        let mut cam = FollowCamera::in_person(t, 1.4, 75.0, flat);
+        cam.look(0.0, 10.0);
+        assert!((cam.forward().y - EYE_PITCH_LIMIT.sin()).abs() < 1e-5);
+        cam.look(0.0, -20.0);
+        assert!((cam.forward().y + EYE_PITCH_LIMIT.sin()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn in_person_field_of_view_is_clamped_to_what_settings_allow() {
+        let t = target(Vec2::new(50.0, 50.0), Vec2::X);
+        let wide = FollowCamera::in_person(t, 1.4, 500.0, flat);
+        let narrow = FollowCamera::in_person(t, 1.4, 1.0, flat);
+        let scale = |cam: &FollowCamera| cam.pixel_scale(1000.0);
+        let want = |deg: f32| 1000.0 / (2.0 * (deg.to_radians() * 0.5).tan());
+        assert!((scale(&wide) - want(EYE_FOV_RANGE.1)).abs() < 0.01);
+        assert!((scale(&narrow) - want(EYE_FOV_RANGE.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn looking_does_nothing_behind_a_block() {
+        let t = target(Vec2::new(50.0, 50.0), Vec2::X);
+        let mut cam = FollowCamera::new(t, flat);
+        let before = cam.forward();
+        cam.look(1.0, 0.5);
+        assert_eq!(cam.forward(), before);
     }
 
     #[test]

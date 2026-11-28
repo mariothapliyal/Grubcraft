@@ -360,7 +360,7 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("Alt+Mid", "Rotate the view"),
             (", .", "Turn the view"),
             ("Home", "Reset rotation"),
-            ("Y", "Ride with banner"),
+            ("Y, F6", "Ride; hero's eye (Tab)"),
             ("F8", "Director camera"),
             ("G", "Show blocked ground"),
             ("F9", "Change the light"),
