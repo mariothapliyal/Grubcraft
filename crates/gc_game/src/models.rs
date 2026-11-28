@@ -1189,6 +1189,31 @@ mod tests {
     }
 
     #[test]
+    fn sword_and_shield_men_and_pikes_kill_men_their_ways() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name).unwrap();
+        // The Gravewardens keep their own mace kill beside the shield set's
+        // two and the Bone Pikes their thrust beside the lift, on a man of
+        // any faction, made for what they hold; a blow lands well before the
+        // man is down.
+        for (killer, weapon, n) in [
+            ("Gravewardens", Weapon::SwordShield, 3),
+            ("Bone Pikes", Weapon::Polearm, 2),
+        ] {
+            for victim in ["Katana Samurai", "Tuner", "Grubfolk Militia", "Bone Pikes"] {
+                let kills = clips.best_kills(by(killer), by(victim)).count();
+                assert_eq!(kills, n, "{killer} on {victim}");
+                for seed in 0..n as u32 {
+                    let p = clips.kill_pair(by(killer), by(victim), seed).unwrap();
+                    assert_eq!((p.kill.weapon, p.kill.frames), (weapon, p.killed.frames));
+                    assert!((0.2..0.5).contains(&p.contact), "{killer}: {}", p.contact);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_soldier_varies_his_blows_and_his_regiment_its_staggers() {
         let models = load().unwrap();
         let clips = Clips::new(&models);
@@ -1236,10 +1261,24 @@ mod tests {
         let spear = &clips.by_model[by("Yari Ashigaru")].staggers;
         assert_eq!(spear.len(), 2);
         assert!(spear.iter().all(|c| c.weapon == Weapon::Spear));
+        // So do the Gravewardens and the Bone Pikes, with six blows and
+        // five, made for what they hold.
+        for (name, weapon, blows) in [
+            ("Gravewardens", Weapon::SwordShield, 6),
+            ("Bone Pikes", Weapon::Polearm, 5),
+        ] {
+            let own = &clips.by_model[by(name)];
+            assert_eq!((own.swings.len(), own.staggers.len()), (blows, 2), "{name}");
+            let made_for = |c: &MoveClip| c.weapon == weapon;
+            assert!(
+                own.swings.iter().chain(&own.staggers).all(made_for),
+                "{name}"
+            );
+        }
         // Every other man of the rig reels his own hit and the library's
         // two, the other factions' too, but not the Lantern Wraiths or the
         // Hollow Bell, who float.
-        for name in ["The Ronin", "Bone Pikes", "Tuner", "The Onmyoji"] {
+        for name in ["The Ronin", "Grubfolk Militia", "Tuner", "The Onmyoji"] {
             assert_eq!(clips.by_model[by(name)].staggers.len(), 3, "{name}");
         }
         for name in ["Lantern Wraiths", "The Hollow Bell"] {
@@ -1331,7 +1370,7 @@ mod tests {
     fn duel_moves_play_their_clips() {
         let models = load().unwrap();
         let clips = Clips::new(&models);
-        let m = models.by_name("Bone Pikes").unwrap();
+        let m = models.by_name("Grubfolk Militia").unwrap();
         let clip = |k| *models.clip(m, k).unwrap();
         // His death by his look (his own or the library's).
         let die = clips.die(m, 0).unwrap();
