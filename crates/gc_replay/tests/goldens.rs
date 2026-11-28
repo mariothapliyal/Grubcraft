@@ -84,6 +84,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::UsePower { .. } => "UsePower",
         Command::Cast { .. } => "Cast",
         Command::Evolve { .. } => "Evolve",
+        Command::Ransom { .. } => "Ransom",
         Command::FocusTower { .. } => "FocusTower",
         Command::SetGate { .. } => "SetGate",
         Command::BuildWall { .. } => "BuildWall",

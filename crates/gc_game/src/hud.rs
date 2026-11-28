@@ -829,6 +829,7 @@ impl Running {
             Vec::new()
         };
         let handover = self.handover_text(side);
+        let ransom = self.ransom_text(side);
         // The online match kit: the pause and the team's surrender vote as
         // the host tells them, the live pings and where they are on screen.
         let in_net_match = self.online.as_ref().is_some_and(|o| o.ended.is_none());
@@ -1371,6 +1372,11 @@ impl Running {
                 tip,
                 lit: *lit,
             }),
+            ransom: ransom.as_ref().map(|(label, tip, lit)| HandOverButton {
+                label,
+                tip,
+                lit: *lit,
+            }),
             hero,
             minimap: MinimapData {
                 map_tiles: map,
@@ -1506,6 +1512,7 @@ impl Running {
             HudEvent::PlaceFaction(i) => self.place_faction_to(i),
             HudEvent::ArmyShape(i) => self.pick_army_shape(i),
             HudEvent::HandOver => self.hand_over_next(),
+            HudEvent::Ransom => self.ransom_next(),
             // The queue gives back its last regiment, whichever is clicked.
             HudEvent::Unqueue(_) => self.untrain(),
             HudEvent::Ready => {
@@ -1572,6 +1579,63 @@ impl Running {
             format!("With {}", name(with))
         };
         Some((label, tip, with != side))
+    }
+
+    /// The next lot of `side`'s soldiers an enemy holds prisoner (see
+    /// `gc_sim::prisoners`): who holds it, its unit, and its price and size.
+    fn next_ransom(&self, side: PlayerId) -> Option<(PlayerId, u16, (u32, u32, u16))> {
+        let held = (self.world.prisoners_held().iter()).find(|h| h.owner == side)?;
+        let price = self.world.ransom_price(side, held.captor, held.unit)?;
+        Some((held.captor, held.unit, price))
+    }
+
+    /// The Ransom button's label, tooltip and whether `side` can pay;
+    /// `None` while no enemy holds any of their soldiers.
+    fn ransom_text(&self, side: PlayerId) -> Option<(String, String, bool)> {
+        if self.watching.is_some() {
+            return None;
+        }
+        let (from, unit, (grub, marrow, lot)) = self.next_ransom(side)?;
+        let held: u32 = (self.world.prisoners_held().iter())
+            .filter(|h| h.owner == side)
+            .map(|h| u32::from(h.soldiers))
+            .sum();
+        let name = self
+            .units
+            .names
+            .get(usize::from(unit))
+            .map_or("soldiers", String::as_str);
+        let cost = if marrow > 0 {
+            format!("{grub} Grub and {marrow} Marrow")
+        } else {
+            format!("{grub} Grub")
+        };
+        let tip = format!(
+            "{} holds {held} of your soldiers prisoner, and they work for them. Click to buy back {lot} {name} for {cost}, paid to {}: they come out at your main building with their rank. Needs the supply for one regiment.",
+            party_name(&self.parties, from),
+            party_name(&self.parties, from)
+        );
+        let can = self
+            .world
+            .bank(side)
+            .is_some_and(|b| b.grub >= grub && b.marrow >= marrow);
+        Some((format!("Ransom {held}"), tip, can))
+    }
+
+    /// The Ransom button: buy back the next lot.
+    fn ransom_next(&mut self) {
+        let side = self.sandbox.side;
+        let Some((from, unit, _)) = self.next_ransom(side) else {
+            return;
+        };
+        if self.watching.is_some() {
+            return;
+        }
+        self.human_orders.push(gc_sim::PlayerCommand {
+            player: side,
+            command: gc_sim::Command::Ransom { from, unit },
+        });
+        self.ui_sound(sounds::UiSound::Move);
     }
 
     /// Who a click on Hand over gives the army to: the first ally, then each

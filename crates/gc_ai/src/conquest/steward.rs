@@ -15,6 +15,7 @@ mod bridgework;
 mod engineer;
 mod heroes;
 mod meters;
+mod ransom;
 mod ringwork;
 
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, SUPPLY_LIMIT};
@@ -168,6 +169,8 @@ pub struct Steward {
     bridgework: bridgework::Bridgework,
     /// Heroes it had cast an ability lately, and when.
     cast: Vec<(RegimentHandle, u32)>,
+    /// The tick it may next pay a ransom (see [`ransom`]).
+    next_ransom: u32,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -292,6 +295,7 @@ impl Steward {
         // Heroes before the army, which would spend all there is.
         self.hire_heroes(s, clicks, &look);
         self.cast_abilities(s, clicks, &look);
+        self.ransom(s, clicks);
         self.put_to_work(s, clicks, &look);
         self.rebalance(s, clicks, &look);
         self.finish_buildings(s, clicks, &look);

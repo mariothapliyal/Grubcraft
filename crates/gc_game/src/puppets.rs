@@ -235,6 +235,9 @@ const DISORDER_LOOK_RATE: f32 = 0.8;
 /// the ground over this many seconds to make room, and at most this many
 /// sink at once; more than that, in a burst, just go.
 const CORPSE_SINK_SECONDS: f32 = 3.0;
+/// Seconds the men of a regiment that gave itself up stand before they sink
+/// away.
+const YIELD_STAND_SECONDS: f32 = 3.0;
 const MAX_SINKING: usize = 256;
 /// An arrow that killed a soldier sticks in him anywhere within this much
 /// of his length (along the way he lies) and of his width, in tiles.
@@ -1559,6 +1562,37 @@ impl Puppets {
         Some(self.player[r])
     }
 
+    /// Regiment `h` gave itself up (see `gc_sim::prisoners`): its men stand
+    /// where they are for [`YIELD_STAND_SECONDS`], then sink away, if the
+    /// viewer `seen` them; nobody lies dead.
+    pub fn surrendered(&mut self, h: RegimentHandle, seen: bool) {
+        let r = h.index as usize;
+        if self.owner[r] != Some(h) {
+            return;
+        }
+        let base = r * SLOTS;
+        for k in 0..(self.models[r] as usize).min(SLOTS) {
+            if !seen || self.sinking.len() >= MAX_SINKING {
+                break;
+            }
+            // Never falling: the blow he waits for never comes.
+            let man = Fallen {
+                pos: self.pos[base + k],
+                facing: self.facing[base + k],
+                fell: self.time + 1.0e4,
+                unit: self.unit[r],
+                owner: self.player[r],
+                look: self.looks[base + k],
+                pair: None,
+            };
+            self.sinking.push((man, self.time + YIELD_STAND_SECONDS));
+        }
+        self.owner[r] = None;
+        self.models[r] = 0;
+        self.shot[r] = 0;
+        self.slain.retain(|&(s, ..)| s != h);
+    }
+
     /// If an arrow of regiment `h`'s last volley is still to find a man,
     /// it stays in `fallen` (its `k`th to fall), somewhere along his length
     /// and a little to one side.
@@ -2786,9 +2820,9 @@ impl Puppets {
             }
         };
         self.corpses.iter().map(move |f| corpse(f, 0.0)).chain(
-            self.sinking
-                .iter()
-                .map(move |(f, from)| corpse(f, (self.time - from) / CORPSE_SINK_SECONDS)),
+            self.sinking.iter().map(move |(f, from)| {
+                corpse(f, ((self.time - from) / CORPSE_SINK_SECONDS).max(0.0))
+            }),
         )
     }
 
