@@ -73,6 +73,7 @@ impl Conquest {
             || regs.on_wall[r]
             || regs.summoned_left[r] > 0
             || regs.cocooned(r)
+            || regs.turncoat[r]
         {
             return Err(Refusal::Busy);
         }

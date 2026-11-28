@@ -333,3 +333,91 @@ fn field_battles_count_prisoners_and_hold_none() {
         }
     ));
 }
+
+#[test]
+fn a_captor_recruits_a_lot_at_half_the_ransom_and_never_reinforces_it() {
+    let (mut w, halls, r) = caught(LINE);
+    let i = w.regiments.resolve(r).unwrap();
+    w.regiments.xp[i] = crate::veterancy::xp_for(1);
+    to_next_second(&mut w);
+    let (grub, marrow, lot) = w.recruit_price(0, 1, LINE).unwrap();
+    // Half the ransom of 10 of 24 soldiers of a 120 Grub, 24 Marrow
+    // regiment.
+    assert_eq!((grub, marrow, lot), (25, 5, 10));
+    assert!(
+        !order(
+            &mut w,
+            1,
+            Command::Recruit {
+                from: 0,
+                unit: LINE
+            }
+        ),
+        "the owner can't recruit their own"
+    );
+    let before = w.bank(0).unwrap();
+    let ours: Vec<_> = (w.regiments.iter())
+        .filter(|v| v.owner == 0)
+        .map(|v| v.handle)
+        .collect();
+    assert!(order(
+        &mut w,
+        0,
+        Command::Recruit {
+            from: 1,
+            unit: LINE
+        }
+    ));
+    let after = w.bank(0).unwrap();
+    assert_eq!(after.marrow, before.marrow - 5);
+    let new = (w.regiments.iter())
+        .find(|v| v.owner == 0 && !ours.contains(&v.handle))
+        .expect("recruited");
+    assert_eq!((new.models, new.rank), (10, 1));
+    let j = w.regiments.resolve(new.handle).unwrap();
+    assert!(w.regiments.turncoat[j]);
+    let fresh = crate::morale::fresh(&units()[0]);
+    assert!(w.regiments.morale[j] <= fresh / 2 + 1, "at half its morale");
+    // Beside its own hall, short of men, it is never refilled.
+    let _ = halls;
+    for _ in 0..30 * TICKS_PER_SECOND {
+        w.tick(&[]);
+    }
+    assert_eq!(w.regiments.models[j], 10, "a turncoat was reinforced");
+    assert!(w.prisoners_held().is_empty());
+}
+
+#[test]
+fn putting_prisoners_to_death_means_their_side_never_gives_up_again() {
+    let (mut w, halls, _) = caught(LINE);
+    to_next_second(&mut w);
+    assert!(
+        !order(&mut w, 1, Command::Execute { stockade: halls[0] }),
+        "only the captor"
+    );
+    assert!(
+        !order(&mut w, 0, Command::Execute { stockade: halls[1] }),
+        "nobody held there"
+    );
+    let mut told = false;
+    w.tick(&[PlayerCommand {
+        player: 0,
+        command: Command::Execute { stockade: halls[0] },
+    }]);
+    for e in w.events() {
+        told |= matches!(
+            e,
+            Event::Executed { captor: 0, soldiers: 10, owners, .. } if *owners == crate::events::owner_bit(1)
+        );
+    }
+    assert!(told, "{:?}", w.events());
+    assert!(w.prisoners_held().is_empty());
+    assert!(w.no_quarter(1, 0) && !w.no_quarter(0, 1));
+    assert!(w.ransom_price(1, 0, LINE).is_none());
+    // The next of player 1's caught alone fights on.
+    let r = spawn(&mut w, 1, LINE, 64, 64);
+    rout(&mut w, r, 10);
+    to_next_second(&mut w);
+    assert!(w.regiments.resolve(r).is_some(), "gave up after no quarter");
+    assert_eq!(w.prisoners_taken(0), 10);
+}

@@ -413,6 +413,16 @@ impl Writer {
                 self.u8(from);
                 self.var(u64::from(unit));
             }
+            // Format 61.
+            Command::Recruit { from, unit } => {
+                self.u8(57);
+                self.u8(from);
+                self.var(u64::from(unit));
+            }
+            Command::Execute { stockade } => {
+                self.u8(58);
+                self.structure(stockade);
+            }
             Command::SpawnStructure {
                 building,
                 tile,
@@ -1147,6 +1157,13 @@ impl<'a> Reader<'a> {
                 from: self.u8()?,
                 unit: self.var_as()?,
             },
+            57 => Command::Recruit {
+                from: self.u8()?,
+                unit: self.var_as()?,
+            },
+            58 => Command::Execute {
+                stockade: self.structure()?,
+            },
             tag @ (8 | 25) => Command::SpawnStructure {
                 building: self.var_as()?,
                 tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
@@ -1423,6 +1440,13 @@ mod tests {
                 into: 3,
             },
             Command::Ransom { from: 2, unit: 5 },
+            Command::Recruit { from: 1, unit: 6 },
+            Command::Execute {
+                stockade: StructureHandle {
+                    index: 3,
+                    generation: 2,
+                },
+            },
             Command::SpawnStructure {
                 building: 3,
                 tile: (-2, 140),

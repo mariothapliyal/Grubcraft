@@ -141,7 +141,11 @@ impl Conquest {
     /// regiment, a summoned one, one in a cocoon and any other.
     fn refills_by(&self, regs: &Regiments, units: &[UnitStats], i: usize) -> Option<Pay> {
         let unit = regs.unit[i];
-        if regs.models[i] >= regs.full_models[i] || regs.summoned_left[i] > 0 || regs.cocooned(i) {
+        if regs.models[i] >= regs.full_models[i]
+            || regs.summoned_left[i] > 0
+            || regs.cocooned(i)
+            || regs.turncoat[i]
+        {
             return None;
         }
         if self.unit(unit).undead {

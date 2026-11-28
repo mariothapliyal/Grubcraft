@@ -386,6 +386,15 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(from);
             w.var(u64::from(unit));
         }
+        Command::Recruit { from, unit } => {
+            w.u8(55);
+            w.u8(from);
+            w.var(u64::from(unit));
+        }
+        Command::Execute { stockade } => {
+            w.u8(56);
+            w.structure(stockade);
+        }
         Command::SpawnStructure {
             building,
             tile,
@@ -759,6 +768,13 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             from: r.u8()?,
             unit: r.var_as()?,
         },
+        55 => Command::Recruit {
+            from: r.u8()?,
+            unit: r.var_as()?,
+        },
+        56 => Command::Execute {
+            stockade: r.structure()?,
+        },
         8 => Command::SpawnStructure {
             building: r.var_as()?,
             tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
@@ -1080,6 +1096,13 @@ mod tests {
                 into: 3,
             },
             Command::Ransom { from: 3, unit: 7 },
+            Command::Recruit { from: 2, unit: 4 },
+            Command::Execute {
+                stockade: StructureHandle {
+                    index: 5,
+                    generation: 1,
+                },
+            },
             Command::SpawnStructure {
                 building: 40,
                 tile: (-1, 4000),

@@ -308,9 +308,10 @@ pub(crate) mod tests {
         pub casts: u32,
         pub chances: u32,
         /// Soldiers it took prisoner (docs/45), and the ransoms it paid
-        /// (orders), over the match.
+        /// and lots it recruited (orders), over the match.
         pub prisoners: u32,
         pub ransoms: u32,
+        pub recruits: u32,
     }
 
     impl Works {
@@ -404,6 +405,7 @@ pub(crate) mod tests {
                 chances: self.chances.max(o.chances),
                 prisoners: self.prisoners.max(o.prisoners),
                 ransoms: self.ransoms.max(o.ransoms),
+                recruits: self.recruits.max(o.recruits),
             }
         }
     }
@@ -673,6 +675,7 @@ pub(crate) mod tests {
                     gc_sim::Command::Clear { .. } => w.clears += 1,
                     gc_sim::Command::Evolve { .. } => w.cocoons += 1,
                     gc_sim::Command::Ransom { .. } => w.ransoms += 1,
+                    gc_sim::Command::Recruit { .. } => w.recruits += 1,
                     gc_sim::Command::UsePower { power, .. }
                         if (world.powers().get(usize::from(power)))
                             .is_some_and(|p| p.meter == gc_sim::Meter::Tithe) =>
@@ -1747,8 +1750,8 @@ pub(crate) mod tests {
             for (side, f) in played.sides.iter().zip(factions) {
                 let w = side.works;
                 println!(
-                    "seed {seed} {f:?}: {} prisoners taken, {} ransoms",
-                    w.prisoners, w.ransoms
+                    "seed {seed} {f:?}: {} prisoners taken, {} ransoms, {} recruits",
+                    w.prisoners, w.ransoms, w.recruits
                 );
                 taken += w.prisoners;
             }

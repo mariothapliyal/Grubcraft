@@ -49,6 +49,22 @@ Reviewed on Opus before building (2026-11-28). The review's ten points are folde
 - **The price:** the full reinforcement share of those soldiers, what reinforcing them would cost ([04](04-economy.md), "Reinforcement"). For a Brood evolution it is `reinforces_as`, both forms' costs. The Grub and Marrow go to the captor.
 - **How they come back:** at once, at the owner's first finished main building, as one regiment at the lot's count and keeping its rank. A ransom costs the same as training new men and saves the training building, the queue, the training time and a Brood larva; what it buys is the veterans back. (The plan first had them wait out the training time; that needs a second queue beside the buildings' own, so stage 1 brings them back at once, at full price, and the balance runs below show what it does.)
 
+### Recruit (Conquest)
+
+Mario chose this on 2026-11-28 ("Ransom and work and recruit, but also mass execution").
+
+- **Who recruits:** the captor, with the **Recruit** button (shown while it holds prisoners). The owner doesn't have to agree.
+- **The command:** `Command::Recruit { from, unit }` takes the oldest record of `from`'s `unit` that the issuer holds, one lot at a time, into the issuer's army. It is refused if the issuer holds none, or lacks the supply or the price.
+- **The price:** half the ransom of that lot (`RECRUIT_PERCENT` 50), paid to nobody.
+- **How they come:** at once, at the stockade's door, as one regiment of the captor's at the lot's count, keeping its rank, at half its morale.
+- **Turncoats:** a recruited regiment is never reinforced, never evolves and never gives itself up (`turncoat`), so it wears down and can't be laundered back into an ordinary regiment by a ransom or an escape. Another faction's units stay a passing gain, and the factions' tech and twists, which aren't built for foreign units, never have to carry them.
+
+### Mass execution (Conquest)
+
+- **The command:** `Command::Execute { stockade }` puts every prisoner the issuer holds at that stockade to death, with the **Execute** button (the stockade holding the most; a second click within 3 s confirms, as it can't be undone). Refused if the issuer holds none there.
+- **The dead:** they lie in a grave at the stockade, which the Concord's Tithe can raise in a match with a Tithe player. They count as no kills and give no experience.
+- **No quarter:** the owners can never ransom them, and from then on those owners' regiments never give themselves up to that captor: they fight on, or rally, or are cut down. It is told as `Event::Executed`, with news for both sides.
+
 ### Computer players
 
 - **Chasing:** generals already run down routers, so they take prisoners with no change.
@@ -56,6 +72,8 @@ Reviewed on Opus before building (2026-11-28). The review's ten points are folde
   - the regiment is veteran (rank 1 or more), or the player is short of army;
   - it holds that lot's price twice over, and the supply free;
   - it has paid no ransom in the last 60 seconds.
+- **Recruit:** short of an army, with nothing to ransom, it recruits on the same terms (twice the price in hand, the supply free, one deal a minute).
+- **Execution:** never. No quarter costs it more than it gains.
 
 ## Numbers (first pass)
 
@@ -67,6 +85,8 @@ Reviewed on Opus before building (2026-11-28). The review's ten points are folde
 | Run before giving up | 5 s |
 | Ransom | the full reinforcement share, back at once |
 | Computer players ransom | veterans or when short, at twice the price in hand, at most every 60 s |
+| Recruit | half the ransom; half morale; never reinforced |
+| Execute | all at a stockade; no quarter from those owners after |
 
 ## Balance
 
@@ -84,9 +104,10 @@ Mario sees the numbers before the pull request merges (2026-11-27: no balance ch
    - sim tests (`gc_sim/src/prisoner_tests.rs`: caught alone, a friend near, a summoned unit, ransom at rank, work, escape, a full hall, Field Battles);
    - the stress scenario `prisoners`: Skitterlings run down by Clan horse give up, are held at the Clan Hall, ransomed back at the Hive, and freed when the hall falls;
    - `ai_only_generals_take_prisoners`: Generals take prisoners in a Conquest match.
+1b. **Recruit and mass execution** (built 2026-11-28, Mario's answer to the open call). `Command::Recruit` (replay tag 57, wire tag 55) and `Command::Execute` (replay tag 58, wire tag 56); the Recruit and Execute buttons and news; computer players recruit. Checks: sim tests (recruit at half price, a turncoat never reinforced, execution, no quarter) and the `conquest-prisoners-1v1` golden, which now ransoms, recruits and executes.
 2. **Drawn stockades.** A pen of prisoners beside each stockade, drawn only, with no simulation change.
 3. **Later, only if Mario wants it:** the march to the stockade, as a column the enemy can free.
 
-## Open call for Mario
+## Mario's call
 
-What prisoners are for. The recommendation is **ransom and work**, as above. The other options are ransom only (no work), or also letting the captor *recruit* them into their own army. Recruiting would put another faction's units in an army, which the factions' tech and twists aren't built for.
+What prisoners are for. The recommendation was ransom and work; Mario chose (2026-11-28) **ransom, work and recruit, and also mass execution**. Recruiting puts another faction's units in an army, which the factions' tech and twists aren't built for, so recruited regiments never reinforce or evolve.
