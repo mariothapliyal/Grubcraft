@@ -62,6 +62,26 @@ macro_rules! number {
 }
 number!(u8, u16, u32, u64, i16, i32);
 
+/// [`State`] for a value packed as another `State` value: `encode` gives
+/// what it is written and hashed as, so the two can't drift apart, and
+/// `decode` takes that back, `None` for what no value packs as.
+macro_rules! packed_state {
+    ($t:ty: $packed:ty, $encode:expr, $decode:expr) => {
+        impl $crate::state::State for $t {
+            fn write(&self, out: &mut alloc::vec::Vec<u8>) {
+                $crate::state::State::write(&($encode)(*self), out);
+            }
+            fn read(input: &mut &[u8]) -> Option<Self> {
+                <$packed as $crate::state::State>::read(input).and_then($decode)
+            }
+            fn hash(&self, h: &mut $crate::hash::StateHasher) {
+                $crate::state::State::hash(&($encode)(*self), h);
+            }
+        }
+    };
+}
+pub(crate) use packed_state;
+
 impl State for bool {
     fn write(&self, out: &mut Vec<u8>) {
         out.push(u8::from(*self));
@@ -167,17 +187,7 @@ impl<T: State> State for Option<T> {
     }
 }
 
-impl State for Formation {
-    fn write(&self, out: &mut Vec<u8>) {
-        (*self as u8).write(out);
-    }
-    fn read(input: &mut &[u8]) -> Option<Self> {
-        Formation::from_u8(u8::read(input)?)
-    }
-    fn hash(&self, h: &mut StateHasher) {
-        (*self as u8).hash(h);
-    }
-}
+packed_state!(Formation: u8, |f| f as u8, Formation::from_u8);
 
 impl State for MoraleState {
     fn write(&self, out: &mut Vec<u8>) {
@@ -258,6 +268,23 @@ pub(crate) fn other<T: State>(v: T) -> T {
         }
     }
     panic!("no other value of this type");
+}
+
+/// The bytes `v` is written as, once it is checked that it hashes as those
+/// same bytes fed in one at a time, the way a row of `u8` fields is: for
+/// tests that a value packed in an enum keeps the bytes it had as numbers.
+#[cfg(test)]
+pub(crate) fn written<T: State>(v: T) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    v.write(&mut bytes);
+    let mut hashed = StateHasher::new();
+    v.hash(&mut hashed);
+    let mut by_byte = StateHasher::new();
+    for b in &bytes {
+        b.hash(&mut by_byte);
+    }
+    assert_eq!(hashed.finish(), by_byte.finish(), "hashed unlike its bytes");
+    bytes
 }
 
 #[cfg(test)]

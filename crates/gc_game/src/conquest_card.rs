@@ -20,6 +20,7 @@ use gc_ui::hud::{GRID_SLOTS, SlotState};
 use glam::Vec2;
 
 use crate::hud::Armed;
+use crate::selection::Picked;
 use crate::{Running, buildings, from_fx_vec, fx_vec, sounds};
 
 /// A worker's Build button: F, the special slot.
@@ -148,7 +149,7 @@ impl Running {
         }
         let side = self.sandbox.side;
         let units = &self.data.conquest_units;
-        let from = (self.selected.iter())
+        let from = (self.selected.regiments().iter())
             .filter_map(|&h| self.world.regiments.get(h).filter(|r| r.owner == side))
             .map(|r| r.unit)
             .find(|&u| evolutions_of(units, u).next().is_some())?;
@@ -162,7 +163,7 @@ impl Running {
     fn evolvers(&self, into: UnitId) -> impl Iterator<Item = RegimentHandle> + '_ {
         let side = self.sandbox.side;
         let from = (self.data.conquest_units.get(usize::from(into))).map(|u| u.evolves_from);
-        (self.selected.iter().copied()).filter(move |&h| {
+        (self.selected.regiments().iter().copied()).filter(move |&h| {
             self.world
                 .regiments
                 .get(h)
@@ -252,12 +253,13 @@ impl Running {
     /// The selected regiments that are workers.
     pub fn selected_workers(&self) -> impl Iterator<Item = RegimentHandle> + '_ {
         let (regiments, units) = (&self.world.regiments, &self.data.conquest_units);
-        (self.selected.iter().copied()).filter(|&h| is_worker(regiments, units, h))
+        (self.selected.regiments().iter().copied()).filter(|&h| is_worker(regiments, units, h))
     }
 
     /// Whether something is selected and all of it is workers.
     pub fn selection_all_workers(&self) -> bool {
-        !self.selected.is_empty() && self.selected_workers().count() == self.selected.len()
+        !self.selected.regiments().is_empty()
+            && self.selected_workers().count() == self.selected.regiments().len()
     }
 
     /// The selected worker nearest `spot`.
@@ -749,12 +751,13 @@ impl Running {
     /// can (if a regiment that mans walls was refused). `None` unless
     /// regiments are selected over a building of yours.
     fn manning_under_cursor(&self) -> Option<(StructureHandle, usize, Option<Refusal>)> {
-        if !self.conquest_match() || self.watching.is_some() || self.selected.is_empty() {
+        if !self.conquest_match() || self.watching.is_some() || self.selected.regiments().is_empty()
+        {
             return None;
         }
         let side = self.sandbox.side;
         let wall = self.building_under_cursor(|o| o == side)?;
-        let (crew, why) = man_verdict(&self.selected, |h| self.world.man_check(h, wall));
+        let (crew, why) = man_verdict(self.selected.regiments(), |h| self.world.man_check(h, wall));
         Some((wall, crew, why))
     }
 
@@ -762,7 +765,8 @@ impl Running {
     /// man it are sent up, and the rest do what the click means to them.
     /// Returns whether any regiment was sent.
     pub fn man_right_click(&mut self, at: Option<Vec2>) -> bool {
-        if !self.conquest_match() || self.watching.is_some() || self.selected.is_empty() {
+        if !self.conquest_match() || self.watching.is_some() || self.selected.regiments().is_empty()
+        {
             return false;
         }
         let side = self.sandbox.side;
@@ -773,8 +777,8 @@ impl Running {
         if self.is_gate_piece(wall) && !self.input.alt {
             return false;
         }
-        let (up, rest): (Vec<_>, Vec<_>) =
-            (self.selected.iter()).partition(|&&h| self.world.man_check(h, wall).is_ok());
+        let (up, rest): (Vec<_>, Vec<_>) = (self.selected.regiments().iter())
+            .partition(|&&h| self.world.man_check(h, wall).is_ok());
         if up.is_empty() {
             return false;
         }
@@ -786,7 +790,7 @@ impl Running {
         // the wall), else a move. Those orders go to the selection, so it
         // is the rest for them.
         if let Some(at) = at.filter(|_| !rest.is_empty()) {
-            let selected = std::mem::replace(&mut self.selected, rest);
+            let selected = std::mem::replace(&mut self.selected, Picked::from(rest));
             if !self.conquest_right_click(at) {
                 self.issue_group_order(crate::hud::move_order(at));
             }
@@ -831,14 +835,17 @@ impl Running {
     /// building of a side hostile to yours.
     fn climbing_under_cursor(&self) -> Option<(StructureHandle, usize, Option<Refusal>)> {
         let wall = self.enemy_wall_under_cursor()?;
-        let (climbers, why) = man_verdict(&self.selected, |h| self.world.climb_check(h, wall));
+        let (climbers, why) = man_verdict(self.selected.regiments(), |h| {
+            self.world.climb_check(h, wall)
+        });
         Some((wall, climbers, why))
     }
 
     /// The enemy building under the cursor, with regiments selected, in a
     /// Conquest match you play in.
     fn enemy_wall_under_cursor(&self) -> Option<StructureHandle> {
-        if !self.conquest_match() || self.watching.is_some() || self.selected.is_empty() {
+        if !self.conquest_match() || self.watching.is_some() || self.selected.regiments().is_empty()
+        {
             return None;
         }
         let side = self.sandbox.side;
@@ -857,8 +864,8 @@ impl Running {
         let Some(wall) = self.enemy_wall_under_cursor() else {
             return false;
         };
-        let (up, rest): (Vec<_>, Vec<_>) =
-            (self.selected.iter()).partition(|&&h| self.world.climb_check(h, wall).is_ok());
+        let (up, rest): (Vec<_>, Vec<_>) = (self.selected.regiments().iter())
+            .partition(|&&h| self.world.climb_check(h, wall).is_ok());
         if up.is_empty() {
             return false;
         }
@@ -867,7 +874,7 @@ impl Running {
             structure: wall,
         }));
         if !rest.is_empty() {
-            let selected = std::mem::replace(&mut self.selected, rest);
+            let selected = std::mem::replace(&mut self.selected, Picked::from(rest));
             self.issue_siege(wall);
             self.selected = selected;
         }
@@ -930,7 +937,8 @@ impl Running {
         let side = self.sandbox.side;
         // Workers used up by what they build (the Brood's) can only start a
         // foundation nothing has started, and one is enough.
-        let spent = (self.selected.iter()).any(|&h| has_flag(regiments, units, h, UNIT_CONSUMED));
+        let spent = (self.selected.regiments().iter())
+            .any(|&h| has_flag(regiments, units, h, UNIT_CONSUMED));
         let mend = self.building_under_cursor(|o| o == side).filter(|&h| {
             self.world
                 .structures()
@@ -950,7 +958,8 @@ impl Running {
         // Workers that can't gather there (the Choir's only build; the
         // Concord's have nowhere to take Grub) just walk to the node, with
         // any others, who gather.
-        let gathers = |node| (self.selected.iter()).any(|&h| self.world.can_gather(h, node));
+        let gathers =
+            |node| (self.selected.regiments().iter()).any(|&h| self.world.can_gather(h, node));
         let job = match (mend, self.node_near(at).filter(|&n| gathers(n))) {
             (Some(structure), _) => Job::Mend(structure),
             (None, Some(node)) => Job::Gather(node),
@@ -973,10 +982,11 @@ impl Running {
         };
         let crew = match job {
             Job::Mend(_) if spent => 1,
-            _ => self.selected.len(),
+            _ => self.selected.regiments().len(),
         };
         self.human_orders.extend(
             self.selected
+                .regiments()
                 .iter()
                 .take(crew)
                 .map(|&regiment| PlayerCommand {
@@ -1016,7 +1026,7 @@ impl Running {
     /// building under the mouse that is one for them (their own Waystation,
     /// an ally's main building) or a neutral post by it. Whether it did.
     fn send_trading(&mut self, at: Vec2) -> bool {
-        let traders: Vec<RegimentHandle> = (self.selected.iter().copied())
+        let traders: Vec<RegimentHandle> = (self.selected.regiments().iter().copied())
             .filter(|&h| self.world.trades(h))
             .collect();
         if traders.is_empty() || self.enemy_at(at).is_some() {

@@ -1032,7 +1032,7 @@ impl<'a> Reader<'a> {
                 missile: self.var_as()?,
             });
         }
-        if format >= 58 {
+        if format >= 59 {
             u.kit = match self.u8()? {
                 0 => None,
                 k => Some(gc_sim::abilities::HeroKit {

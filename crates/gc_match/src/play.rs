@@ -103,7 +103,7 @@ impl Match {
             &tables.units,
             &tables.factions,
             &tables.points,
-            field_starts(map),
+            &field_starts(map, setup.players.len()),
             seed,
             deploy,
             &mut minds,

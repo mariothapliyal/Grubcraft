@@ -28,6 +28,7 @@ fn map(choice: usize, seed: u64) -> Map {
         choice,
         tiles: 192,
         seed,
+        ring: 0,
     }
     .make()
 }

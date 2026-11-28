@@ -268,6 +268,31 @@ fn an_auto_gate_opens_for_its_side_and_shuts_behind_it() {
 }
 
 #[test]
+fn a_gate_set_back_to_auto_stays_shut_with_no_one_about() {
+    // Party 0 goes through and locks the gate behind it at once, while its
+    // Auto hold still runs; set back to Auto long after, with no one of its
+    // side near, it stays shut rather than standing open for what was left
+    // of that hold.
+    let (mut w, gate) = walled(&[]);
+    let r = spawn(&mut w, 0, 31, 45, NORTH);
+    move_to(&mut w, 0, r, 31, 15);
+    for _ in 0..60 * TICKS_PER_SECOND {
+        if w.regiments.position(r).unwrap().y < Fx::from_int(29) {
+            break;
+        }
+        w.tick(&[]);
+    }
+    assert!(open(&w, gate), "it should still stand open behind it");
+    assert!(set_gate(&mut w, 0, gate, GateMode::Locked));
+    assert!(reaches(&mut w, r, (31, 15), 60), "never came through");
+    assert!(!open(&w, gate));
+    assert!(set_gate(&mut w, 0, gate, GateMode::Auto));
+    assert!(!open(&w, gate), "open to everyone with no one about");
+    w.tick(&[]);
+    assert!(!open(&w, gate));
+}
+
+#[test]
 fn an_enemy_routes_through_an_auto_gate_while_it_stands_open() {
     // Party 1's regiment, well off to the east, is sent north: while the
     // gate is shut its route ends south of the wall; once party 0's column

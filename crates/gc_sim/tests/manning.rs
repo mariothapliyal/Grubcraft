@@ -10,9 +10,9 @@ use gc_sim::nav::CELLS_PER_TILE;
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::structures::{Armour, LINE, Refusal, Role, TowerAttack};
 use gc_sim::{
-    BuildingStats, Capacities, Command, ConquestSetup, ConquestUnit, Cover, Ground, Growth,
-    MatchSetup, PlayerCommand, RegimentHandle, RegimentView, StructureHandle, TICKS_PER_SECOND,
-    UnitStats, World,
+    BuildingStats, Capacities, Command, ConquestSetup, ConquestUnit, Cover, Formation, Ground,
+    Growth, MatchSetup, PlayerCommand, RegimentHandle, RegimentView, StructureHandle,
+    TICKS_PER_SECOND, UnitStats, World,
 };
 
 const WORKER: u16 = 0;
@@ -448,6 +448,88 @@ fn it_comes_down_in_the_shape_it_climbed_in() {
     assert_ne!(view(&w, ours).unwrap().frontage, frontage);
     assert!(move_to(&mut w, 0, ours, 10, 24));
     assert_eq!(view(&w, ours).unwrap().frontage, frontage);
+}
+
+/// Side 0 sets regiment `ours` in `formation`: whether the order went
+/// through.
+fn set_formation(w: &mut World, ours: RegimentHandle, formation: Formation) -> bool {
+    order(
+        w,
+        0,
+        Command::SetFormation {
+            regiment: ours,
+            formation,
+        },
+    )
+}
+
+#[test]
+fn a_column_down_off_the_wall_still_widens_to_its_old_line() {
+    let mut w = world();
+    let ours = spawn(&mut w, 0, FOOT, 14, 24);
+    let line = view(&w, ours).unwrap().frontage;
+    assert!(set_formation(&mut w, ours, Formation::Column));
+    let column = view(&w, ours).unwrap().frontage;
+    assert!(column < line, "column {column}, line {line}");
+    assert!(man(&mut w, 0, ours, (WALL_X, 24)));
+    climb(&mut w, ours);
+    assert!(move_to(&mut w, 0, ours, 10, 24));
+    assert_eq!(view(&w, ours).unwrap().frontage, column);
+    // Out of the column it forms the line it stood in before, not one as
+    // narrow as the column.
+    assert!(set_formation(&mut w, ours, Formation::Line));
+    assert_eq!(view(&w, ours).unwrap().frontage, line);
+}
+
+/// Side 0 sends regiment `ours`, up on the wall, down to the ground
+/// west of it with a width of `files` drawn for it.
+fn come_down_wide(w: &mut World, ours: RegimentHandle, files: u16) -> bool {
+    order(
+        w,
+        0,
+        Command::MoveTo {
+            regiment: ours,
+            target: FxVec2::from_ints(10, 24),
+            facing: None,
+            files,
+            pace: Fx::ZERO,
+            brigade: 0,
+        },
+    )
+}
+
+/// A width drawn for it while it is up on the wall is the width it
+/// comes down at, in Line.
+#[test]
+fn a_width_drawn_on_the_wall_is_kept_coming_down() {
+    let mut w = world();
+    let ours = spawn(&mut w, 0, FOOT, 14, 24);
+    let line = view(&w, ours).unwrap().frontage;
+    assert!(man(&mut w, 0, ours, (WALL_X, 24)));
+    climb(&mut w, ours);
+    let files = line / 2;
+    assert!(come_down_wide(&mut w, ours, files));
+    w.tick(&[]);
+    assert!(!view(&w, ours).unwrap().on_wall);
+    assert_eq!(view(&w, ours).unwrap().frontage, files);
+}
+
+/// A width drawn for a column while it is up on the wall is the one it
+/// widens out to once down.
+#[test]
+fn a_width_drawn_on_the_wall_is_the_one_a_column_widens_to() {
+    let mut w = world();
+    let ours = spawn(&mut w, 0, FOOT, 14, 24);
+    let files = view(&w, ours).unwrap().frontage / 2;
+    assert!(set_formation(&mut w, ours, Formation::Column));
+    let column = view(&w, ours).unwrap().frontage;
+    assert!(man(&mut w, 0, ours, (WALL_X, 24)));
+    climb(&mut w, ours);
+    assert!(come_down_wide(&mut w, ours, files));
+    w.tick(&[]);
+    assert_eq!(view(&w, ours).unwrap().frontage, column);
+    assert!(set_formation(&mut w, ours, Formation::Line));
+    assert_eq!(view(&w, ours).unwrap().frontage, files);
 }
 
 /// Whether side 0's regiment of `unit` on the wall is still up there

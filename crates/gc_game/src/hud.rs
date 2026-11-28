@@ -319,6 +319,14 @@ impl HudState {
         self.right_held = false;
     }
 
+    /// The HUD is not run this frame (a guide or menu over it, or the HUD
+    /// hidden): forget what the mouse rests on, so a tooltip or hover card
+    /// waits its full delay again when the HUD comes back.
+    pub fn forget_hover(&mut self) {
+        self.hud.forget_hover();
+        self.hover_own = None;
+    }
+
     pub fn wants(&self, screen: (i32, i32), mouse: (i32, i32)) -> bool {
         self.hud.wants(screen, mouse)
     }
@@ -571,7 +579,7 @@ impl Running {
             .generals()
             .find(|g| g.party == side && g.fell.is_none())
             .map(|g| g.regiment);
-        for &h in &self.selected {
+        for &h in self.selected.regiments() {
             let Some(r) = self.world.regiments.get(h).filter(|r| r.owner == side) else {
                 continue;
             };
@@ -695,6 +703,22 @@ impl Running {
         })
     }
 
+    /// Whether the HUD is drawn this frame (rather than the guide, the
+    /// menu or nothing).
+    pub fn hud_drawn(&self) -> bool {
+        self.guide.is_none() && !self.menu_open && self.match_started && self.showroom.is_none()
+    }
+
+    /// The share of the window's height the HUD's opaque bottom bar covers
+    /// this frame, 0 when it is not drawn.
+    pub fn hud_cover(&self) -> f32 {
+        let (screen, _) = self.ui_screen();
+        if !self.hud_drawn() || screen.1 <= 0 {
+            return 0.0;
+        }
+        gc_ui::hud::HudLayout::new(screen).bar.h as f32 / screen.1 as f32
+    }
+
     /// Whether a mouse click now belongs to the HUD, not the battlefield.
     pub fn hud_wants_mouse(&self) -> bool {
         self.match_started
@@ -712,14 +736,11 @@ impl Running {
             .retain(|&h| self.world.regiments.get(h).is_some());
         self.drop_stale_power();
         self.drop_stale_cast();
-        // A building stays selected while it stands and is ours, and until
-        // a regiment is.
-        if !self.selected.is_empty()
-            || self
-                .selected_structure
-                .is_some_and(|h| self.world.structures().and_then(|s| s.owner(h)) != Some(side))
+        // A building stays selected while it stands and is ours.
+        if (self.selected.structure())
+            .is_some_and(|h| self.world.structures().and_then(|s| s.owner(h)) != Some(side))
         {
-            self.selected_structure = None;
+            self.selected.drop_structure();
         }
         let tick = self.world.tick_count();
         if self
@@ -790,7 +811,7 @@ impl Running {
                 gc_ui::Rect::new(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1))
             });
 
-        let selection = (!self.selected.is_empty())
+        let selection = (!self.selected.regiments().is_empty())
             .then(|| self.selection_info(side))
             .flatten();
         // Army shapes to choose from (the tray shows them for two or more
@@ -902,7 +923,7 @@ impl Running {
         let mut chevrons: Vec<([i32; 2], u8)> = Vec::new();
         if self.ride.is_none() {
             let field = gc_ui::hud::HudLayout::new(screen).field;
-            for &h in &self.selected {
+            for &h in self.selected.regiments() {
                 let (Some(r), Some(f)) = (
                     self.world.regiments.get(h),
                     self.world.regiments.feedback(h),
@@ -945,22 +966,23 @@ impl Running {
         let hud = &mut self.hud;
         // A power being aimed needs no selection, unless it shifts one (see
         // `drop_stale_power`).
-        if self.selected.is_empty() && !matches!(hud.armed, Some(Armed::Power(_))) {
+        if self.selected.regiments().is_empty() && !matches!(hud.armed, Some(Armed::Power(_))) {
             hud.armed = None;
         }
         hud.dots.clear();
         hud.cards.clear();
         hud.picked.clear();
-        hud.picked.extend(self.selected.iter().map(|h| h.index));
+        hud.picked
+            .extend(self.selected.regiments().iter().map(|h| h.index));
         hud.picked.sort_unstable();
         let picked = |h: gc_sim::RegimentHandle| hud.picked.binary_search(&h.index).is_ok();
         // The tray shows the selection, or else the group last recalled; a
         // selected building shows its own panel instead.
         let (shown, title): (&[_], _) = match self.last_group_key {
             _ if picked_structure.is_some() => (&[], String::new()),
-            _ if !self.selected.is_empty() => (
-                &self.selected,
-                format!("Selected ({})", self.selected.len()),
+            _ if !self.selected.regiments().is_empty() => (
+                self.selected.regiments(),
+                format!("Selected ({})", self.selected.regiments().len()),
             ),
             Some((n, _)) => (
                 &self.control_groups[n],
@@ -1045,8 +1067,8 @@ impl Running {
         let hero = if hud.hero_preview {
             Some(preview_hero(crate::color_of(&self.parties, side)))
         } else {
-            match self.selected[..] {
-                [h] => hero_panel(&self.world, h, &self.units.names, |p| {
+            match self.selected.regiments() {
+                &[h] => hero_panel(&self.world, h, &self.units.names, |p| {
                     crate::color_of(&self.parties, p)
                 }),
                 _ => None,
@@ -1057,7 +1079,7 @@ impl Running {
             None => Default::default(),
         };
         // A replay plays its recorded orders and nobody else's.
-        let has_orders = !self.selected.is_empty() && self.watching.is_none();
+        let has_orders = !self.selected.regiments().is_empty() && self.watching.is_none();
         let ready = |on: bool| if on { SlotState::Ready } else { SlotState::Off };
         let mut grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|i| GridSlot {
             label: LABELS[i],
@@ -1069,13 +1091,13 @@ impl Running {
         grid[SLOT_ATTACK].state = ready(has_orders);
         grid[SLOT_ADVANCE].state = ready(has_orders);
         grid[SLOT_FORMATION].state = ready(has_orders);
-        let has_spears = self.selected.iter().any(|&h| {
+        let has_spears = self.selected.regiments().iter().any(|&h| {
             self.world
                 .regiments
                 .get(h)
                 .is_some_and(|r| self.units.stats[r.unit as usize].reach)
         });
-        let has_bows = self.selected.iter().any(|&h| {
+        let has_bows = self.selected.regiments().iter().any(|&h| {
             self.world
                 .regiments
                 .get(h)
@@ -1448,10 +1470,9 @@ impl Running {
                     return;
                 };
                 if add {
-                    self.toggle_selected(h);
+                    self.selected.toggle(h);
                 } else {
-                    self.selected.clear();
-                    self.selected.push(h);
+                    self.selected.select_only(h);
                 }
                 self.ui_sound(sounds::UiSound::Select);
             }
@@ -1495,7 +1516,7 @@ impl Running {
                 self.ui_sound(sounds::UiSound::Select);
             }
             HudEvent::Order([x, z]) => {
-                if !self.selected.is_empty() {
+                if !self.selected.regiments().is_empty() {
                     self.issue_group_order(move_order(Vec2::new(x, z)));
                 }
             }
@@ -1586,7 +1607,7 @@ impl Running {
 
     /// A battle grid slot: Move, Attack, Formation, Brace or Fall back.
     pub fn battle_press(&mut self, slot: usize) {
-        if self.watching.is_some() || self.sandbox.placing || self.selected.is_empty() {
+        if self.watching.is_some() || self.sandbox.placing || self.selected.regiments().is_empty() {
             return;
         }
         // A hero shown owns these slots for its abilities.
@@ -1694,7 +1715,7 @@ impl Running {
 
     /// The selected building: only while no regiment is selected.
     pub fn picked_structure(&self) -> Option<StructureHandle> {
-        self.selected_structure.filter(|_| self.selected.is_empty())
+        self.selected.structure()
     }
 
     /// F1: select the next idle worker and look at it.
@@ -1711,9 +1732,7 @@ impl Running {
             return;
         };
         self.idle_from = Some(h.index);
-        self.selected.clear();
-        self.selected.push(h);
-        self.selected_structure = None;
+        self.selected.select_only(h);
         if let Some(p) = self.world.regiments.position(h) {
             self.look_at(from_fx_vec(p));
         }
@@ -2570,6 +2589,7 @@ mod tests {
             choice: gc_map::WILDS + 1,
             tiles: 512,
             seed: 3,
+            ring: 0,
         }
         .make();
         let amber = site_colour(Kind::Village).unwrap();

@@ -263,19 +263,25 @@ impl Rivers {
                 return false;
             };
             let pieces = &mut self.debris.pieces;
-            let Some(k) =
-                (pieces.iter()).position(|p| p.is_some_and(|p| p.jammed && p.next == fire.pier))
-            else {
+            let Some((k, piece)) = (pieces.iter().enumerate()).find_map(|(k, p)| {
+                p.filter(|p| p.jammed && p.next == fire.pier)
+                    .map(|p| (k, p))
+            }) else {
                 return false;
             };
             (self.debris.blows).push((pier.slot, DECK_BURN_PER_TEN_THOUSAND));
-            // A new piece to burn down (the last one burnt, or pulled out).
-            if usize::from(fire.piece) != k {
+            // A new piece to burn down (the last one burnt, or pulled
+            // out, or gone however it went): it starts from nothing, even
+            // one jammed into the same place in the pool, which would
+            // otherwise take over the seconds the last one burned and go
+            // up at once.
+            if usize::from(fire.piece) != k || fire.born != piece.born {
                 fire.piece = k as u8;
+                fire.born = piece.born;
                 fire.seconds = 0;
             }
             fire.seconds += 1;
-            if pieces[k].is_some_and(|p| fire.seconds >= BURN_SECONDS * p.kind.mass()) {
+            if fire.seconds >= BURN_SECONDS * piece.kind.mass() {
                 pieces[k] = None;
             }
             true
@@ -318,6 +324,7 @@ impl Rivers {
         let fire = super::JamFire {
             pier,
             piece: u8::MAX,
+            born: 0,
             seconds: 0,
         };
         fires.insert(at, fire);
@@ -465,5 +472,100 @@ impl Rivers {
     /// How much of stretch `s`'s outflow its jams hold back, percent.
     pub(crate) fn choke(&self, s: usize) -> u8 {
         self.debris.choke.get(s).copied().unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{JamFire, Kind, Piece};
+    use super::*;
+
+    /// Rivers with one pier, on tile 10, and a fire lit on its jam.
+    fn burning() -> Rivers {
+        let mut r = Rivers::default();
+        let slot = StructureHandle {
+            index: 0,
+            generation: 0,
+        };
+        r.debris.piers = alloc::vec![Pier {
+            tile: 10,
+            ..Pier::new(slot, 0, 1, 1000)
+        }];
+        r.debris.fires = alloc::vec![JamFire {
+            pier: 10,
+            piece: u8::MAX,
+            born: 0,
+            seconds: 0,
+        }];
+        r
+    }
+
+    /// A piece of `kind` jammed against the pier on tile 10.
+    fn jammed(kind: Kind) -> Option<Piece> {
+        let mut p = Piece::new(kind, 9, 0, false, 0);
+        p.next = 10;
+        p.jammed = true;
+        Some(p)
+    }
+
+    /// Seconds of burning the piece in pool place 0 lasts.
+    fn seconds_to_burn(r: &mut Rivers) -> u32 {
+        let born = r.debris.pieces[0].map(|p| p.born);
+        for s in 1..=60 {
+            r.burn_jams();
+            if r.debris.pieces[0].map(|p| p.born) != born {
+                return s;
+            }
+        }
+        panic!("it never burnt down");
+    }
+
+    #[test]
+    fn a_piece_jammed_where_the_last_burnt_down_burns_its_own_time() {
+        let mut r = burning();
+        r.debris.pieces = alloc::vec![jammed(Kind::Raft)];
+        let raft = u32::from(BURN_SECONDS * Kind::Raft.mass());
+        assert_eq!(seconds_to_burn(&mut r), raft);
+        // A log jams into the place the raft burnt out of.
+        let mut log = jammed(Kind::Log);
+        log.as_mut().unwrap().born = 1;
+        r.debris.pieces[0] = log;
+        let log = u32::from(BURN_SECONDS * Kind::Log.mass());
+        assert_eq!(seconds_to_burn(&mut r), log);
+    }
+
+    #[test]
+    fn a_piece_jammed_where_a_burning_one_was_pulled_burns_its_own_time() {
+        let mut r = burning();
+        r.side = 16;
+        r.debris.pieces = alloc::vec![jammed(Kind::Raft)];
+        for _ in 0..8 {
+            r.burn_jams();
+        }
+        // Workers drag the raft out a second before it would burn down.
+        assert!(r.pull_jam(9, 0, Kind::Raft.mass()));
+        let mut log = jammed(Kind::Log);
+        log.as_mut().unwrap().born = 1;
+        r.debris.pieces[0] = log;
+        let log = u32::from(BURN_SECONDS * Kind::Log.mass());
+        assert_eq!(seconds_to_burn(&mut r), log);
+    }
+
+    /// However the burning piece's place in the pool was emptied (a piece
+    /// floating off the map, or another put in over it, empties one with
+    /// no word to the fire), a piece jammed into it burns its own time.
+    #[test]
+    fn a_piece_jammed_where_a_burning_one_went_any_way_burns_its_own_time() {
+        let mut r = burning();
+        r.debris.pieces = alloc::vec![jammed(Kind::Raft)];
+        for _ in 0..8 {
+            r.burn_jams();
+        }
+        r.debris.pieces[0] = None;
+        let mut log = jammed(Kind::Log);
+        log.as_mut().unwrap().born = 1;
+        r.debris.pieces[0] = log;
+        let log = u32::from(BURN_SECONDS * Kind::Log.mass());
+        assert_eq!(seconds_to_burn(&mut r), log);
     }
 }

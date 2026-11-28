@@ -130,7 +130,7 @@ impl Running {
         let out = &mut self.instances;
         if self.watching.is_none() {
             let mut seen: Vec<[i32; 4]> = Vec::new();
-            for h in self.selected.iter().copied() {
+            for h in self.selected.regiments().iter().copied() {
                 let Some(job) = world.clearing_of(h) else {
                     continue;
                 };

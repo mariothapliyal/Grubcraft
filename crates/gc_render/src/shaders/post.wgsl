@@ -95,7 +95,8 @@ struct Grade {
     shadow_tint: vec4<f32>,
     // rgb: tint of the bright end
     light_tint: vec4<f32>,
-    // x: film grain, y: time in seconds
+    // x: film grain, y: time in seconds, z: the world's resolution as a share
+    // of the screen's (under 1 it is scaled up, and sharpened)
     film: vec4<f32>,
     // xy: the shake (an offset of the picture), z: the zoom that hides its
     // edges, w: the height of each letterbox bar, as a share of the screen
@@ -136,6 +137,29 @@ const SHAFT_FADE: f32 = 0.93;
 const SHAFT_LOW: f32 = 1.0;
 const SHAFT_HIGH: f32 = 2.2;
 
+// How much a world drawn at a lower resolution is sharpened as it is scaled
+// up, at the lowest scale (less nearer full size).
+const SHARPEN: f32 = 0.9;
+// The lowest scale (`MIN_WORLD_SCALE` in lib.rs).
+const MIN_SCALE: f32 = 0.5;
+
+// The world drawn at `scale` of the screen's resolution, at `uv`: the filtered
+// texel, sharpened against its four neighbours to give back the edges the
+// filtering softens, and held inside their range so no edge rings (after
+// AMD's contrast-adaptive sharpening).
+fn upscaled(uv: vec2<f32>, scale: f32) -> vec3<f32> {
+    let t = 1.0 / vec2<f32>(textureDimensions(src));
+    let c = textureSampleLevel(src, src_sampler, uv, 0.0).rgb;
+    let n = textureSampleLevel(src, src_sampler, uv - vec2<f32>(0.0, t.y), 0.0).rgb;
+    let s = textureSampleLevel(src, src_sampler, uv + vec2<f32>(0.0, t.y), 0.0).rgb;
+    let w = textureSampleLevel(src, src_sampler, uv - vec2<f32>(t.x, 0.0), 0.0).rgb;
+    let e = textureSampleLevel(src, src_sampler, uv + vec2<f32>(t.x, 0.0), 0.0).rgb;
+    let lo = min(c, min(min(n, s), min(w, e)));
+    let hi = max(c, max(max(n, s), max(w, e)));
+    let amount = SHARPEN * clamp((1.0 - scale) / (1.0 - MIN_SCALE), 0.0, 1.0);
+    return clamp(c + (c - (n + s + w + e) * 0.25) * amount, lo, hi);
+}
+
 @fragment
 fn fs_composite(in: Fullscreen) -> @location(0) vec4<f32> {
     // The picture, shaken: zoomed in about the middle and moved.
@@ -145,7 +169,8 @@ fn fs_composite(in: Fullscreen) -> @location(0) vec4<f32> {
     // battlefield looks like a table of miniatures. The centre stays sharp.
     let blur = grade.focus.x * smoothstep(0.12, 0.4, abs(in.uv.y - TILT_CENTRE));
     if blur > 0.03 {
-        let texel = 1.0 / vec2<f32>(textureDimensions(src));
+        // Screen pixels, whatever the world's resolution.
+        let texel = grade.film.z / vec2<f32>(textureDimensions(src));
         var acc = vec3<f32>(0.0);
         for (var i = 0; i < TILT_TAPS; i++) {
             let a = f32(i) * 2.3999632;
@@ -153,6 +178,8 @@ fn fs_composite(in: Fullscreen) -> @location(0) vec4<f32> {
             acc += textureSampleLevel(src, src_sampler, uv + vec2<f32>(cos(a), sin(a)) * r * texel, 0.0).rgb;
         }
         c = acc / f32(TILT_TAPS);
+    } else if grade.film.z < 0.999 {
+        c = upscaled(uv, grade.film.z);
     } else {
         c = textureSampleLevel(src, src_sampler, uv, 0.0).rgb;
     }

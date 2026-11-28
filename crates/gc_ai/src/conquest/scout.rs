@@ -70,29 +70,98 @@ struct Place {
     own: bool,
 }
 
+/// Where the scout is in its work.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Duty {
+    /// It has not sent one yet.
+    #[default]
+    Unsent,
+    /// Its regiment is out on `leg`, and falls back until `fall_back_until`
+    /// whatever the leg.
+    Out {
+        regiment: RegimentHandle,
+        leg: Leg,
+        fall_back_until: u32,
+    },
+    /// It lost its regiment at the tick given, and sends another once
+    /// [`REPLACE`] has passed (only a level that scouts all game).
+    Lost(u32),
+    /// It will not send another.
+    Done,
+}
+
+/// What a scout that is out is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Leg {
+    /// Choosing where to look, or nothing worth a look just now.
+    Choosing,
+    /// Going to `target`, an index into `places`; its way there is given
+    /// up on at `trip_ends`.
+    Travelling { target: usize, trip_ends: u32 },
+    /// An early scout has seen what it was for and is coming back, since
+    /// the tick given.
+    Returning { since: u32 },
+}
+
+impl Duty {
+    /// Its regiment, if it is out.
+    fn regiment(self) -> Option<RegimentHandle> {
+        match self {
+            Duty::Out { regiment, .. } => Some(regiment),
+            _ => None,
+        }
+    }
+
+    /// What it is about, if it is out.
+    fn leg(self) -> Option<Leg> {
+        match self {
+            Duty::Out { leg, .. } => Some(leg),
+            _ => None,
+        }
+    }
+
+    /// Whether it is out and falling back at `now`.
+    fn falling_back(self, now: u32) -> bool {
+        matches!(self, Duty::Out { fall_back_until, .. } if now < fall_back_until)
+    }
+
+    /// Fall back until `until`, giving up on the place it was going to:
+    /// that place, if any. One coming back keeps coming back.
+    fn fall_back(&mut self, until: u32) -> Option<usize> {
+        let Duty::Out {
+            leg,
+            fall_back_until,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        *fall_back_until = until;
+        let Leg::Travelling { target, .. } = *leg else {
+            return None;
+        };
+        *leg = Leg::Choosing;
+        Some(target)
+    }
+
+    /// Be about `to` now, if it is out.
+    fn set_leg(&mut self, to: Leg) {
+        if let Duty::Out { leg, .. } = self {
+            *leg = to;
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Scout {
     level: Scouting,
-    regiment: Option<RegimentHandle>,
+    duty: Duty,
     places: Vec<Place>,
-    /// The place it is going to, an index into `places`.
-    target: Option<usize>,
-    /// Its way there is given up on at this tick.
-    trip_ends: u32,
-    /// The place it was last driven back from on the way to it.
+    /// The place it was last driven back from on the way to it. It is kept
+    /// from one trip to the next, and from one regiment to the next.
     driven_back: Option<usize>,
-    /// It falls back until this tick.
-    fall_back_until: u32,
     /// The tick it took its regiment (the first time).
     taken: Option<u32>,
-    /// The tick it lost its regiment.
-    lost_at: Option<u32>,
-    /// It will not send another.
-    done: bool,
-    /// An early scout has seen what it was for and is coming back.
-    returning: bool,
-    /// Since when it has been coming back.
-    returning_since: Option<u32>,
     home: Option<Vec2>,
     /// The tick its regiment first came to look at a start an enemy might
     /// hold.
@@ -102,7 +171,7 @@ pub struct Scout {
 impl Scout {
     /// The regiment it has taken, if any: the army leaves it alone.
     pub fn regiment(&self) -> Option<RegimentHandle> {
-        self.regiment
+        self.duty.regiment()
     }
 
     /// The tick its regiment first came to look at a start an enemy might
@@ -132,18 +201,17 @@ impl Scout {
         }
         self.look(s);
         // Has it lost its regiment?
-        if let Some(h) = self.regiment
+        if let Some(h) = self.regiment()
             && s.view.get(h).is_none()
         {
-            self.regiment = None;
-            self.target = None;
-            self.returning = false;
-            self.lost_at = Some(s.now);
-            if self.level == Scouting::Early {
-                self.done = true;
-            }
+            // An early scout lost is done.
+            self.duty = if self.level == Scouting::Early {
+                Duty::Done
+            } else {
+                Duty::Lost(s.now)
+            };
         }
-        let Some(h) = self.regiment else {
+        let Some(h) = self.regiment() else {
             self.take(s, fighters, waiting);
             return;
         };
@@ -151,20 +219,18 @@ impl Scout {
         let (pos, pace) = (me.pos, s.view.pace(me));
         let early = self.level == Scouting::Early;
         // An early scout has a limit on how long it stays out.
-        if early && !self.returning && self.taken.is_some_and(|t| s.now >= t + EARLY_LIMIT) {
-            self.returning = true;
-            self.returning_since = Some(s.now);
-            self.target = None;
+        let returning = matches!(self.duty.leg(), Some(Leg::Returning { .. }));
+        if early && !returning && self.taken.is_some_and(|t| s.now >= t + EARLY_LIMIT) {
+            self.duty.set_leg(Leg::Returning { since: s.now });
         }
         // Enemy fighters near: fall back, and leave the place it was going
         // to alone for a while.
-        if s.now >= self.fall_back_until
+        if !self.duty.falling_back(s.now)
             && let Some(foe) = spymaster::outmatched(s, &[me])
         {
-            self.fall_back_until = s.now + FALL_BACK;
             // Leave the place alone for a while only if the enemy stands by
             // it; one met on the way is only passing.
-            if let Some(t) = self.target.take() {
+            if let Some(t) = self.duty.fall_back(s.now + FALL_BACK) {
                 // Driven back twice on the way to the same place: leave it.
                 let again = self.driven_back == Some(t);
                 self.driven_back = (!again).then_some(t);
@@ -174,59 +240,68 @@ impl Scout {
                 }
             }
         }
-        if s.now < self.fall_back_until {
+        if self.duty.falling_back(s.now) {
             return;
         }
         // Where it was going: reached, given up on, or its place now has a
         // friend's building by it.
-        if let Some(t) = self.target {
+        if let Some(Leg::Travelling {
+            target: t,
+            trip_ends,
+        }) = self.duty.leg()
+        {
             let p = &self.places[t];
             let reached = p.at.distance(pos) <= LOOKED;
-            if reached || s.now >= self.trip_ends || p.own {
+            if reached || s.now >= trip_ends || p.own {
                 if !reached && !p.own {
                     self.places[t].avoid_until = s.now + AVOID;
                 }
-                self.target = None;
+                self.duty.set_leg(Leg::Choosing);
             }
         }
-        if self.returning {
+        if let Some(Leg::Returning { since }) = self.duty.leg() {
             // Back at the rally point it gives the regiment back, for good.
-            let late = self
-                .returning_since
-                .is_some_and(|t| s.now >= t + HOME_LIMIT);
+            let late = s.now >= since + HOME_LIMIT;
             if late || rally.is_none_or(|r| r.distance(pos) <= HOME) {
-                self.regiment = None;
-                self.returning = false;
-                self.done = true;
+                self.duty = Duty::Done;
             }
             return;
         }
-        if self.target.is_none() {
-            self.target = self.next(s, pos);
-            if let Some(t) = self.target {
+        if self.duty.leg() == Some(Leg::Choosing) {
+            if let Some(t) = self.next(s, pos) {
                 let d = self.places[t].at.distance(pos);
-                self.trip_ends =
+                let trip_ends =
                     s.now + ((d / pace.max(0.5)) * 2.0 + 30.0) as u32 * TICKS_PER_SECOND;
+                self.duty.set_leg(Leg::Travelling {
+                    target: t,
+                    trip_ends,
+                });
             } else if early && self.starts_left() == 0 {
                 // It has seen what it was sent for.
-                self.returning = true;
-                self.returning_since = Some(s.now);
+                self.duty.set_leg(Leg::Returning { since: s.now });
             }
         }
     }
 
     /// The orders for its regiment now, if it has one.
     pub fn steer(&self, s: &Sense, rally: Option<Vec2>, wants: &mut Vec<Want>) {
-        let Some(h) = self.regiment else { return };
-        let (to, priority) = if s.now < self.fall_back_until {
-            (self.home.or(rally), ROUTINE + 1)
-        } else if let Some(t) = self.target {
-            (Some(self.places[t].at), ROUTINE)
-        } else if self.level == Scouting::Early || self.returning {
-            (rally.or(self.home), ROUTINE)
-        } else {
-            // Nothing worth a look just now: it stays where it is.
+        let Duty::Out {
+            regiment: h,
+            leg,
+            fall_back_until,
+        } = self.duty
+        else {
             return;
+        };
+        let (to, priority) = if s.now < fall_back_until {
+            (self.home.or(rally), ROUTINE + 1)
+        } else {
+            match leg {
+                Leg::Travelling { target, .. } => (Some(self.places[target].at), ROUTINE),
+                // Nothing worth a look just now: it stays where it is.
+                Leg::Choosing if self.level != Scouting::Early => return,
+                Leg::Choosing | Leg::Returning { .. } => (rally.or(self.home), ROUTINE),
+            }
         };
         let Some(to) = to else { return };
         wants.push(s.walk(h, to, priority, GROUP));
@@ -234,7 +309,7 @@ impl Scout {
 
     /// Note which places its regiments have in sight now.
     fn look(&mut self, s: &Sense) {
-        let scout = self.regiment.and_then(|h| s.view.get(h)).map(|r| r.pos);
+        let scout = self.regiment().and_then(|h| s.view.get(h)).map(|r| r.pos);
         let ours: Vec<Vec2> = s
             .view
             .regiments
@@ -279,7 +354,7 @@ impl Scout {
             Scouting::Early => (MIN_ARMY_EARLY, 2),
             _ => (MIN_ARMY, 1),
         };
-        if self.done || fighters.len() < min_army {
+        if self.duty == Duty::Done || fighters.len() < min_army {
             return;
         }
         // One early look is for finding where the enemies are: with a single
@@ -287,7 +362,9 @@ impl Scout {
         if self.level == Scouting::Early && self.starts_left() < unknown_starts {
             return;
         }
-        if self.lost_at.is_some_and(|t| s.now < t + REPLACE) {
+        if let Duty::Lost(t) = self.duty
+            && s.now < t + REPLACE
+        {
             return;
         }
         // Nothing to look at: everything is its own.
@@ -298,11 +375,12 @@ impl Scout {
             .iter()
             .max_by(|a, b| s.view.pace(a).total_cmp(&s.view.pace(b)));
         if let Some(r) = fastest {
-            self.regiment = Some(r.handle);
+            self.duty = Duty::Out {
+                regiment: r.handle,
+                leg: Leg::Choosing,
+                fall_back_until: 0,
+            };
             self.taken.get_or_insert(s.now);
-            self.target = None;
-            self.returning = false;
-            self.fall_back_until = 0;
         }
     }
 
@@ -333,7 +411,7 @@ impl Scout {
         }
         let ticks = TICKS_PER_SECOND as f32;
         let pace = self
-            .regiment
+            .regiment()
             .and_then(|h| s.view.get(h))
             .map_or(3.0, |r| s.view.pace(r))
             .max(0.5);
@@ -358,36 +436,40 @@ impl Scout {
         let tally = format!("{seen} of {starts} starts seen");
         if self.level == Scouting::Never {
             "none, this level sends none".to_string()
-        } else if self.regiment.is_some() {
-            if now < self.fall_back_until {
-                format!("falling back from enemy fighters, {tally}")
-            } else if self.returning {
-                format!("coming home, {tally}")
-            } else if let Some(t) = self.target {
-                let p = &self.places[t];
-                let what = if p.start { "start" } else { "seeps" };
-                match self.home.map(|h| compass(h, p.at)) {
-                    Some(Some(dir)) => {
-                        format!("looking at the {what} in the {dir}, {tally}")
-                    }
-                    _ => format!("looking at a {what} near home, {tally}"),
-                }
-            } else {
-                format!("choosing where to look, {tally}")
-            }
-        } else if self.done {
-            format!("done, {tally}")
-        } else if let Some(t) = self.lost_at {
-            // An early scout lost is done: only one that scouts all game
-            // gets here.
-            let left = (t + REPLACE).saturating_sub(now).div_ceil(TICKS_PER_SECOND);
-            if left > 0 {
-                format!("lost, sends another in {left}s, {tally}")
-            } else {
-                format!("lost, waiting for a spare regiment, {tally}")
-            }
         } else {
-            "none yet".to_string()
+            match self.duty {
+                Duty::Out {
+                    fall_back_until, ..
+                } if now < fall_back_until => {
+                    format!("falling back from enemy fighters, {tally}")
+                }
+                Duty::Out { leg, .. } => match leg {
+                    Leg::Returning { .. } => format!("coming home, {tally}"),
+                    Leg::Travelling { target, .. } => {
+                        let p = &self.places[target];
+                        let what = if p.start { "start" } else { "seeps" };
+                        match self.home.map(|h| compass(h, p.at)) {
+                            Some(Some(dir)) => {
+                                format!("looking at the {what} in the {dir}, {tally}")
+                            }
+                            _ => format!("looking at a {what} near home, {tally}"),
+                        }
+                    }
+                    Leg::Choosing => format!("choosing where to look, {tally}"),
+                },
+                Duty::Done => format!("done, {tally}"),
+                Duty::Lost(t) => {
+                    // An early scout lost is done: only one that scouts all
+                    // game gets here.
+                    let left = (t + REPLACE).saturating_sub(now).div_ceil(TICKS_PER_SECOND);
+                    if left > 0 {
+                        format!("lost, sends another in {left}s, {tally}")
+                    } else {
+                        format!("lost, waiting for a spare regiment, {tally}")
+                    }
+                }
+                Duty::Unsent => "none yet".to_string(),
+            }
         }
     }
 }

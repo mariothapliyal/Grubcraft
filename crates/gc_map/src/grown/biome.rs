@@ -722,6 +722,7 @@ mod tests {
                 wildness: w,
                 fairness: super::super::Fairness::Mirrored,
                 heart: false,
+                ring: 0,
             },
         )
         .height

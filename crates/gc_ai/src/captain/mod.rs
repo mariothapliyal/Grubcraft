@@ -39,6 +39,8 @@ mod posture;
 mod roles;
 mod site;
 mod team;
+#[cfg(test)]
+mod tests;
 
 use helpers::*;
 pub use helpers::{describe_margin, fits, gap_between};
@@ -507,7 +509,9 @@ pub struct Captain {
     /// Where the enemy army it faces stands (its centre).
     enemy_at: Vec2,
     /// The end of the line with cover beside it: -1 left, +1 right, 0
-    /// neither. Its hammers wait on the open side.
+    /// neither. Its hammers wait on the open side. Read from the ground
+    /// where `choose_ground` put the line, so it is forgotten whenever the
+    /// line leaves that ground (see [`Captain::leave_cover`]).
     covered: f32,
     /// Water between the line and the enemy.
     river: Option<Crossing>,
@@ -625,11 +629,20 @@ impl Captain {
     }
 
     /// Whether it is the one attacking: pressing on crosses water as if it
-    /// had decided to, and stopping waits behind it again.
+    /// had decided to, and stopping waits behind it again. One stopped on
+    /// its way to a bridgehead (which it chose itself: none is chosen while
+    /// crossing anyway) gives it up at its next look unless some of the
+    /// line are already in the water or across, when it finishes the
+    /// crossing (see `called_back`): it never waits behind the water with
+    /// a ford still calling it forward, nor halts in the river.
     pub fn press(&mut self, on: bool) {
         if on != self.pressing {
             self.pressing = on;
             self.crossing = on;
+            if on {
+                // Going on regardless: no standing back to tempt them over.
+                self.baiting = false;
+            }
         }
     }
 
@@ -659,6 +672,17 @@ impl Captain {
     pub fn front(&self) -> Option<(Vec2, Vec2, f32, f32)> {
         self.started
             .then_some((self.anchor, self.forward, self.line_width, self.covered))
+    }
+
+    /// The line is leaving the ground whose cover `choose_ground` read:
+    /// neither end is anchored until it reads the ground again. Otherwise
+    /// a wing would keep standing against cover that is no longer beside
+    /// it, and every hammer would wait behind the other wing.
+    pub(super) fn leave_cover(&mut self) {
+        if self.covered != 0.0 {
+            self.covered = 0.0;
+            self.relayout = true;
+        }
     }
 
     /// Whether it is waiting behind water for the enemy to cross.
@@ -723,6 +747,7 @@ impl Captain {
             self.finish(ctx, &fighting, wants);
             return;
         }
+        self.called_back(ctx, &ours);
         self.choose_posture(ctx, &ours, &fighting);
         self.hold_bridgehead(ctx, &ours, &fighting);
         self.act(ctx, &ours, &fighting, &foes, wants);
@@ -875,10 +900,13 @@ impl Captain {
             };
             if want.dot(self.forward) < limit {
                 self.forward = want;
-                // Stand where the army is now, facing the new way.
+                // Stand where the army is now, facing the new way: the cover
+                // it had beside one end is no longer there (and turned far
+                // enough, it would be beside the other end).
                 self.anchor = ctx
                     .terrain
                     .clamp(line_centre(&self.members, ours, our_c), 4.0);
+                self.leave_cover();
                 self.relayout = true;
             }
         }

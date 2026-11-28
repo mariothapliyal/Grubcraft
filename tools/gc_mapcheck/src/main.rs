@@ -4,7 +4,7 @@
 //! can become a hand-tuned map: a Field Battle recipe (Pass, Ford, Hill or
 //! Open, the Wilds as Plains, Mixed or Wild, or grown land as Land-Plains,
 //! Land-Mixed or Land-Wild, or with measured fairness as Measured-Plains
-//! and so on) takes a size in tiles, as
+//! and so on, `Measured-Wild:3` for three players round a ring, or 5) takes a size in tiles, as
 //! do the big Conquest Wilds (Conquest-Plains, Conquest-Mixed or
 //! Conquest-Wild, 512 tiles and up); a Conquest recipe (Teeth, Bowl or
 //! Fen) takes Duel, Skirmish or Warfield and rerolls the seed until the
@@ -26,6 +26,19 @@ fn png_cmd(src: &str, out: &str) -> Result<(), String> {
 
 fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String> {
     let seed = seed.parse().map_err(|_| format!("{seed} isn't a seed"))?;
+    // (`Measured-Wild:3`: the land made for that many players.)
+    let (recipe, players) = match recipe.split_once(':') {
+        Some((recipe, n)) => (recipe, n.parse().map_err(|_| format!("{n} isn't a count"))?),
+        None => (recipe, 0),
+    };
+    let measured = recipe
+        .get(..9)
+        .is_some_and(|p| p.eq_ignore_ascii_case("measured-"));
+    if players != 0 && !(measured && matches!(players, 3 | 5)) {
+        return Err(format!(
+            "only Measured land is made for a count of players, 3 or 5 (not {recipe}:{players})"
+        ));
+    }
     let is = |name: &str| name.eq_ignore_ascii_case(recipe);
     let tiles = || {
         size.parse()
@@ -63,7 +76,7 @@ fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String
                 gc_map::grown::MIN_TILES
             ));
         }
-        gc_map::grown::describe(tiles, seed, wild, fairness)
+        gc_map::grown::describe(tiles, seed, wild, fairness, players)
     } else if let Some(wild) = Wildness::ALL
         .into_iter()
         .find(|w| is(&format!("Conquest-{}", w.name())))

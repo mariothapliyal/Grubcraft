@@ -250,7 +250,9 @@ impl Conquest {
             return false;
         }
         let regiment = regs.handle(i);
-        self.planting.retain(|p| p.regiment != regiment);
+        // It halts and hammers, and nothing else: it stops attacking a
+        // building or any other work it had (and a planting it had begun).
+        self.stop_work(i);
         regs.halt(i);
         self.planting.push(Planting {
             regiment,

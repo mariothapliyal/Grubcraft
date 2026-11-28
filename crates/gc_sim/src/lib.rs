@@ -64,6 +64,8 @@ pub mod stances;
 mod state;
 pub mod structures;
 pub mod terrain;
+#[cfg(test)]
+mod test_util;
 pub mod tithe;
 pub mod towers;
 pub mod towns;
@@ -143,7 +145,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 98;
+pub const SIM_VERSION: u32 = 100;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1909,10 +1911,12 @@ impl World {
             .map(|p| (p.owner, p.building, p.tile, p.turn))
     }
 
-    /// The node regiment `h` is gathering at, if any (Conquest only).
+    /// The node regiment `h` is gathering at, if any (Conquest only): not
+    /// a pile laid in the slot of the one it emptied, while it takes that
+    /// one's last load home.
     pub fn gathers_at(&self, h: RegimentHandle) -> Option<u16> {
         let i = self.regiments.resolve(h)?;
-        self.economy()?.work_of(&self.regiments, i)
+        self.economy()?.gathers_from(&self.regiments, i)
     }
 
     /// `player`'s workers with nothing to do (Conquest only): standing
@@ -3291,7 +3295,8 @@ impl World {
     }
 
     /// Regiment `h` was given another order: it stops attacking any
-    /// building and stops gathering.
+    /// building, gathering, trading and planting stakes (see
+    /// `Conquest::stop_work`).
     fn leave_off(&mut self, h: RegimentHandle) {
         if let (Some(conquest), Some(i)) = (&mut self.conquest, self.regiments.resolve(h)) {
             conquest.stop_work(i);
@@ -3411,7 +3416,7 @@ impl World {
             // One a brigade steers has not arrived when it gets to the
             // point it was given to walk at: its brigade sends it on
             // (see `Brigades::step`).
-            let led = self.brigades.steers(i);
+            let led = self.brigades.steers(regs, i);
             if let Some(hunt) = plan.hunt {
                 // A beaten foe is left to run.
                 if let Some(t) = regs.attack_target[i]
@@ -3481,7 +3486,8 @@ impl World {
             orders::Step::Move {
                 brigade, target, ..
             } if brigade != 0 => {
-                let ahead = (self.brigades.heading(i)).unwrap_or((target - here).normalized());
+                let ahead =
+                    (self.brigades.heading(regs, i)).unwrap_or((target - here).normalized());
                 (ahead != FxVec2::ZERO).then_some((ahead, brigade))
             }
             _ => None,
@@ -4148,7 +4154,7 @@ impl World {
     /// last of them.
     pub fn route(&self, h: RegimentHandle) -> &[FxVec2] {
         match self.regiments.resolve(h) {
-            Some(i) => match self.brigades.way(i) {
+            Some(i) => match self.brigades.way(&self.regiments, i) {
                 Some(way) => way,
                 None => self.nav.route_ahead(i, self.regiments.target[i]),
             },
@@ -4161,10 +4167,16 @@ impl World {
     /// has nowhere to go.
     pub fn goal(&self, h: RegimentHandle) -> Option<FxVec2> {
         let i = self.regiments.resolve(h)?;
-        match self.brigades.of(i) {
+        match self.brigades.of(&self.regiments, i) {
             Some((_, end)) => Some(end),
             None => self.regiments.target[i],
         }
+    }
+
+    /// The facing regiment `h` was ordered to take where it is going, if
+    /// any.
+    pub fn goal_facing(&self, h: RegimentHandle) -> Option<Angle> {
+        self.regiments.target_facing[self.regiments.resolve(h)?]
     }
 
     /// Volleys in flight, for drawing arrows.

@@ -715,6 +715,14 @@ impl Hud {
             || self.over.iter().any(|r| r.contains(mouse.0, mouse.1))
     }
 
+    /// Forget what the mouse rests on. Call it on frames the HUD is not
+    /// run (a guide or menu over it, or the HUD hidden), so a tooltip or
+    /// hover card waits its full delay again when the HUD comes back.
+    pub fn forget_hover(&mut self) {
+        self.hover = None;
+        self.world_hover = None;
+    }
+
     /// Where the tooltip was drawn this frame, if there is one.
     pub fn tooltip_rect(&self) -> Option<Rect> {
         self.tooltip
@@ -731,7 +739,13 @@ impl Hud {
     ) {
         let layout = HudLayout::new(screen);
         self.tip = None;
-        draw.rect(layout.bar, theme::LINEN);
+        // A pixel past the foot: where the UI scale does not divide the
+        // window's height, the rows below the last whole UI pixel would show
+        // the screen's clear colour, as the world is not drawn under the bar.
+        draw.rect(
+            Rect::new(layout.bar.x, layout.bar.y, layout.bar.w, layout.bar.h + 1),
+            theme::LINEN,
+        );
         draw.rect(Rect::new(0, layout.bar.y, layout.bar.w, 3), theme::INK);
         draw.stitch_row(0, layout.bar.y + 5, layout.bar.w, 2);
         self.minimap(draw, &layout, input, &data.minimap, events);
@@ -2984,6 +2998,38 @@ mod tests {
         hover(&mut hud, (400, 100), 6_000);
         hover(&mut hud, (400, 100), 9_000);
         assert!(hud.tooltip_rect().is_none());
+    }
+
+    #[test]
+    fn a_tooltip_waits_again_after_the_hud_was_away() {
+        let mut hud = Hud::default();
+        let l = HudLayout::new(SCREEN);
+        let spot = (l.grid.x + 10, l.grid.y + 10);
+        hover(&mut hud, spot, 1_000);
+        // The HUD is not run for a while (a menu over it), and the mouse
+        // is still on the same button when it comes back.
+        hud.forget_hover();
+        let back = 1_000 + 10 * TOOLTIP_DELAY_MS;
+        hover(&mut hud, spot, back);
+        assert!(hud.tooltip_rect().is_none(), "not at once");
+        hover(&mut hud, spot, back + TOOLTIP_DELAY_MS);
+        assert!(hud.tooltip_rect().is_some());
+    }
+
+    #[test]
+    fn a_hover_card_waits_again_after_the_hud_was_away() {
+        let card = hover_of(7);
+        let mut hud = Hud::default();
+        let mut draw = DrawList::default();
+        let mouse = (400, 100);
+        hud.hover_card(&mut draw, SCREEN, mouse, 1_000, Some(&card));
+        hud.forget_hover();
+        let back = 1_000 + 10 * TOOLTIP_DELAY_MS;
+        let card_at = |hud: &mut Hud, draw: &mut DrawList, now| {
+            hud.hover_card(draw, SCREEN, mouse, now, Some(&card))
+        };
+        assert!(card_at(&mut hud, &mut draw, back).is_none(), "not at once");
+        assert!(card_at(&mut hud, &mut draw, back + TOOLTIP_DELAY_MS).is_some());
     }
 
     #[test]

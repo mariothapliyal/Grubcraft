@@ -12,7 +12,7 @@ impl Running {
     /// The one selected regiment, when it is a hero of your side with a kit
     /// of abilities.
     pub fn hero_selected(&self) -> Option<RegimentHandle> {
-        let [h] = self.selected[..] else {
+        let &[h] = self.selected.regiments() else {
             return None;
         };
         let hero = self.world.hero_of(h)?;

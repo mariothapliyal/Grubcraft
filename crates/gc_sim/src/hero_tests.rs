@@ -2,18 +2,16 @@
 //! the fall and the revive, in one small Conquest world.
 
 use alloc::vec;
-use alloc::vec::Vec;
-
-use gc_fixed::FxVec2;
 
 use crate::conquest::ConquestUnit;
 use crate::heroes::{HeroGrowth, LEVELS};
 use crate::nav::CELLS_PER_TILE;
-use crate::scenario::{DRILL_UNITS, NORTH};
+use crate::scenario::DRILL_UNITS;
 use crate::structures::{Armour, Refusal, Role, StructureHandle, Trap, WallTwist};
+use crate::test_util::{order, spawn};
 use crate::{
-    BuildingStats, Capacities, Command, ConquestSetup, MAX_PARTIES, MatchSetup, PlayerCommand,
-    RegimentHandle, TICKS_PER_SECOND, UnitStats, World,
+    BuildingStats, Capacities, Command, ConquestSetup, MAX_PARTIES, MatchSetup, RegimentHandle,
+    TICKS_PER_SECOND, UnitStats, World,
 };
 
 const MAP: u32 = 128;
@@ -123,12 +121,6 @@ fn world() -> World {
     w
 }
 
-fn order(w: &mut World, player: u8, command: Command) -> bool {
-    w.tick(&[PlayerCommand { player, command }])
-        .commands_applied
-        == 1
-}
-
 fn put_up(w: &mut World, building: u16, tile: (i16, i16)) -> StructureHandle {
     let spawn = Command::SpawnStructure {
         building,
@@ -143,19 +135,6 @@ fn put_up(w: &mut World, building: u16, tile: (i16, i16)) -> StructureHandle {
         .find(|v| v.tile == at)
         .unwrap()
         .handle
-}
-
-fn spawn(w: &mut World, player: u8, unit: u16, x: i32, y: i32) -> RegimentHandle {
-    let before: Vec<_> = w.regiments.iter().map(|r| r.handle).collect();
-    let command = Command::SpawnRegiment {
-        unit,
-        position: FxVec2::from_ints(x, y),
-        facing: NORTH,
-    };
-    assert!(order(w, player, command));
-    (w.regiments.iter().map(|r| r.handle))
-        .find(|h| !before.contains(h))
-        .unwrap()
 }
 
 fn seconds(w: &mut World, s: u32) {

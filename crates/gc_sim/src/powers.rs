@@ -45,7 +45,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::conquest::Conquest;
 use crate::hash::StateHasher;
 use crate::nav::Nav;
-use crate::regiments::Regiments;
+use crate::regiments::{Regiments, Stride};
 use crate::structures::{BuildingId, HONOR, Refusal, StructureHandle, Structures};
 use crate::{Formation, MAX_PARTIES, PlayerId, RegimentHandle, UnitId, UnitStats};
 
@@ -883,11 +883,11 @@ impl Regiments {
         if self.formation[i] == crate::Formation::Column {
             percent = percent * crate::COLUMN_PACE_PERCENT / 100;
         }
-        if self.run_left[i] > 0 {
-            percent = percent * crate::regiments::RUN_PERCENT / 100;
-        } else if self.winded_left[i] > 0 {
-            percent = percent * crate::regiments::WINDED_PACE_PERCENT / 100;
-        }
+        percent = match self.stride[i] {
+            Stride::Running(_) => percent * crate::regiments::RUN_PERCENT / 100,
+            Stride::Winded(_) => percent * crate::regiments::WINDED_PACE_PERCENT / 100,
+            Stride::Fresh => percent,
+        };
         if percent == 100 {
             return pace;
         }

@@ -48,6 +48,13 @@ pub use map::{
     CLIFF_RISE_PER_TILE, Ground, MAX_HEIGHT, Map, Placed, SAMPLES_PER_TILE, fnv1a, map_hash,
 };
 
+/// Which version of the map maker this build is. Bump it whenever the same
+/// lobby map choice, size and seed make different land (grown land, the
+/// Wilds, the recipes, the seeded map), so a replay recorded before can tell
+/// its map would now be made differently and is drawn from the ground it
+/// stored instead. A change that leaves every map as it was doesn't need it.
+pub const MAP_MAKER: u16 = 1;
+
 /// The maps a Field Battle can be played on, in the lobby's order: the
 /// seeded map, a random map from each recipe, a random recipe, the Classic
 /// Wilds as wild as the seed picks and at each [`wilds::Wildness`], then
@@ -90,16 +97,37 @@ pub const GROWN: usize = WILDS + 1 + wilds::Wildness::ALL.len();
 pub const MEASURED: usize = GROWN + 1 + wilds::Wildness::ALL.len();
 
 /// A Field Battle map: the lobby's choice (an index into [`FIELD_MAPS`]),
-/// its size and its seed. The same three make the same map on every
-/// machine.
+/// its size and its seed, and for Measured land made for three or five
+/// players that count. The same make the same map on every machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldMap {
     pub choice: usize,
     pub tiles: u32,
     pub seed: u64,
+    /// Three or five on a Measured choice made for that many players,
+    /// whose starts stand round a ring ([`grown::Grown::ring`]); 0
+    /// otherwise.
+    pub ring: u8,
 }
 
 impl FieldMap {
+    /// The map the lobby makes for `players`: its starts round a ring on a
+    /// Measured choice with three or five ([`FieldMap::ring`]).
+    pub fn new(choice: usize, tiles: u32, seed: u64, players: usize) -> FieldMap {
+        let measured = (MEASURED..=MEASURED + wilds::Wildness::ALL.len()).contains(&choice);
+        let fairness = if measured {
+            grown::Fairness::Measured
+        } else {
+            grown::Fairness::Mirrored
+        };
+        FieldMap {
+            choice,
+            tiles,
+            seed,
+            ring: grown::ring_for(players, fairness),
+        }
+    }
+
     /// Make the map. A random map whose starts aren't all joined by
     /// walkable ground is made again from the next seed (none of the seeds
     /// the tests sweep need it), so nobody is shown a broken one.
@@ -108,6 +136,7 @@ impl FieldMap {
             choice,
             tiles,
             seed,
+            ring,
         } = self;
         enum Maker {
             Recipe(recipe::Recipe),
@@ -137,7 +166,9 @@ impl FieldMap {
             Map::from_def(&match maker {
                 Maker::Recipe(recipe) => recipe::describe(recipe, tiles as i32, seed),
                 Maker::Wilds(wild) => wilds::describe(tiles as i32, seed, wild),
-                Maker::Grown(wild, fair) => grown::describe(tiles as i32, seed, wild, fair),
+                Maker::Grown(wild, fair) => {
+                    grown::describe(tiles as i32, seed, wild, fair, usize::from(ring))
+                }
             })
         };
         let first = make(0);
@@ -213,7 +244,8 @@ mod tests {
                 FieldMap {
                     choice: 0,
                     tiles: 256,
-                    seed
+                    seed,
+                    ring: 0,
                 }
                 .make()
                 .hash(),
@@ -249,6 +281,7 @@ mod tests {
                         choice,
                         tiles,
                         seed,
+                        ring: 0,
                     }
                     .make();
                     let what = format!("choice {choice}, {tiles} tiles, seed {seed}");
@@ -271,6 +304,7 @@ mod tests {
                 choice,
                 tiles: 256,
                 seed: 7,
+                ring: 0,
             }
             .make();
             if map.levels.is_empty() {
@@ -356,6 +390,7 @@ mod tests {
                 choice,
                 tiles: 256,
                 seed: 7,
+                ring: 0,
             }
             .make()
             .hash()
@@ -370,6 +405,7 @@ mod tests {
                 choice,
                 tiles: 320,
                 seed: 1,
+                ring: 0,
             }
             .make()
             .hash()
@@ -378,11 +414,44 @@ mod tests {
         assert_eq!(at_320(4), 0x4810_c8ad_25ff_bc7c);
         // Grown land: erosion and the river lines (and their current) are
         // the parts most likely to drift, and each of the dials.
-        assert_eq!(hash(GROWN + 1), 0xe074_8d2a_70f5_2b14);
-        assert_eq!(hash(GROWN + 2), 0x5907_fd65_e138_8588);
-        assert_eq!(hash(GROWN + 3), 0x70cf_08d8_a817_2132);
+        assert_eq!(hash(GROWN + 1), 0x15f7_48c8_7ec7_597a);
+        assert_eq!(hash(GROWN + 2), 0xbe59_f66b_9843_7ebc);
+        assert_eq!(hash(GROWN + 3), 0xf96d_3d17_4c9b_bd9a);
         // Measured fairness: the start search, its settling on the true
         // walks and the paired sites.
-        assert_eq!(hash(MEASURED + 2), 0xf164_1f72_b03f_38c9);
+        assert_eq!(hash(MEASURED + 2), 0x5ec5_f069_fb84_881e);
+        // Three and five players round a ring.
+        let ring = |tiles, seed, ring| {
+            FieldMap {
+                choice: MEASURED + 2,
+                tiles,
+                seed,
+                ring,
+            }
+            .make()
+            .hash()
+        };
+        assert_eq!(ring(256, 7, 3), 0xb239_9986_fa36_6314);
+        assert_eq!(ring(320, 1, 5), 0xeabe_c64d_5701_940d);
+    }
+
+    /// Only a Measured choice for three or five players puts its starts
+    /// round a ring.
+    #[test]
+    fn rings_are_for_three_or_five_on_measured_land() {
+        for players in 0..=6 {
+            for (choice, name) in FIELD_MAPS.iter().enumerate() {
+                let ring = FieldMap::new(choice, 256, 1, players).ring;
+                let measured = (MEASURED..FIELD_MAPS.len()).contains(&choice);
+                let want = if measured && matches!(players, 3 | 5) {
+                    players as u8
+                } else {
+                    0
+                };
+                assert_eq!(ring, want, "{name} with {players}");
+            }
+        }
+        let map = FieldMap::new(MEASURED + 1, 256, 2, 3).make();
+        assert_eq!(map.starts().len(), 3);
     }
 }

@@ -77,7 +77,9 @@
 //! drum and horn. Shift+V in the sandbox shows every regiment, hidden or not.
 //! Ctrl (or Cmd) + a number key saves the selection as a control group; the
 //! number recalls it (Shift adds it), and pressing it twice quickly centres
-//! the camera on it.
+//! the camera on it. Ctrl+Shift + a number locks it as an army that keeps
+//! its shape on every group order, and Alt + a number sends the selection
+//! to join that army.
 //!
 //! The game opens on the main menu (Play, Sandbox, Replays, Unit viewer,
 //! Settings, Guide); Esc brings it back during a match. Play hosts or joins
@@ -108,13 +110,14 @@
 //! the menu.
 //!
 //! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general|warlord`
-//! starts a Field Battle against one computer player of that level;
+//! starts a Field Battle against one computer player of that level (with
+//! `--players N`, against N - 1 of them, each for themselves);
 //! `--conquest ribcage_pass|four_teeth|land-mixed|...` starts Conquest on that map (a
 //! shipped map's file or a lobby map's name), every other start held by an idle side;
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the map seed the Host a game card and a `--battle` start on; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
-//! `--hidden-frames N` leaves the last N of them undrawn, as for a hidden window,
+//! `--hidden-frames N` (2 or more) leaves the last N of them undrawn, as for a hidden window,
 //! and prints how much the process grew meanwhile;
 //! `--map NAME|FILE` opens on a shipped map (`ribcage_pass`, `four_teeth`) or
 //! a map file instead of the seeded map, to look round it in the sandbox
@@ -122,7 +125,9 @@
 //! and switch to one);
 //! `--overlay` starts with the dev overlay shown; `--no-audio` never opens
 //! the sound card; `--no-shadows`, `--no-glow` and `--no-aa` turn off the sun's
-//! shadows, the glow around bright light and the anti-aliasing; `--latency 1|2|3` sets
+//! shadows, the glow around bright light and the anti-aliasing, and
+//! `--no-kept-ground` works the ground out afresh every frame even while the
+//! camera holds still (to measure what keeping it saves); `--latency 1|2|3` sets
 //! frames in flight; `--render-scale F` renders at a
 //! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
 //! parts of the frame off to measure what they cost; `--lod 0..3` draws
@@ -144,6 +149,8 @@ mod aftermath;
 mod ambient;
 mod army_shape;
 mod atmosphere;
+#[cfg(test)]
+mod balance_gate;
 mod bridge_deck;
 mod bridge_kit;
 mod buildings;
@@ -199,6 +206,7 @@ mod online;
 mod profile;
 mod puppets;
 mod replays;
+mod resolution;
 mod ring_tool;
 #[cfg(test)]
 mod river_ai;
@@ -210,6 +218,7 @@ mod roster;
 mod sandbox;
 mod scars;
 mod scenery;
+mod selection;
 mod showroom;
 mod siege;
 mod sky_news;
@@ -233,7 +242,7 @@ use gc_render::{
     BoxInstance, FrameParams, HitStyle, Renderer, RendererOptions, SoldierBatch, SoldierInstance,
     Terrain, UiQuad,
 };
-use gc_sim::arrange::Shape;
+use gc_sim::arrange::{Army, Shape};
 use gc_sim::events::Event;
 use gc_sim::formation::{GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
@@ -259,6 +268,7 @@ use camera::{ActiveCamera, FollowCamera, RideTarget, RtsCamera};
 use gc_map::{FieldMap, Map};
 use models::Action;
 use puppets::{Block, Fighter, Puppets, Soldier};
+use selection::Picked;
 
 #[global_allocator]
 static ALLOC: TaggedAlloc = TaggedAlloc;
@@ -326,8 +336,60 @@ const COMMANDER_OUT: f32 = 160.0;
 const COMMANDER_BLOCK_HEIGHT: f32 = 0.6;
 const COMMANDER_POLE: [f32; 3] = [0.3, 5.0, 0.3];
 const COMMANDER_FLAG: [f32; 3] = [2.6, 1.8, 0.25];
+/// How often the dead are counted for ruined hamlets and the crows'
+/// bodies, in seconds of effects time.
+const RUIN_CHECK: f32 = 1.0;
+/// An army's one standard (docs/42, "Standing armies"): a tall pole at
+/// its middle with a wide flag, and a bar on the flag for each step of its
+/// number (the key it is on).
+const ARMY_POLE: [f32; 3] = [0.25, 7.0, 0.25];
+const ARMY_FLAG: [f32; 3] = [3.2, 2.0, 0.2];
 /// A regiment whose volley left this many ticks ago or less is shooting.
 const SHOOTING_TICKS: u32 = 24;
+/// Control group `n`'s name, as the HUD shows it: key 0 is group 10.
+fn army_label(n: usize) -> usize {
+    (n + 9) % 10 + 1
+}
+
+/// A standard at `pos`: a pole, and a flag of `color` flying from its
+/// top to the right of `facing`. Gives the flag's middle and how high its
+/// foot is lifted, to mark it.
+fn push_standard(
+    instances: &mut Vec<BoxInstance>,
+    pos: Vec2,
+    facing: Vec2,
+    pole: [f32; 3],
+    flag: [f32; 3],
+    color: [u8; 3],
+) -> (Vec2, f32) {
+    instances.push(BoxInstance {
+        pos: pos.to_array(),
+        facing: facing.to_array(),
+        size: pole,
+        color: [60, 48, 36, 0],
+        lift: 0.0,
+    });
+    let mid = pos + Vec2::new(facing.y, -facing.x) * (flag[0] / 2.0);
+    let lift = pole[1] - flag[1];
+    instances.push(BoxInstance {
+        pos: mid.to_array(),
+        facing: facing.to_array(),
+        size: flag,
+        color: [color[0], color[1], color[2], 0],
+        lift,
+    });
+    (mid, lift)
+}
+
+/// Where the bodies of the fallen lie on the field for a crow to stand on,
+/// each where it comes to rest (a man still falling or thrown counts where
+/// he will lie), leaving out those sinking to make room for newer dead.
+fn lying_bodies(puppets: &Puppets) -> impl Iterator<Item = Vec2> + '_ {
+    (puppets.corpses())
+        .filter(|c| c.sink == 0.0)
+        .map(|c| aftermath::body_at(c.rest, c.rest_facing))
+}
+
 /// Ground height for the cameras: the terrain, or the water's surface where
 /// it is deeper than the bed.
 fn ground_of(map: &Map, p: Vec2) -> f32 {
@@ -484,6 +546,8 @@ const DEPLOY_REPLAY_SPEED: u32 = 8;
 /// Most ticks run in one frame, so a slow frame can't snowball (4x speed at
 /// 30 fps needs about 3).
 const MAX_TICKS_PER_FRAME: u32 = 8;
+/// Ticks a frame plays while `GC_PLAY_FROM` hurries a match on.
+const PLAY_FROM_TICKS_PER_FRAME: u32 = 200;
 /// How long a frame may spend simulating when an online match is catching
 /// up after a rejoin.
 const CATCH_UP_BUDGET: Duration = Duration::from_millis(25);
@@ -504,6 +568,12 @@ struct Options {
     map: Option<gc_map::MapDef>,
     /// Start on an empty field with nobody moving on their own.
     sandbox: bool,
+    /// Time each pass on the GPU and print the averages at exit
+    /// (`--gpu-times`, with `--frames`).
+    gpu_times: bool,
+    /// Draw the world at this share of the window's resolution
+    /// (`--world-scale`) rather than letting the graphics preset choose.
+    world_scale: Option<f32>,
     frames: Option<u64>,
     /// Leave the last this many of the `--frames` undrawn, as for a hidden
     /// window (`--hidden-frames N`; see `Running::hide_window_for_check`).
@@ -515,6 +585,8 @@ struct Options {
     audio: bool,
     /// Start straight into a Field Battle against one AI of this level.
     battle: Option<u8>,
+    /// With `--battle`: how many play, each for themselves (2 to 6).
+    players: usize,
     /// Start straight into Conquest on this lobby Conquest map.
     conquest: Option<usize>,
     /// Open a LAN lobby at once (`--host`), or join one (`--join ADDRESS`
@@ -572,47 +644,99 @@ struct Options {
     render: RendererOptions,
 }
 
+impl Options {
+    /// What a launch with no flags gets.
+    fn new() -> Options {
+        Options {
+            seed: gc_ui::lobby::DEFAULT_MAP_SEED,
+            map: None,
+            sandbox: false,
+            frames: None,
+            hidden_frames: None,
+            overlay: false,
+            gpu_times: false,
+            world_scale: None,
+            menu: None,
+            audio: true,
+            battle: None,
+            players: 2,
+            time_of_day: None,
+            sky: None,
+            conquest: None,
+            host: false,
+            join: None,
+            password: String::new(),
+            crash_test: false,
+            lod: None,
+            showroom: None,
+            watch: None,
+            showroom_clip: None,
+            viewer: None,
+            look: None,
+            weather: None,
+            season: None,
+            air: None,
+            distance: None,
+            fx: None,
+            siege: false,
+            gate_march: None,
+            wall_scene: false,
+            bridge_scene: false,
+            fell_demo: false,
+            hamlet_demo: false,
+            render: RendererOptions::default(),
+        }
+    }
+
+    /// The flags that start a match (or a scene in one) at launch.
+    fn starts_a_match(&self) -> bool {
+        self.sandbox
+            || self.battle.is_some()
+            || self.conquest.is_some()
+            || self.watch.is_some()
+            || self.siege
+            || self.wall_scene
+            || self.bridge_scene
+            || self.gate_march.is_some()
+    }
+
+    /// Why the flags given cannot go together, if they cannot.
+    fn conflict(&self) -> Option<&'static str> {
+        // The hidden frames are the last of `--frames`, after at least one
+        // drawn, and there are two of them at least: one reading is taken as
+        // the window hides and another halfway through.
+        if let Some(n) = self.hidden_frames
+            && (n < 2 || self.frames.is_none_or(|frames| n >= frames))
+        {
+            return Some("--hidden-frames N needs N of 2 or more and --frames greater than N");
+        }
+        // The showroom is not a match: nothing to fight, host or join.
+        if self.showroom.is_some() && (self.starts_a_match() || self.host || self.join.is_some()) {
+            return Some("--showroom starts no match");
+        }
+        // The viewer is over the menu: it is not a match, or the showroom.
+        if self.viewer.is_some()
+            && (self.starts_a_match()
+                || self.host
+                || self.join.is_some()
+                || self.showroom.is_some())
+        {
+            return Some("--viewer opens over the main menu, not a match or the showroom");
+        }
+        None
+    }
+}
+
 fn parse_args() -> Options {
-    let mut opts = Options {
-        seed: gc_ui::lobby::DEFAULT_MAP_SEED,
-        map: None,
-        sandbox: false,
-        frames: None,
-        hidden_frames: None,
-        overlay: false,
-        menu: None,
-        audio: true,
-        battle: None,
-        time_of_day: None,
-        sky: None,
-        conquest: None,
-        host: false,
-        join: None,
-        password: String::new(),
-        crash_test: false,
-        lod: None,
-        showroom: None,
-        watch: None,
-        showroom_clip: None,
-        viewer: None,
-        look: None,
-        weather: None,
-        season: None,
-        air: None,
-        distance: None,
-        fx: None,
-        siege: false,
-        gate_march: None,
-        wall_scene: false,
-        bridge_scene: false,
-        fell_demo: false,
-        hamlet_demo: false,
-        render: RendererOptions::default(),
-    };
+    let mut opts = Options::new();
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         if flag == "--overlay" {
             opts.overlay = true;
+            continue;
+        }
+        if flag == "--gpu-times" {
+            opts.gpu_times = true;
             continue;
         }
         if flag == "--menu" || flag == "--no-menu" {
@@ -674,6 +798,10 @@ fn parse_args() -> Options {
             opts.render.msaa = 1;
             continue;
         }
+        if flag == "--no-kept-ground" {
+            opts.render.keep_ground = false;
+            continue;
+        }
         if flag == "--no-glow" {
             opts.render.glow = false;
             continue;
@@ -681,6 +809,13 @@ fn parse_args() -> Options {
         let value = args.next().unwrap_or_default();
         let ok = match flag.as_str() {
             "--seed" => value.parse().map(|v| opts.seed = v).is_ok(),
+            "--players" => match value.parse() {
+                Ok(v @ 2..=6) => {
+                    opts.players = v;
+                    true
+                }
+                _ => false,
+            },
             "--map" => {
                 let def = gc_map::shipped(&value)
                     .map_or_else(|| gc_map::MapDef::load(std::path::Path::new(&value)), Ok);
@@ -720,6 +855,13 @@ fn parse_args() -> Options {
             "--latency" => match value.parse() {
                 Ok(v @ 1..=3) => {
                     opts.render.frame_latency = v;
+                    true
+                }
+                _ => false,
+            },
+            "--world-scale" => match value.parse::<f32>() {
+                Ok(v) if (gc_render::MIN_WORLD_SCALE..=1.0).contains(&v) => {
+                    opts.world_scale = Some(v);
                     true
                 }
                 _ => false,
@@ -809,37 +951,13 @@ fn parse_args() -> Options {
     if opts.showroom_clip.is_some() && opts.showroom.is_none() {
         usage();
     }
-    // The hidden frames are the last of `--frames`, after at least one drawn.
-    if let Some(n) = opts.hidden_frames
-        && opts.frames.is_none_or(|frames| n >= frames)
-    {
-        eprintln!("--hidden-frames N needs --frames greater than N");
-        usage();
-    }
-    // The showroom is not a match: nothing to fight, host or join.
-    if opts.showroom.is_some()
-        && (opts.sandbox
-            || opts.battle.is_some()
-            || opts.conquest.is_some()
-            || opts.host
-            || opts.join.is_some())
-    {
+    if let Some(why) = opts.conflict() {
+        eprintln!("{why}");
         usage();
     }
     if opts.showroom.is_some() {
         // The showroom goes straight into the field.
         opts.menu = Some(false);
-    }
-    // The viewer is over the menu: it is not a match, or the showroom.
-    if opts.viewer.is_some()
-        && (opts.sandbox
-            || opts.battle.is_some()
-            || opts.conquest.is_some()
-            || opts.host
-            || opts.join.is_some()
-            || opts.showroom.is_some())
-    {
-        usage();
     }
     if opts.viewer.is_some() {
         opts.menu = Some(true);
@@ -869,8 +987,8 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--hidden-frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--season spring|summer|autumn|winter] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord [--players 2-6]] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--hidden-frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--no-kept-ground] [--latency 1|2|3] \
+         [--render-scale 0.25..1] [--world-scale 0.5..1] [--gpu-times] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--season spring|summer|autumn|winter] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -939,6 +1057,9 @@ struct Running {
     gate_swings: buildings::GateSwings,
     /// Fallen standards, crows and grime (see [`aftermath`]).
     aftermath: aftermath::Aftermath,
+    /// Seconds since the dead were last counted for ruins and the crows'
+    /// bodies ([`Running::tend_ruins`]).
+    ruin_clock: f32,
     /// How far `--siege` has staged its siege: 0 to place it, 1 to order
     /// the attacks.
     siege_scene: Option<u8>,
@@ -980,9 +1101,9 @@ struct Running {
     /// The game data as built, which Conquest matches are set up from.
     data: gc_data::GameData<'static>,
     sandbox: Sandbox,
-    selected: Vec<RegimentHandle>,
-    /// The building selected, when no regiment is (Conquest).
-    selected_structure: Option<StructureHandle>,
+    /// The regiments selected, or the building selected when no regiment is
+    /// (Conquest).
+    selected: Picked,
     /// The idle worker F1 last picked, to go on from there.
     idle_from: Option<u32>,
     /// The formation F last ordered, for which selection and on which tick:
@@ -1002,6 +1123,13 @@ struct Running {
     /// Regiments inside a box select, live while dragging.
     boxed: Vec<RegimentHandle>,
     control_groups: [Vec<RegimentHandle>; 10],
+    /// The shape each control group locked as an army keeps between
+    /// orders, and who holds each place in it
+    /// (docs/42-armies-that-march.md, "Standing armies").
+    armies: [Option<Army>; 10],
+    /// An army's places as the planned group order leaves them, kept when
+    /// the order is sent (a drag's preview plans orders never sent).
+    army_plan: Option<(usize, Army)>,
     last_group_key: Option<(usize, Instant)>,
     /// When the last right-click order was given, and to whom: a second
     /// one to the same selection soon after runs (see [`Self::run`]).
@@ -1024,8 +1152,21 @@ struct Running {
     /// When the next frame is due after one that drew nothing (see
     /// [`SKIPPED_FRAME_PAUSE`]).
     resume_at: Option<Instant>,
+    /// When the next frame may start under Settings' frame cap (see
+    /// [`Running::next_frame_due`]); `None` when uncapped.
+    frame_due: Option<Instant>,
+    /// Whether the window was last made fullscreen (it opens windowed).
+    fullscreen: bool,
+    /// When the screen's refresh rate was last asked for, and the rate
+    /// (0 when the OS does not say).
+    refresh: Option<(Instant, u32)>,
     /// Whether the dev overlay is showing.
     overlay: bool,
+    /// `--gpu-times`: GPU timings are taken all along and printed at exit.
+    opts_gpu_times: bool,
+    /// The world's resolution as the graphics preset picks it; `None` when
+    /// `--world-scale` or `--gpu-times` fixed it.
+    auto_resolution: Option<resolution::AutoResolution>,
     /// Whether the AI lens is showing (L).
     lens: bool,
     /// Marks over ground no regiment can cross, and whether to show them (G).
@@ -1082,6 +1223,18 @@ struct Running {
     /// The battle being recorded, or the replay being watched.
     recording: Option<Recording>,
     watching: Option<Watching>,
+    /// `GC_PLAY_FROM` (seconds, a dev knob like `GC_WATCH_FROM`): play a
+    /// live match's first ticks up to this one as fast as the game can, then
+    /// turn the director camera on, to measure a match's busy middle (or,
+    /// with `GC_HOLD_CAMERA` set, leave the camera where it is, to measure
+    /// a still view of it).
+    play_from: Option<u32>,
+    hold_camera: bool,
+    /// `GC_STILL_AT` (a frame number, a dev knob): hold that frame on screen
+    /// for a few seconds, so a script can grab the same frame from two runs
+    /// to compare them; and run the picture's clock (the wind, the water,
+    /// the film grain) by frames, a 30th of a second each, so the two match.
+    still_at: Option<u64>,
     /// The news line's word on the weather and nearby fires.
     sky_news: sky_news::SkyNews,
     /// The tick the news last told of debris striking our troops.
@@ -1329,9 +1482,8 @@ impl Sandbox {
             building_tool: false,
             building_turn: 0,
             building: 0,
-            tuning: false,
+            page: SandboxPage::Panel,
             row: 0,
-            credits: false,
             message: None,
             dirty: true,
         }
@@ -1449,14 +1601,30 @@ struct Sandbox {
     /// from one placing to the next).
     building_turn: u8,
     building: BuildingId,
-    /// The stats panel is open (T), with this row chosen.
-    tuning: bool,
+    /// What the panel shows: its own text, the stats panel (T) or the
+    /// credits (C).
+    page: SandboxPage,
+    /// The row chosen on the stats panel, kept from one opening to the next.
     row: usize,
-    /// The credits are showing (C), in place of the overlay text.
-    credits: bool,
     message: Option<(String, Instant)>,
     /// The panel needs redrawing.
     dirty: bool,
+}
+
+/// The page the sandbox panel is on. Only the stats page takes the arrow
+/// keys; the credits take the place of the panel's text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SandboxPage {
+    Panel,
+    Tuning,
+    Credits,
+}
+
+impl SandboxPage {
+    /// Go to page `to`, or back to the panel's own text if it is on already.
+    fn toggle(&mut self, to: SandboxPage) {
+        *self = if *self == to { SandboxPage::Panel } else { to };
+    }
 }
 
 /// The sandbox's and the drill's four sides, named by colour.
@@ -1541,6 +1709,20 @@ struct Watching {
     jump_to: Option<u32>,
 }
 
+impl Watching {
+    /// Whether the world at `tick` has played the whole recording.
+    fn over(&self, tick: u32) -> bool {
+        tick >= self.replay.ticks
+    }
+}
+
+/// What P leaves `paused` as offline. A replay played to its end stays
+/// paused: there is nothing left to play, and the frame loop would only
+/// pause it again a tick later.
+fn pause_key_offline(paused: bool, replay_over: bool) -> bool {
+    replay_over || !paused
+}
+
 /// Process memory recorded at startup milestones, to see what each costs.
 #[derive(Default)]
 struct MemoryTimeline(Vec<(&'static str, Option<u64>)>);
@@ -1564,6 +1746,8 @@ struct HiddenCheck {
 /// `Renderer::skip`). A 60th of a second keeps the match (and an online
 /// game's turns) going at the same pace.
 const SKIPPED_FRAME_PAUSE: Duration = Duration::from_millis(16);
+/// The frame `--gpu-times` starts its averages from.
+const GPU_TIMES_FROM: u64 = 20;
 
 impl MemoryTimeline {
     /// Also logged as it happens, so a run that hangs shows how far it got.
@@ -1617,6 +1801,8 @@ struct Input {
     shift: bool,
     /// Ctrl, or Cmd on a Mac.
     command: bool,
+    /// Ctrl and Cmd together (the Mac's fullscreen chord with F).
+    ctrl_cmd: bool,
     arrows: [bool; 4], // up, down, left, right
     /// `,` turns the view left, `.` right.
     turn: [bool; 2],
@@ -1672,6 +1858,9 @@ impl App {
             ))
         })?;
         self.memory_timeline.mark("gpu device + pipelines");
+        if let Some(scale) = opts.world_scale {
+            renderer.set_world_scale(scale);
+        }
         // The game opens on the map a two-player battle from a new lobby
         // would be on, or on one opened with `--map`.
         let first_key = battle_map(
@@ -1936,6 +2125,7 @@ impl App {
             siege: siege::Siege::new(capacities.regiments as usize),
             gate_swings: buildings::GateSwings::default(),
             aftermath: aftermath::Aftermath::default(),
+            ruin_clock: 0.0,
             siege_scene: None,
             gate_scene: None,
             wall_scene: None,
@@ -1956,8 +2146,7 @@ impl App {
             sandbox: Sandbox {
                 ..Sandbox::new(opts.sandbox)
             },
-            selected: Vec::with_capacity(64),
-            selected_structure: None,
+            selected: Picked::default(),
             idle_from: None,
             formation_pick: None,
             shown_formation: None,
@@ -1970,6 +2159,8 @@ impl App {
             last_brigade: 0,
             boxed: Vec::with_capacity(64),
             control_groups: Default::default(),
+            armies: Default::default(),
+            army_plan: None,
             last_group_key: None,
             last_right: None,
             attack_mark: None,
@@ -1994,6 +2185,9 @@ impl App {
                 ai_time: Duration::ZERO,
             },
             overlay: opts.overlay,
+            opts_gpu_times: opts.gpu_times,
+            auto_resolution: (opts.world_scale.is_none() && !opts.gpu_times)
+                .then(resolution::AutoResolution::default),
             lens: false,
             blocked_marks,
             show_blocked: false,
@@ -2021,6 +2215,9 @@ impl App {
             memory_timeline: std::mem::take(&mut self.memory_timeline),
             hidden_check: None,
             resume_at: None,
+            frame_due: None,
+            refresh: None,
+            fullscreen: false,
             seed: opts.seed,
             capacities,
             menu,
@@ -2033,6 +2230,14 @@ impl App {
             online: None,
             recording: None,
             watching: None,
+            still_at: std::env::var("GC_STILL_AT")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok()),
+            play_from: std::env::var("GC_PLAY_FROM")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .map(|s| s.saturating_mul(gc_sim::TICKS_PER_SECOND)),
+            hold_camera: std::env::var_os("GC_HOLD_CAMERA").is_some(),
             sky_news: sky_news::SkyNews::default(),
             debris_told: None,
             jam_told: None,
@@ -2068,7 +2273,8 @@ impl App {
                 }
             }
             if let Some(level) = opts.battle {
-                let mut setup = battle::quick_battle(level, r.menu.settings(), opts.seed);
+                let mut setup =
+                    battle::quick_battle(level, r.menu.settings(), opts.seed, opts.players);
                 opts.set_sky(&mut setup);
                 r.start_match(MatchKind::Battle(setup));
             }
@@ -2079,15 +2285,17 @@ impl App {
                             None => r.start_match(MatchKind::Replay(Box::new(replay))),
                             Some(why) => {
                                 logln!("grubcraft: can't watch {}: {why}", path.display());
-                                r.menu.tell(why);
+                                // Main clears the message: tell it once the menu is open.
                                 r.open_menu();
+                                r.menu.tell(why);
                             }
                         }
                     }
                     Err(e) => {
                         logln!("grubcraft: can't open {}: {e}", path.display());
-                        r.menu.tell(format!("Can't open that replay: {e}"));
+                        // Main clears the message: tell it once the menu is open.
                         r.open_menu();
+                        r.menu.tell(format!("Can't open that replay: {e}"));
                     }
                 }
             }
@@ -2146,6 +2354,20 @@ impl ApplicationHandler for App {
         let Some(r) = self.running.as_mut() else {
             return;
         };
+        // Alt+Enter, or Ctrl+Cmd+F on a Mac, switches fullscreen anywhere.
+        // (Held down, its repeats go nowhere.)
+        if let WindowEvent::KeyboardInput { event: key, .. } = &event
+            && key.state == ElementState::Pressed
+            && let PhysicalKey::Code(code) = key.physical_key
+            && ((matches!(code, KeyCode::Enter | KeyCode::NumpadEnter) && r.input.alt)
+                || (code == KeyCode::KeyF && r.input.ctrl_cmd))
+        {
+            if !key.repeat {
+                let on = !r.menu.settings().fullscreen;
+                r.menu.set_fullscreen(on);
+            }
+            return;
+        }
         if r.guide.is_some() && r.guide_event(&event) {
             return;
         }
@@ -2192,6 +2414,7 @@ impl ApplicationHandler for App {
                 r.input.alt = m.state().alt_key();
                 r.input.shift = m.state().shift_key();
                 r.input.command = m.state().control_key() || m.state().super_key();
+                r.input.ctrl_cmd = m.state().control_key() && m.state().super_key();
             }
             WindowEvent::CursorLeft { .. } => {
                 r.input.cursor = None;
@@ -2260,7 +2483,7 @@ impl ApplicationHandler for App {
                     {
                         return;
                     }
-                    if r.sandbox.tuning && down && r.tune_key(code) {
+                    if down && r.tuning_shown() && r.tune_key(code) {
                         return;
                     }
                     let reload_key = code == KeyCode::KeyR && r.input.shift;
@@ -2321,6 +2544,9 @@ impl ApplicationHandler for App {
                         Some("That sandbox tool is off in a network battle.")
                     } else if r.watching.is_some() && (edit_tool || code == KeyCode::KeyF) {
                         Some("That is off while you watch a replay.")
+                    } else if r.showroom.is_some() && code == KeyCode::KeyT {
+                        // The showroom shows no panel to tune in.
+                        Some("The stats panel is off in the showroom.")
                     } else if r.conquest_match() && edit_tool {
                         Some("That sandbox tool is off in Conquest.")
                     } else {
@@ -2375,7 +2601,9 @@ impl ApplicationHandler for App {
                             print_memory(&r.renderer);
                         }
                         KeyCode::KeyP | KeyCode::Pause if down && !event.repeat => {
-                            r.paused = !r.paused;
+                            let tick = r.world.tick_count();
+                            let over = r.watching.as_ref().is_some_and(|w| w.over(tick));
+                            r.paused = pause_key_offline(r.paused, over);
                             r.sandbox.dirty = true;
                         }
                         KeyCode::Minus | KeyCode::NumpadSubtract if down => {
@@ -2406,7 +2634,7 @@ impl ApplicationHandler for App {
                             r.delete_key();
                         }
                         KeyCode::KeyT if down && !event.repeat => {
-                            r.sandbox.tuning = !r.sandbox.tuning;
+                            r.sandbox.page.toggle(SandboxPage::Tuning);
                             r.input.arrows = [false; 4];
                             r.sandbox.dirty = true;
                         }
@@ -2466,7 +2694,7 @@ impl ApplicationHandler for App {
                             r.sandbox.dirty = true;
                         }
                         KeyCode::KeyC if down && !event.repeat => {
-                            r.sandbox.credits = !r.sandbox.credits;
+                            r.sandbox.page.toggle(SandboxPage::Credits);
                             r.sandbox.dirty = true;
                         }
                         KeyCode::KeyH
@@ -2522,14 +2750,12 @@ impl ApplicationHandler for App {
                                 && (r.sandbox.placing
                                     || r.hud.placer
                                     || r.sandbox.building_tool
-                                    || r.sandbox.tuning
-                                    || r.sandbox.credits) =>
+                                    || r.sandbox.page != SandboxPage::Panel) =>
                         {
                             r.sandbox.placing = false;
                             r.hud.placer = false;
                             r.sandbox.building_tool = false;
-                            r.sandbox.tuning = false;
-                            r.sandbox.credits = false;
+                            r.sandbox.page = SandboxPage::Panel;
                             r.sandbox.dirty = true;
                         }
                         KeyCode::Escape if down && !event.repeat => r.open_menu(),
@@ -2576,10 +2802,24 @@ impl ApplicationHandler for App {
                         check.halfway = gc_platform::memory::process_memory().current;
                     }
                 }
+                // `GC_STILL_AT`: hold that frame on screen for a few seconds.
+                if r.still_at == Some(r.stats.frames) {
+                    r.renderer.wait_idle();
+                    println!("still at frame {}", r.stats.frames);
+                    std::thread::sleep(Duration::from_secs(8));
+                }
+                // GPU timings count from the 20th frame, past the match's
+                // first uploads.
+                if r.opts_gpu_times && r.stats.frames == GPU_TIMES_FROM {
+                    r.renderer.reset_gpu_times();
+                }
                 if limit.is_some_and(|n| r.stats.frames >= n) {
                     // Log what the driver said about the last frame too: the
                     // smoke run fails on any GPU error in the log.
                     r.check_devices();
+                    if r.opts_gpu_times {
+                        r.print_gpu_times();
+                    }
                     r.memory_timeline.mark("exit");
                     r.print_hidden_window_check();
                     println!("{}", r.stats_line());
@@ -2604,11 +2844,15 @@ impl ApplicationHandler for App {
             if r.quit {
                 event_loop.exit();
             }
-            match r.resume_at {
-                Some(at) if Instant::now() < at => {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(at));
-                }
-                _ => {
+            // The next frame waits for the later of the pause after a
+            // skipped frame and Settings' frame cap (no frames nobody asked
+            // for).
+            let wait = (r.resume_at.into_iter().chain(r.frame_due))
+                .max()
+                .filter(|&at| Instant::now() < at);
+            match wait {
+                Some(at) => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
+                None => {
                     r.resume_at = None;
                     event_loop.set_control_flow(ControlFlow::Poll);
                     r.window.request_redraw();
@@ -2633,6 +2877,115 @@ impl Running {
             before: gc_platform::memory::process_memory().current,
             halfway: None,
         });
+    }
+
+    /// Follow Settings' Fullscreen when it changes: borderless over the
+    /// whole screen (its own space on a Mac), where the system can show the
+    /// game's frames without composing them with the desktop, which saves
+    /// the GPU a copy of every frame.
+    fn apply_fullscreen(&mut self) {
+        let want = self.menu.settings().fullscreen;
+        if self.fullscreen != want {
+            self.fullscreen = want;
+            self.window
+                .set_fullscreen(want.then_some(winit::window::Fullscreen::Borderless(None)));
+        }
+    }
+
+    /// The frames a second the game draws at: `(rate, held)`, where `held`
+    /// says V-sync on a screen no faster than Settings' frame cap already
+    /// holds the frames to the screen's rate. The rate is 0 when neither a
+    /// cap nor V-sync limits it.
+    fn frame_rate(&self) -> (u32, bool) {
+        let settings = self.menu.settings();
+        let cap = u32::from(settings.frame_cap);
+        let refresh = self.refresh.map_or(0, |(_, hz)| hz);
+        if settings.vsync && refresh > 0 && (cap == 0 || refresh <= cap + 1) {
+            (refresh, true)
+        } else {
+            (cap, false)
+        }
+    }
+
+    /// When the frame after one starting `now` may start, under Settings'
+    /// frame cap (30, 60 or 120 a second, or none): a frame drawn faster than
+    /// the cap only heats the GPU. `None` when uncapped, or when V-sync
+    /// already holds the frames (see `frame_rate`). Each frame is due a whole
+    /// period after the last was, so oversleeping does not drift the rate
+    /// down; a frame later than that starts the count again from now.
+    fn next_frame_due(&self, now: Instant) -> Option<Instant> {
+        let (cap, held) = self.frame_rate();
+        if cap == 0 || held || self.opts_gpu_times {
+            return None;
+        }
+        let period = Duration::from_secs(1) / cap;
+        Some(match self.frame_due {
+            Some(due) if now < due + period => due + period,
+            _ => now + period,
+        })
+    }
+
+    /// The time each frame has to be drawn in, in milliseconds (a 60th of
+    /// a second where nothing limits the rate).
+    fn frame_budget_ms(&self) -> f32 {
+        let (rate, _) = self.frame_rate();
+        1000.0 / if rate == 0 { 60.0 } else { rate as f32 }
+    }
+
+    /// Every half second, set the world's resolution from the GPU's time
+    /// for the frames since (see `resolution`), unless `--world-scale` or
+    /// `--gpu-times` fixed it. The GPU is timed only while something reads
+    /// the times: this, the dev overlay or `--gpu-times`.
+    fn choose_resolution(&mut self) {
+        let aim = resolution::aim(self.menu.settings().graphics);
+        let shown = self.overlay || self.opts_gpu_times;
+        let auto = self.auto_resolution.is_some() && aim.is_some();
+        self.renderer.set_gpu_timing(shown || auto, shown);
+        let budget = self.frame_budget_ms();
+        let Some(auto_resolution) = &mut self.auto_resolution else {
+            return;
+        };
+        if aim.is_none() {
+            // High: full resolution, at once.
+            let scale = auto_resolution.update(0.0, 0.0, None);
+            self.renderer.set_world_scale(scale);
+            return;
+        }
+        if self.renderer.gpu_frames() < resolution::WINDOW_FRAMES {
+            return;
+        }
+        let Some(times) = self.renderer.gpu_times() else {
+            return;
+        };
+        let scale = auto_resolution.update(times.total, budget, aim);
+        self.renderer.set_world_scale(scale);
+        self.renderer.reset_gpu_times();
+    }
+
+    /// `--gpu-times`: each pass's average GPU time, at exit.
+    fn print_gpu_times(&self) {
+        let info = self.renderer.adapter_info();
+        match self.renderer.gpu_times() {
+            Some(t) => {
+                let rs = self.renderer.stats();
+                let (width, height) = self.renderer.world_size();
+                println!(
+                    "gpu times on {} via {:?}, world {}x{}: {} draw calls, {} soldiers, {} scenery, {}k triangles",
+                    info.name,
+                    info.backend,
+                    width,
+                    height,
+                    rs.draw_calls,
+                    rs.soldiers_drawn,
+                    rs.scenery_drawn,
+                    rs.triangles / 1000
+                );
+                for line in t.lines() {
+                    println!("{line}");
+                }
+            }
+            None => println!("gpu times: this GPU cannot time passes"),
+        }
     }
 
     fn print_hidden_window_check(&self) {
@@ -2717,17 +3070,16 @@ impl Running {
                 self.input.left_down = None;
             }
             (MouseButton::Left, ElementState::Released) => {
-                if !self.input.shift {
+                if self.input.shift {
+                    self.selected.drop_structure();
+                } else {
                     self.selected.clear();
                 }
-                self.selected_structure = None;
                 if let Some(rect) = self.selection_box() {
                     self.regiments_in_box(rect);
                     for i in 0..self.boxed.len() {
                         let h = self.boxed[i];
-                        if !self.selected.contains(&h) {
-                            self.selected.push(h);
-                        }
+                        self.selected.add(h);
                     }
                 } else {
                     // A click on one of your buildings picks it, unless one
@@ -2738,16 +3090,21 @@ impl Running {
                     let side = self.sandbox.side;
                     let building = self
                         .selected
+                        .regiments()
                         .is_empty()
                         .then(|| self.building_under_cursor(|o| o == side))
                         .flatten();
                     let reach = if building.is_some() { 1.5 } else { 6.0 };
                     match self.own_regiment_at_cursor(reach) {
-                        Some(h) => self.toggle_selected(h),
-                        None => self.selected_structure = building,
+                        Some(h) => self.selected.toggle(h),
+                        None => {
+                            if let Some(b) = building {
+                                self.selected.select_structure(b);
+                            }
+                        }
                     }
                 }
-                if !self.selected.is_empty() || self.selected_structure.is_some() {
+                if !self.selected.is_nothing() {
                     self.ui_sound(sounds::UiSound::Select);
                 }
                 self.input.left_down = None;
@@ -2824,17 +3181,23 @@ impl Running {
                 // A second right-click soon after the first: they run there.
                 if ordered && !queue && !self.world.deploying() {
                     let now = Instant::now();
-                    let again = (self.last_right.take())
-                        .is_some_and(|(t, who)| now - t < DOUBLE_TAP && who == self.selected);
+                    let again = (self.last_right.take()).is_some_and(|(t, who)| {
+                        now - t < DOUBLE_TAP && who == self.selected.regiments()
+                    });
                     if again {
                         self.run();
                     } else {
-                        self.last_right = Some((now, self.selected.clone()));
+                        self.last_right = Some((now, self.selected.regiments().to_vec()));
                     }
                 }
                 self.input.right_down = None;
             }
             _ => {}
+        }
+        // A Clear or Fell drag ends with the button, whether or not its
+        // release gave the order (one let go over the bar does not).
+        if (button, state) == (MouseButton::Left, ElementState::Released) {
+            self.input.clear_from = None;
         }
     }
 
@@ -2925,13 +3288,36 @@ impl Running {
         // (docs/42-armies-that-march.md), each order a new one.
         // Each player's numbers are its own, so two players ordering
         // one owner's regiments (an army handed over) never share one.
-        if self.selected.len() > 1 {
-            const EACH: u16 = gc_sim::brigades::PLAYER_NUMBERS / gc_sim::MAX_PARTIES as u16;
-            self.last_brigade = self.last_brigade % EACH + 1;
-            let side = u16::from(self.sandbox.side) % gc_sim::MAX_PARTIES as u16;
-            order.brigade = side * EACH + self.last_brigade;
+        if self.selected.regiments().len() > 1 {
+            order.brigade = self.next_brigade();
         }
         self.plan_order(order);
+        if let Some((n, army)) = self.army_plan.take() {
+            self.armies[n] = Some(army);
+        } else {
+            // Ordered other than as a whole army, they leave their places.
+            for army in self.armies.iter_mut().flatten() {
+                for h in &mut army.held {
+                    if h.is_some_and(|h| self.selected.regiments().contains(&h)) {
+                        *h = None;
+                    }
+                }
+            }
+        }
+        self.send_planned(hunt, queue);
+    }
+
+    /// A new brigade number of the side you command for a group order.
+    fn next_brigade(&mut self) -> u16 {
+        const EACH: u16 = gc_sim::brigades::PLAYER_NUMBERS / gc_sim::MAX_PARTIES as u16;
+        self.last_brigade = self.last_brigade % EACH + 1;
+        let side = u16::from(self.sandbox.side) % gc_sim::MAX_PARTIES as u16;
+        side * EACH + self.last_brigade
+    }
+
+    /// Send `self.group_commands` (a planned group order), each shown at
+    /// once by its mark; `hunt` and `queue` as [`Self::issue_march`].
+    fn send_planned(&mut self, hunt: bool, queue: bool) {
         if !self.group_commands.is_empty() {
             self.ui_sound(sounds::UiSound::Move);
         }
@@ -3019,34 +3405,42 @@ impl Running {
     /// if `queue`).
     fn issue_attack(&mut self, target: RegimentHandle, queue: bool) {
         let queue = queue && !self.world.deploying();
-        if !self.selected.is_empty() {
+        if !self.selected.regiments().is_empty() {
             self.attack_mark = Some((target, Instant::now()));
             self.ui_sound(sounds::UiSound::Attack);
         }
-        self.human_orders
-            .extend(self.selected.iter().map(|&regiment| PlayerCommand {
-                player: self.sandbox.side,
-                command: gc_sim::Command::of_step(
-                    regiment,
-                    gc_sim::orders::Step::Attack { target },
-                    queue,
-                ),
-            }));
+        self.human_orders.extend(
+            self.selected
+                .regiments()
+                .iter()
+                .map(|&regiment| PlayerCommand {
+                    player: self.sandbox.side,
+                    command: gc_sim::Command::of_step(
+                        regiment,
+                        gc_sim::orders::Step::Attack { target },
+                        queue,
+                    ),
+                }),
+        );
     }
 
     /// Send the selection to attack the building `structure`.
     fn issue_siege(&mut self, structure: StructureHandle) {
-        if !self.selected.is_empty() {
+        if !self.selected.regiments().is_empty() {
             self.ui_sound(sounds::UiSound::Attack);
         }
-        self.human_orders
-            .extend(self.selected.iter().map(|&regiment| PlayerCommand {
-                player: self.sandbox.side,
-                command: gc_sim::Command::AttackStructure {
-                    regiment,
-                    structure,
-                },
-            }));
+        self.human_orders.extend(
+            self.selected
+                .regiments()
+                .iter()
+                .map(|&regiment| PlayerCommand {
+                    player: self.sandbox.side,
+                    command: gc_sim::Command::AttackStructure {
+                        regiment,
+                        structure,
+                    },
+                }),
+        );
     }
 
     /// The building the mouse is over whose owner `accept` allows.
@@ -3075,24 +3469,24 @@ impl Running {
         self.building_under_cursor(|o| self.world.hostile(side, o))
     }
 
-    /// Add `h` to the selection, or take it out if it is already in.
-    fn toggle_selected(&mut self, h: RegimentHandle) {
-        match self.selected.iter().position(|&s| s == h) {
-            Some(i) => {
-                self.selected.swap_remove(i);
-            }
-            None => self.selected.push(h),
-        }
-    }
-
     /// Fill `self.group` with the selection as group orders see it, each
     /// regiment with its place in an arranged army.
     fn fill_group(&mut self) {
         let regiments = &self.world.regiments;
         self.selected.retain(|&h| regiments.get(h).is_some());
+        let selected = std::mem::take(&mut self.selected);
+        self.fill_group_with(selected.regiments());
+        self.selected = selected;
+    }
+
+    /// Fill `self.group` with the living of `regiments`, as
+    /// [`Self::fill_group`] does with the selection.
+    fn fill_group_with(&mut self, regiments: &[RegimentHandle]) {
         self.group.clear();
-        for &h in &self.selected {
-            let r = self.world.regiments.get(h).unwrap();
+        for &h in regiments {
+            let Some(r) = self.world.regiments.get(h) else {
+                continue;
+            };
             let mut m = GroupMember::of(&r, &self.world.units()[r.unit as usize]);
             if let Some(&role) = self.units.roles.get(r.unit as usize) {
                 m.role = role;
@@ -3107,18 +3501,29 @@ impl Running {
     fn plan_order(&mut self, mut order: GroupOrder) {
         self.fill_group();
         self.group_commands.clear();
+        self.army_plan = None;
         // Alt on a dragged line draws it deep: the drag is the front, every
         // regiment keeps its frontage and those that don't fit stand behind
         // (one regiment alone just goes there, as it stands).
-        let how = if self.input.alt && order.width.is_some() {
-            if self.group.len() < 2 {
-                order.width = None;
-            }
-            gc_sim::arrange::Arrangement::Preset(gc_sim::arrange::Preset::Deep)
+        let deep = self.input.alt && order.width.is_some();
+        if deep && self.group.len() < 2 {
+            order.width = None;
+        }
+        // An army keeps its own shape, unless drawn deep.
+        let army = (!deep).then(|| self.army_selected()).flatten();
+        if let Some(n) = army
+            && let Some(mut a) = self.armies[n].clone()
+        {
+            a.order(&mut self.group, order, &mut self.group_commands);
+            self.army_plan = Some((n, a));
         } else {
-            self.army_shapes.arrangement()
-        };
-        gc_sim::arrange::arranged_move(&mut self.group, order, how, &mut self.group_commands);
+            let how = if deep {
+                gc_sim::arrange::Arrangement::Preset(gc_sim::arrange::Preset::Deep)
+            } else {
+                self.army_shapes.arrangement()
+            };
+            gc_sim::arrange::arranged_move(&mut self.group, order, how, &mut self.group_commands);
+        }
         battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
     }
 
@@ -3248,25 +3653,36 @@ impl Running {
         }
     }
 
-    /// Number keys: Ctrl/Cmd + n saves the selection as group n, n recalls it
-    /// (Shift adds it), and n twice quickly centres the camera on it.
+    /// Number keys: Ctrl/Cmd+n saves the selection as group n (with
+    /// Shift, locked as an army that keeps its shape between orders),
+    /// Alt+n sends the selection to join army n, n recalls it (Shift adds
+    /// it), and n twice quickly centres the camera on it.
     fn control_group(&mut self, n: usize) {
+        if self.input.command && self.input.shift {
+            self.lock_army(n);
+            return;
+        }
         if self.input.command {
             self.control_groups[n].clear();
-            self.control_groups[n].extend_from_slice(&self.selected);
+            self.control_groups[n].extend_from_slice(self.selected.regiments());
+            if self.armies[n].take().is_some() {
+                self.say(format!("Group {} saved: no longer an army.", army_label(n)));
+            }
+            return;
+        }
+        if self.input.alt {
+            self.join_army(n);
             return;
         }
         let (regiments, side) = (&self.world.regiments, self.sandbox.side);
         self.control_groups[n].retain(|&h| regiments.get(h).is_some_and(|r| r.owner == side));
         if !self.input.shift {
-            self.selected.clear();
+            self.selected.clear_regiments();
         }
         for &h in &self.control_groups[n] {
-            if !self.selected.contains(&h) {
-                self.selected.push(h);
-            }
+            self.selected.add(h);
         }
-        if !self.selected.is_empty() {
+        if !self.selected.regiments().is_empty() {
             self.ui_sound(sounds::UiSound::Select);
         }
         let now = Instant::now();
@@ -3281,6 +3697,118 @@ impl Running {
             let centre = sum / self.control_groups[n].len() as f32;
             self.look_at(centre);
         }
+    }
+
+    /// Ctrl/Cmd+Shift+n: save the selection as group n and lock it as an
+    /// army, keeping the shape it stands in now for its group orders. A
+    /// refusal leaves group n as it was.
+    fn lock_army(&mut self, n: usize) {
+        if self.watching.is_some() {
+            self.say("That is off while you watch a replay.".into());
+            return;
+        }
+        self.fill_group();
+        let Some(army) = Army::lock(&self.group) else {
+            self.say("Select two or more regiments to make an army.".into());
+            return;
+        };
+        self.control_groups[n].clear();
+        self.control_groups[n].extend_from_slice(self.selected.regiments());
+        self.armies[n] = Some(army);
+        self.ui_sound(sounds::UiSound::Select);
+        self.say(format!(
+            "Army {}: its {} regiments keep this shape on every group order. Alt+{n} sends others to join it.",
+            army_label(n),
+            self.selected.regiments().len()
+        ));
+    }
+
+    /// The army the selection is, all of it and nothing else, if any.
+    fn army_selected(&self) -> Option<usize> {
+        let regiments = &self.world.regiments;
+        let selected = (self.selected.regiments().iter())
+            .filter(|&&h| regiments.get(h).is_some())
+            .count();
+        if selected < 2 {
+            return None;
+        }
+        (0..self.armies.len()).find(|&n| {
+            let mut alive =
+                (self.control_groups[n].iter()).filter(|&&h| regiments.get(h).is_some());
+            self.armies[n].is_some()
+                && alive.clone().count() == selected
+                && alive.all(|h| self.selected.regiments().contains(h))
+        })
+    }
+
+    /// Alt+n: the selected regiments not in army n join it: each is sent to
+    /// the place the army's shape has for it about where the army stands
+    /// now (a free place of its kind, or behind), and the army keeps them.
+    fn join_army(&mut self, n: usize) {
+        if self.watching.is_some() {
+            self.say("That is off while you watch a replay.".into());
+            return;
+        }
+        let Some(mut army) = self.armies[n].clone() else {
+            self.say(format!(
+                "Group {} is not an army: Ctrl+Shift+{n} makes the selection one.",
+                army_label(n)
+            ));
+            return;
+        };
+        let (regiments, side) = (&self.world.regiments, self.sandbox.side);
+        self.control_groups[n].retain(|&h| regiments.get(h).is_some_and(|r| r.owner == side));
+        let newcomers: Vec<RegimentHandle> = (self.selected.regiments().iter().copied())
+            .filter(|h| !self.control_groups[n].contains(h))
+            .filter(|&h| regiments.get(h).is_some_and(|r| r.owner == side))
+            .collect();
+        if newcomers.is_empty() {
+            self.say(format!(
+                "Select regiments to send to army {}.",
+                army_label(n)
+            ));
+            return;
+        }
+        let members: Vec<RegimentHandle> = (self.control_groups[n].iter())
+            .chain(&newcomers)
+            .copied()
+            .collect();
+        self.fill_group_with(&members);
+        // An army on the march is joined where it is going.
+        for m in self
+            .group
+            .iter_mut()
+            .filter(|m| !newcomers.contains(&m.handle))
+        {
+            if let Some(goal) = self.world.goal(m.handle) {
+                m.position = goal;
+                m.facing = self.world.goal_facing(m.handle).unwrap_or(m.facing);
+            }
+        }
+        let brigade = if newcomers.len() > 1 {
+            self.next_brigade()
+        } else {
+            0
+        };
+        self.group_commands.clear();
+        if !army.join(&mut self.group, brigade, &mut self.group_commands) {
+            self.say(format!(
+                "Army {} is out of its shape: order it as a whole once, then send others to join it.",
+                army_label(n)
+            ));
+            return;
+        }
+        battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
+        self.armies[n] = Some(army);
+        self.control_groups[n].extend_from_slice(&newcomers);
+        let k = newcomers.len();
+        self.selected = Picked::from(newcomers);
+        self.send_planned(false, false);
+        self.say(format!(
+            "Sent {k} {} to join army {}.",
+            buildings::plural(k, "regiment", "regiments"),
+            army_label(n)
+        ));
     }
 
     /// Ground height for the cameras: the terrain, or the water's surface
@@ -3304,6 +3832,7 @@ impl Running {
         let regiments = &self.world.regiments;
         let Some(r) = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| regiments.get(h))
             .find(|r| r.morale != MoraleState::Shattered)
@@ -3490,12 +4019,13 @@ impl Running {
         // Regiments locked in melee or running can't re-form.
         let ready = || {
             self.selected
+                .regiments()
                 .iter()
                 .filter_map(|&h| regiments.get(h))
                 .filter(|r| !r.engaged && !r.morale.broken())
         };
         let Some(first) = ready().next() else {
-            if !self.selected.is_empty() {
+            if !self.selected.regiments().is_empty() {
                 self.say("Locked in melee or running: no new formation".into());
             }
             return;
@@ -3505,7 +4035,11 @@ impl Running {
         // may not have landed yet), else from where it stands now: a shield
         // regiment's formation, since the rest stand in Tight for its wall.
         let current = match &self.formation_pick {
-            Some((selection, f, at)) if *selection == self.selected && tick < at + 40 => *f,
+            Some((selection, f, at))
+                if **selection == *self.selected.regiments() && tick < at + 40 =>
+            {
+                *f
+            }
             _ => ready().find(shielded).unwrap_or(first).formation,
         };
         let wedges = |r: &gc_sim::RegimentView| units[r.unit as usize].can_wedge();
@@ -3537,7 +4071,7 @@ impl Running {
                 },
             });
         }
-        self.formation_pick = Some((self.selected.clone(), next, tick));
+        self.formation_pick = Some((self.selected.regiments().to_vec(), next, tick));
         self.ui_sound(sounds::UiSound::Move);
         let note = if closed_up {
             " (Tight for those without shields)"
@@ -3611,6 +4145,7 @@ impl Running {
         let units = self.world.units();
         let spears: Vec<_> = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .filter(|r| units[r.unit as usize].reach && !r.morale.broken())
@@ -3664,6 +4199,7 @@ impl Running {
         let units = self.world.units();
         let bows: Vec<_> = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .filter(|r| units[r.unit as usize].can_skirmish() && !r.morale.broken())
@@ -3696,6 +4232,7 @@ impl Running {
     fn toggle_hold(&mut self) {
         let mine: Vec<_> = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .filter(|r| !r.morale.broken() && !r.falling_back)
@@ -3729,6 +4266,7 @@ impl Running {
         }
         let ready: Vec<_> = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .filter(|r| {
@@ -3766,7 +4304,7 @@ impl Running {
             return;
         }
         let before = self.human_orders.len();
-        for &regiment in &self.selected {
+        for &regiment in self.selected.regiments() {
             if self.world.regiments.owner(regiment).is_some() {
                 self.human_orders.push(PlayerCommand {
                     player: self.sandbox.side,
@@ -3788,6 +4326,7 @@ impl Running {
     fn toggle_torches(&mut self) {
         let mine: Vec<_> = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .collect();
@@ -3817,6 +4356,7 @@ impl Running {
     /// stakes of its faction's to plant.
     fn plantable(&self) -> Vec<(RegimentHandle, gc_sim::BuildingId)> {
         self.selected
+            .regiments()
             .iter()
             .filter_map(|&h| {
                 let unit = self.world.regiments.get(h)?.unit;
@@ -3855,6 +4395,7 @@ impl Running {
     fn fall_back(&mut self) {
         let ready: Vec<_> = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .filter(|r| !r.morale.broken() && !r.falling_back)
@@ -3964,6 +4505,21 @@ impl Running {
         }
         let dt = gap.min(Duration::from_millis(250));
         self.last_frame = now;
+        // The screen's refresh rate, asked of the OS once a second (it is a
+        // display mode query on a Mac), for the frame cap and the budget.
+        if self
+            .refresh
+            .is_none_or(|(at, _)| now.duration_since(at) >= Duration::from_secs(1))
+        {
+            let hz = (self.window.current_monitor())
+                .and_then(|m| m.refresh_rate_millihertz())
+                .map_or(0, |mhz| mhz.div_ceil(1000));
+            self.refresh = Some((now, hz));
+        }
+        self.frame_due = self.next_frame_due(now);
+        let vsync = self.menu.settings().vsync;
+        self.renderer.set_vsync(vsync);
+        self.apply_fullscreen();
         self.update_camera(dt.as_secs_f32());
         self.stage_siege();
         self.stage_gate_march();
@@ -4008,15 +4564,29 @@ impl Running {
                 }
             }
         }
-        while self.sim_clock >= TICK && ticks_this_frame < MAX_TICKS_PER_FRAME {
+        let mut max_ticks = MAX_TICKS_PER_FRAME;
+        if let Some(until) = self.play_from.filter(|_| {
+            self.match_started
+                && !self.paused
+                && !self.menu_open
+                && self.watching.is_none()
+                && self.online.is_none()
+        }) {
+            let left = until.saturating_sub(self.world.tick_count());
+            max_ticks = left.min(PLAY_FROM_TICKS_PER_FRAME);
+            self.sim_clock = TICK * max_ticks;
+            if left <= PLAY_FROM_TICKS_PER_FRAME {
+                self.play_from = None;
+                if !self.hold_camera {
+                    self.director.start(&self.camera);
+                }
+            }
+        }
+        while self.sim_clock >= TICK && ticks_this_frame < max_ticks {
             self.sim_clock -= TICK;
             self.pending.clear();
             let tick = self.world.tick_count();
-            if self
-                .watching
-                .as_ref()
-                .is_some_and(|w| tick >= w.replay.ticks)
-            {
+            if self.watching.as_ref().is_some_and(|w| w.over(tick)) {
                 self.sim_clock = Duration::ZERO;
                 self.paused = true;
                 self.sandbox.dirty = true;
@@ -4080,6 +4650,11 @@ impl Running {
         // texels on what is near it.
         self.renderer
             .set_shadow_range(self.ride.is_some().then_some(camera::RIDE_SHADOW_RANGE));
+
+        // The bottom bar hides the field's foot: the world under it is
+        // left undrawn.
+        let covered = self.hud_cover();
+        self.renderer.set_covered(covered);
 
         self.instances.clear();
         self.boxed.clear();
@@ -4204,7 +4779,8 @@ impl Running {
                 .tend(r.handle, r.engaged, self.world.is_worker(r.handle), fx_dt);
             let (pos, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
             let [cr, cg, cb] = color_of(&self.parties, r.owner);
-            let selected = self.selected.contains(&r.handle) || self.boxed.contains(&r.handle);
+            let selected =
+                self.selected.regiments().contains(&r.handle) || self.boxed.contains(&r.handle);
             let stats = &self.units.stats[r.unit as usize];
             let (file_spacing, rank_spacing) = stats.spacing(r.formation);
             let (file_spacing, rank_spacing) = (fx_to_f32(file_spacing), fx_to_f32(rank_spacing));
@@ -4393,24 +4969,15 @@ impl Running {
                     color: [235, 230, 210, 0],
                     lift: 0.0,
                 });
-                let side = Vec2::new(facing.y, -facing.x);
-                let pole = COMMANDER_POLE.map(|v| v * zoom);
-                let flag_size = COMMANDER_FLAG.map(|v| v * zoom);
-                self.instances.push(BoxInstance {
-                    pos: pos.to_array(),
-                    facing: facing.to_array(),
-                    size: pole,
-                    color: [60, 48, 36, 0],
-                    lift: 0.0,
-                });
                 let flag = banner.unwrap_or([cr, cg, cb, 0]);
-                self.instances.push(BoxInstance {
-                    pos: (pos + side * (flag_size[0] / 2.0)).to_array(),
-                    facing: facing.to_array(),
-                    size: flag_size,
-                    color: [flag[0], flag[1], flag[2], 0],
-                    lift: pole[1] - flag_size[1],
-                });
+                push_standard(
+                    &mut self.instances,
+                    pos,
+                    facing,
+                    COMMANDER_POLE.map(|v| v * zoom),
+                    COMMANDER_FLAG.map(|v| v * zoom),
+                    [flag[0], flag[1], flag[2]],
+                );
                 // Keep the puppets marching (and falling) out of sight.
                 self.puppets.update_on(
                     &block,
@@ -4749,6 +5316,7 @@ impl Running {
                 );
             }
             self.push_routes();
+            self.push_army_standards();
         } else {
             // Blows told while the unit viewer is open show nothing.
             drop(self.siege.take_particles());
@@ -4777,18 +5345,18 @@ impl Running {
         }
 
         if self.guide.is_some() {
-            self.hud.hover_own = None;
+            self.hud.forget_hover();
             self.run_guide();
         } else if self.menu_open {
-            self.hud.hover_own = None;
+            self.hud.forget_hover();
             // A network battle goes on behind the menu.
             let offer = self.surrender_offer();
             self.menu.set_surrender(offer);
             self.run_menu();
-        } else if self.match_started && self.showroom.is_none() {
+        } else if self.hud_drawn() {
             self.run_hud();
         } else {
-            self.hud.hover_own = None;
+            self.hud.forget_hover();
             self.renderer.clear_ui();
         }
 
@@ -4840,6 +5408,11 @@ impl Running {
             (world.regiments.iter())
                 .filter(|r| reveal || world.sees(viewer, r.handle))
                 .map(|r| from_fx_vec(r.position)),
+        );
+        self.tend_ruins(
+            dt.as_secs_f32() * fx_speed,
+            live && !viewing && !self.commander,
+            &cull,
         );
         // Blows behind the menu, in Commander View (where the soldiers are
         // blocks) and under the unit viewer show nothing, and don't pile up.
@@ -4997,7 +5570,7 @@ impl Running {
                 };
                 let centre = look.centre();
                 let at = Vec3::new(centre.x, look.base + look.top * 0.5, centre.y);
-                if cull.on_screen(at, look.top + 6.0)
+                if cull.in_view(at, look.top + 6.0)
                     && (reveal || fog.sees_tile((centre.x.floor() as i32, centre.y.floor() as i32)))
                 {
                     ambient::bases::emit(
@@ -5278,7 +5851,7 @@ impl Running {
                 {
                     continue;
                 }
-                let water = river_debris::surface(t, heightmap.water_level(), p);
+                let water = river_debris::surface(heightmap, t, p);
                 self.effects
                     .blaze(glam::Vec3::new(at.x, water, at.y), 1.6, fire_dt);
             }
@@ -5346,7 +5919,10 @@ impl Running {
         let frame = FrameParams {
             view_proj,
             camera_pos: eye,
-            time_seconds: self.started.elapsed().as_secs_f32(),
+            time_seconds: match self.still_at {
+                Some(_) => self.stats.frames as f32 / 30.0,
+                None => self.started.elapsed().as_secs_f32(),
+            },
         };
         let outcome = {
             profile::zone!("render");
@@ -5361,6 +5937,8 @@ impl Running {
         };
         if outcome == gc_render::FrameOutcome::Skipped {
             self.resume_at = Some(Instant::now() + SKIPPED_FRAME_PAUSE);
+        } else {
+            self.choose_resolution();
         }
         profile::frame_mark();
         // The panel names the selection's formation, which orders, routs and
@@ -5572,8 +6150,11 @@ impl Running {
                 } => o.ping(from, tint(player), kind, at, now_ms),
                 gc_net::MatchEvent::Notice(text) => o.note(text),
                 gc_net::MatchEvent::Desync { tick } => {
-                    if o.desync.is_none() {
-                        o.desync = Some(tick);
+                    // A player who rejoined can part again at a later
+                    // turn: that turn gets a report of its own.
+                    o.desync.get_or_insert(tick);
+                    if o.reported_turn != Some(tick) {
+                        o.reported_turn = Some(tick);
                         new_desync = Some(tick);
                     }
                 }
@@ -5918,6 +6499,18 @@ impl Running {
         }
         self.guide_scroll = 0.0;
         self.reset_ui_input();
+        // The Guide takes the mouse's releases, so a press half-made on the
+        // bar or the field would be left held down when it closes.
+        self.input.left_down = None;
+        self.input.right_down = None;
+        self.input.middle_down = None;
+        self.input.clear_from = None;
+        // An Alt+left ping half-made would leave its wheel up.
+        self.input.alt_left = false;
+        if let Some(o) = &mut self.online {
+            o.ping_press = None;
+        }
+        self.hud.reset();
     }
 
     /// Draw this frame's Guide and close it when asked.
@@ -6110,6 +6703,8 @@ impl Running {
         // comes back.
         if let Some(w) = self.watching.take() {
             self.units.stats = w.stats_before;
+            // The replay lifted the fog itself; a sandbox does not inherit that.
+            self.reveal_all = false;
         }
         // Conquest plays with its own regiment types.
         let conquest = match &kind {
@@ -6169,11 +6764,7 @@ impl Running {
                         seed: gc_ui::lobby::conquest_map_seed(choice, r.seed),
                     }
                 } else {
-                    MapKey::Field(FieldMap {
-                        choice,
-                        tiles: r.map_tiles,
-                        seed: r.seed,
-                    })
+                    MapKey::Field(FieldMap::new(choice, r.map_tiles, r.seed, r.teams.len()))
                 };
                 Some((key, r.seed))
             }
@@ -6196,20 +6787,31 @@ impl Running {
             )),
             _ => None,
         };
-        let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.sim_nav_costs());
+        let mut nav = tagged_alloc::scope(Tag::Map, || self.heightmap.sim_nav_costs());
         if let MatchKind::Replay(r) = &kind {
             let (shown, stored) = (self.heightmap.ground(), r.setup().ground);
-            if r.map_tiles != self.heightmap.tiles
-                || r.nav != nav
+            // A replay whose map this build makes differently (another map
+            // maker's, most often) is drawn from the ground it stored, so
+            // the soldiers walk on the ground you see.
+            let differs = r.map_tiles != self.heightmap.tiles
                 || stored.heights != shown.heights
                 || stored.water_level != shown.water_level
                 || stored.cover != shown.cover
                 || (!stored.growth.is_empty() && stored.growth != shown.growth)
-                || stored.water_levels != shown.water_levels
-            {
-                map_note = Some(
-                    "This replay's map was made by another build: the ground may look different from where the soldiers walk.",
-                );
+                || stored.water_levels != shown.water_levels;
+            if differs {
+                let map = Arc::new(Map::from_ground(r.map_tiles, &stored));
+                if let Some(key) = self.map_key.take() {
+                    self.show_map(key, map);
+                    self.blocked_marks = blocked_marks(&r.nav, r.map_tiles);
+                }
+                nav.clone_from(&r.nav);
+                let older = r.header.map_maker.is_none_or(|m| m < gc_map::MAP_MAKER);
+                map_note = Some(if older {
+                    "This replay was recorded on an older map maker: its ground is drawn as it was played, without the land's colours."
+                } else {
+                    "This replay's map is made differently here: its ground is drawn as it was played, without the land's colours."
+                });
             }
         }
         let (teams, champions): (Vec<u8>, bool) = match &kind {
@@ -6335,11 +6937,11 @@ impl Running {
         self.pending.clear();
         self.human_orders.clear();
         self.selected.clear();
-        self.selected_structure = None;
         self.idle_from = None;
         self.hud.forget_readout();
         self.boxed.clear();
         self.control_groups = Default::default();
+        self.armies = Default::default();
         self.last_group_key = None;
         // Regiment handles are reissued: a leftover pick or cool-down from
         // the last match would match the new match's regiments.
@@ -6358,6 +6960,7 @@ impl Running {
         self.arrows = field::Arrows::new(field::MAX_STUCK);
         self.siege.clear();
         self.aftermath.clear();
+        self.ruin_clock = 0.0;
         self.ambient.walkers.clear();
         self.ambient.wildlife.clear();
         self.ambient.birds.clear();
@@ -6450,7 +7053,16 @@ impl Running {
     /// Make the lobby map `key` names and put it on screen.
     fn use_map(&mut self, key: MapKey) {
         self.map_key = Some(key);
-        self.heightmap = make_map(key);
+        self.show_map(key, make_map(key));
+    }
+
+    /// Draw `map` as the ground, the minimap and the scenery (`key` seeds
+    /// the trees). [`Game::use_map`] gives it the map `key` makes; a replay
+    /// recorded on an older map maker gives it the map drawn from its
+    /// stored ground, and then leaves `map_key` unset so the next match
+    /// makes its own map again.
+    fn show_map(&mut self, key: MapKey, map: Arc<Map>) {
+        self.heightmap = map;
         self.decks_key = 0;
         self.wall_lines_key = 0;
         logln!(
@@ -6500,7 +7112,7 @@ impl Running {
                 &self.units.stats,
                 &self.units.factions,
                 &self.units.points,
-                terrain_view::field_starts(&self.heightmap),
+                &terrain_view::field_starts(&self.heightmap, setup.players.len()),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
                 &mut self.minds,
@@ -6567,6 +7179,7 @@ impl Running {
             header.players = replays::players(&self.parties);
             header.recorded_by = Some(me);
             header.map = Some(setup.settings.map as u8);
+            header.map_maker = Some(gc_map::MAP_MAKER);
             header.unit_names = unit_names;
         }
     }
@@ -6859,14 +7472,62 @@ impl Running {
         }
     }
 
+    /// Each army of the side you command shows one standard over its
+    /// middle, in its colour, with as many pale bars on the flag as the
+    /// key it is on (none for 0), raised as the Commander View pulls back.
+    fn push_army_standards(&mut self) {
+        let side = self.sandbox.side;
+        let [cr, cg, cb] = color_of(&self.parties, side);
+        let zoom = self.banner_zoom();
+        let (pole, flag) = (ARMY_POLE.map(|v| v * zoom), ARMY_FLAG.map(|v| v * zoom));
+        for n in 0..self.armies.len() {
+            if self.armies[n].is_none() {
+                continue;
+            }
+            let (mut sum, mut count) = (Vec2::ZERO, 0usize);
+            for &h in &self.control_groups[n] {
+                if let Some(r) = self.world.regiments.get(h).filter(|r| r.owner == side) {
+                    sum += drawn_position(&self.prev_positions, self.alpha, &r);
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                continue;
+            }
+            let at = sum / count as f32;
+            let facing = Vec2::Y;
+            let (mid, lift) =
+                push_standard(&mut self.instances, at, facing, pole, flag, [cr, cg, cb]);
+            // Its number, in bars down the flag.
+            let bars = army_label(n);
+            let step = flag[1] / (bars as f32 + 1.0);
+            for k in 0..bars {
+                self.instances.push(BoxInstance {
+                    pos: mid.to_array(),
+                    facing: facing.to_array(),
+                    size: [flag[0] * 0.8, step * 0.4, flag[2] + 0.05],
+                    color: [240, 232, 210, 0],
+                    lift: lift + step * (k as f32 + 1.0) - step * 0.2,
+                });
+            }
+        }
+    }
+
     /// Dotted lines along the routes of the selected regiments, on through
     /// each queued step, with a plate where each leg ends. Attack-move legs
     /// are red.
     fn push_routes(&mut self) {
         let mut dots = 0;
+        // A brigade's shared way is drawn once (docs/42, "Standing
+        // armies"): for the rest of it, only the last leg from where the
+        // way ends to each one's own place.
+        let mut ways: Vec<u16> = Vec::new();
         // The regiment the mouse rests on shows its route too.
-        let hovered = self.hud.hover_own.filter(|h| !self.selected.contains(h));
-        for h in self.selected.iter().copied().chain(hovered) {
+        let hovered = self
+            .hud
+            .hover_own
+            .filter(|h| !self.selected.regiments().contains(h));
+        for h in self.selected.regiments().iter().copied().chain(hovered) {
             let Some(r) = self.world.regiments.get(h) else {
                 continue;
             };
@@ -6879,10 +7540,25 @@ impl Running {
             // march's end), then every queued march.
             // (In a brigade the route is the brigade's way, and its own
             // place lies a last leg on from that.)
-            let route = self.world.route(h);
+            let mut route = self.world.route(h);
+            let way_end = route.last().copied();
+            let brigade = self.world.brigade(h).map(|b| b.number);
+            if let Some(number) = brigade
+                && let Some(end) = way_end
+            {
+                if ways.contains(&number) {
+                    from = from_fx_vec(end);
+                    route = &[];
+                } else {
+                    ways.push(number);
+                }
+            }
             let own = (self.world.goal(h))
-                .filter(|&g| self.world.brigade(h).is_some() && route.last() != Some(&g))
+                .filter(|&g| brigade.is_some() && way_end != Some(g))
                 .map(|g| (from_fx_vec(g), r.hunting, true));
+            // Its place is where the way drawn already ends: plate it there.
+            let shared_end = (route.is_empty() && own.is_none() && way_end.is_some())
+                .then_some((from, r.hunting, true));
             let queue = self.world.regiments.queued(h).unwrap_or_default();
             let marches = queue.iter().filter_map(|step| match step {
                 gc_sim::orders::Step::Move { target, hunt, .. } => {
@@ -6900,6 +7576,7 @@ impl Running {
                         own.is_none() && k + 1 == route.len(),
                     )
                 })
+                .chain(shared_end)
                 .chain(own)
                 .chain(marches);
             for (to, hunting, end) in legs {
@@ -7115,6 +7792,8 @@ impl Running {
                             .map(|(h, _)| h);
                         self.aftermath
                             .wiped(regiment, at, facing, tint, dead, victor);
+                        // The crows that come stand on the bodies.
+                        (self.aftermath).bodies(regiment, at, lying_bodies(&self.puppets));
                     }
                 }
                 Event::Contact { regiment, foe } => {
@@ -7367,7 +8046,7 @@ impl Running {
         let mut sounded = 0;
         let on_screen = self.puppets.drain_impacts().filter_map(|i| {
             let at = glam::Vec3::new(i.pos.x, hm.height_at(i.pos.x, i.pos.y), i.pos.y);
-            cull.on_screen(at, 1.0).then_some((i, at))
+            cull.in_view(at, 1.0).then_some((i, at))
         });
         for (i, at) in on_screen.take(BLOWS_SHOWN) {
             let unit = usize::from(i.victim);
@@ -7415,8 +8094,9 @@ impl Running {
             gc_render::MAX_BOX_INSTANCES - BOX_ROOM_AFTER_CORPSES,
             &mut self.instances,
         );
-        self.siege
-            .emit_damage(standing, |at, radius| cull.sees(at, radius));
+        self.siege.emit_damage(standing, |at, radius| {
+            cull.in_view(at, radius) || cull.sees(at, radius)
+        });
         let catching_up = self.online.is_some() && self.menu.net().catching_up();
         let particles = self.siege.take_particles();
         // Replayed blows would burst out all at once at stale spots.
@@ -7631,6 +8311,17 @@ impl Running {
             String::new()
         };
         let info = self.renderer.adapter_info();
+        let gpu_times = self.renderer.gpu_times().map_or(String::new(), |t| {
+            let parts: Vec<String> = (t.parts.iter())
+                .map(|(name, ms)| format!("{name} {ms:.2}"))
+                .collect();
+            format!(
+                "\ngpu ms  {:.2} a frame, world at {:.0}%: {}",
+                t.total,
+                self.renderer.world_scale() * 100.0,
+                parts.join("  ")
+            )
+        });
         let text = format!(
             "GRUBCRAFT DEV OVERLAY                          ` or F11 hides\n\
              frame   {fps:5.0} fps   {frame_avg:6.2} ms avg   {:6.2} ms worst\n\
@@ -7643,7 +8334,7 @@ impl Running {
              heap    {}\n\
              data    {}\n\
              audio   {}\n\
-             gpu     {} via {:?}",
+             gpu     {} via {:?}{gpu_times}",
             ms(self.stats.frame_max),
             self.world.tick_count(),
             ms(self.stats.tick_max),
@@ -7676,7 +8367,7 @@ impl Running {
         // The menu covers the field, so the sandbox panel waits behind it.
         let mut text = if self.menu_open {
             String::new()
-        } else if self.sandbox.credits {
+        } else if self.sandbox.page == SandboxPage::Credits {
             credits::lines().join("\n")
         } else if self.showroom.is_some() {
             String::new()
@@ -7735,7 +8426,6 @@ impl Running {
         // The ridden regiment may be one the new side can't see.
         self.leave_ride();
         self.selected.clear();
-        self.selected_structure = None;
         if let Some(drill) = &mut self.drill {
             drill.skip_player = Some(self.sandbox.side);
         }
@@ -8213,7 +8903,7 @@ impl Running {
             let (reveal, fog) = (self.reveal_all, &self.fog);
             river_debris::extras(
                 world.flood().rivers().debris_seen(),
-                move |p| river_debris::surface(t, map.water_level(), p),
+                move |p| river_debris::surface(map, t, p),
                 self.scenery.height_of(river_debris::LOG_MODEL),
                 move |tile| reveal || fog.sees_tile(tile),
             )
@@ -8778,6 +9468,78 @@ impl Running {
         }
     }
 
+    /// What the dead leave in the land, `dt` seconds of effects time on:
+    /// once a second, a hamlet with enough of the fallen the viewer has seen
+    /// among its houses is ruined and crows come to roost on it, and a crow
+    /// whose body has sunk away (to make room for newer dead) comes down to
+    /// the ground. Then, when `showing`, the smoke of the ruins that still
+    /// smoulder, on screen and in sight.
+    fn tend_ruins(&mut self, dt: f32, showing: bool, cull: &gc_render::Cull) {
+        self.ambient.hamlets.age(dt);
+        self.ruin_clock += dt;
+        let due = self.ruin_clock >= RUIN_CHECK;
+        let ruins = due && self.ambient.hamlets.any_standing();
+        let bodies = due && self.aftermath.on_bodies();
+        if due {
+            self.ruin_clock = 0.0;
+        }
+        if due {
+            // A burnt house built over since is hidden: its crow goes to the
+            // green.
+            let scenery = &self.scenery;
+            (self.aftermath)
+                .unroof(|p| scenery.occupied_at((p.x.floor() as i32, p.y.floor() as i32)));
+        }
+        if ruins || bodies {
+            let lying: Vec<Vec2> = lying_bodies(&self.puppets).collect();
+            if bodies {
+                self.aftermath.keep_bodies(&lying);
+            }
+            // A viewer catching up on an online match ruins nothing while
+            // the fights already played go by (the dead still lie there
+            // after, so the first count once it has caught up does it).
+            if ruins && !(self.online.is_some() && self.menu.net().catching_up()) {
+                // Only the dead in a hamlet still standing count, and only
+                // those the viewer has seen.
+                let (reveal, fog) = (self.reveal_all, &self.fog);
+                let hamlets = &self.ambient.hamlets;
+                let seen: Vec<Vec2> = (lying.into_iter())
+                    .filter(|&p| hamlets.in_standing(p))
+                    .filter(|p| reveal || fog.sees_tile((p.x.floor() as i32, p.y.floor() as i32)))
+                    .collect();
+                let (map, scenery) = (&self.heightmap, &self.scenery);
+                for i in self.ambient.hamlets.ruin_where(&seen) {
+                    let hamlets = &self.ambient.hamlets;
+                    let roofs = hamlets.roofs(
+                        i,
+                        |m| scenery.height_of(m),
+                        |p| ground_of(map, p),
+                        |t| scenery.occupied_at(t),
+                    );
+                    let (centre, reach) = (hamlets.centre(i), hamlets.reach(i));
+                    self.aftermath.roost(centre, reach, roofs.into_iter());
+                }
+            }
+        }
+        if !showing || dt <= 0.0 {
+            return;
+        }
+        let (reveal, fog) = (self.reveal_all, &self.fog);
+        let hamlets = &self.ambient.hamlets;
+        for i in 0..hamlets.len() {
+            for (at, r, done) in hamlets.smouldering(i, |t| self.scenery.occupied_at(t)) {
+                let tile = (at.x.floor() as i32, at.z.floor() as i32);
+                if !cull.in_view(at, r + 4.0) || !(reveal || fog.sees_tile(tile)) {
+                    continue;
+                }
+                // From the charred wall to one side, so a crow on the
+                // ridge sits clear of it, dying down as it burns out.
+                let side = Vec3::new(r * 0.45, 0.6, r * 0.2);
+                self.effects.hearth(at + side, r * 0.5 * (1.0 - done), dt);
+            }
+        }
+    }
+
     /// The crows over a battlefield, once the soldiers have moved on, with
     /// the crow model (when the pack has it; else they are boxes). Every
     /// match has them, not only Conquest.
@@ -9327,7 +10089,7 @@ impl Running {
             let role = look.map(|l| l.role);
             let on_screen = look.is_some_and(|l| {
                 let at = Vec3::new(centre.x, l.base + l.top * 0.5, centre.y);
-                cull.on_screen(at, l.top + 6.0)
+                cull.in_view(at, l.top + 6.0)
                     && (reveal || fog.sees_tile((centre.x.floor() as i32, centre.y.floor() as i32)))
             });
             let done = s.finished() && on_screen;
@@ -9424,17 +10186,24 @@ impl Running {
     /// every regiment of every side.
     fn remove_regiments(&mut self, all: bool) {
         let side = self.sandbox.side;
+        let selected = self.selected.take_regiments();
         let doomed: Vec<RegimentHandle> = if all {
             self.world.regiments.iter().map(|r| r.handle).collect()
         } else {
-            std::mem::take(&mut self.selected)
+            selected
         };
         self.human_orders
             .extend(doomed.into_iter().map(|regiment| PlayerCommand {
                 player: side,
                 command: gc_sim::Command::RemoveRegiment { regiment },
             }));
-        self.selected.clear();
+    }
+
+    /// The stats panel (T) is on screen, which is when the arrows tune. A
+    /// replay and the showroom refuse T, and a match starts on the panel's
+    /// own text, so the page is never Tuning there.
+    fn tuning_shown(&self) -> bool {
+        self.sandbox.page == SandboxPage::Tuning
     }
 
     /// Up and Down pick a stat, Left and Right change it (Shift: ten steps).
@@ -9620,7 +10389,7 @@ impl Running {
         }
         if let Some(w) = &self.watching {
             let tick = self.world.tick_count();
-            lines.push(if tick >= w.replay.ticks {
+            lines.push(if w.over(tick) {
                 format!(
                     "REPLAY  {}   over at {}   Esc: menu",
                     w.title,
@@ -9641,7 +10410,7 @@ impl Running {
                 ));
             }
         }
-        if sb.tuning && self.watching.is_none() {
+        if self.tuning_shown() {
             let on_field = self
                 .world
                 .regiments
@@ -9761,6 +10530,7 @@ impl Running {
     fn selection_formation(&self) -> Option<Option<Formation>> {
         let mut formations = self
             .selected
+            .regiments()
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .map(|r| r.formation);
@@ -9777,6 +10547,12 @@ impl Running {
     }
 
     fn army_shape_line(&self) -> String {
+        if let Some(n) = self.army_selected() {
+            return format!(
+                "Army {}: group orders keep its shape. Ctrl+{n} unlocks it, Alt+{n} sends others to join it",
+                army_label(n)
+            );
+        }
         format!(
             "Army shape for group orders: {}. O: next, Shift+O: save the selection's",
             self.army_shapes.choice.label()
@@ -9864,11 +10640,8 @@ impl From<MapPreviewKey> for MapKey {
                 choice,
                 tiles,
                 seed,
-            } => MapKey::Field(FieldMap {
-                choice,
-                tiles,
-                seed,
-            }),
+                players,
+            } => MapKey::Field(FieldMap::new(choice, tiles, seed, usize::from(players))),
             MapPreviewKey::Conquest {
                 choice,
                 tiles,
@@ -10324,6 +11097,68 @@ mod lod_tests {
 mod tests {
     use super::*;
 
+    /// `--viewer` opens over the main menu, so it refuses every flag that
+    /// starts a match or a scene in one (a match would leave the camera on
+    /// the viewer's model).
+    #[test]
+    fn the_viewer_refuses_every_flag_that_starts_a_match() {
+        let viewer = || Options {
+            viewer: Some("start".into()),
+            ..Options::new()
+        };
+        assert_eq!(viewer().conflict(), None);
+        let starts: [fn(&mut Options); 8] = [
+            |o| o.sandbox = true,
+            |o| o.battle = Some(0),
+            |o| o.conquest = Some(0),
+            |o| o.watch = Some("a.gcreplay".into()),
+            |o| o.siege = true,
+            |o| o.wall_scene = true,
+            |o| o.bridge_scene = true,
+            |o| o.gate_march = Some(0),
+        ];
+        for start in starts {
+            let mut alone = Options::new();
+            start(&mut alone);
+            assert!(alone.starts_a_match());
+            assert_eq!(alone.conflict(), None);
+            let mut both = viewer();
+            start(&mut both);
+            assert!(both.conflict().is_some());
+        }
+    }
+
+    /// The hidden-window check reads memory as the window hides and again
+    /// halfway through, so it needs two hidden frames and one drawn.
+    #[test]
+    fn hidden_frames_are_two_or_more_and_fewer_than_the_frames() {
+        let check = |hidden, frames| Options {
+            hidden_frames: Some(hidden),
+            frames: Some(frames),
+            ..Options::new()
+        };
+        assert!(check(0, 10).conflict().is_some());
+        assert!(check(1, 10).conflict().is_some());
+        assert_eq!(check(2, 10).conflict(), None);
+        assert_eq!(check(600, 900).conflict(), None);
+        assert!(check(10, 10).conflict().is_some());
+        let no_frames = Options {
+            hidden_frames: Some(600),
+            ..Options::new()
+        };
+        assert!(no_frames.conflict().is_some());
+    }
+
+    /// P toggles the pause, except after a replay has played to its end,
+    /// where it stays paused.
+    #[test]
+    fn p_leaves_a_finished_replay_paused() {
+        assert!(pause_key_offline(false, false));
+        assert!(!pause_key_offline(true, false));
+        assert!(pause_key_offline(true, true));
+        assert!(pause_key_offline(false, true));
+    }
+
     #[test]
     fn grid_codes_are_the_grids_keys() {
         for (code, key) in GRID_CODES.iter().zip(gc_ui::hud::GRID_KEYS) {
@@ -10361,6 +11196,7 @@ mod tests {
             choice: gc_map::MEASURED,
             tiles: 512,
             seed: 0x6772_7562,
+            ring: 0,
         };
         assert_eq!(key, MapKey::Field(wilds));
     }

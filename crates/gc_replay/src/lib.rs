@@ -45,8 +45,10 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
-/// - 58: hero abilities (the cast command, tag 55, and a unit's ability
+/// - 59: hero abilities (the cast command, tag 55, and a unit's ability
 ///   kit, read as none; docs/44);
+/// - 58: the header's map maker version (read as none: the replay's map
+///   was made by an unknown version);
 /// - 57: the water's own level per tile (read as the map's line
 ///   everywhere; docs/27 stage 5);
 /// - 56: heroes (a unit's hero growth, read as none);
@@ -121,7 +123,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 ///
 /// Anything older is refused with [`Error::Format`].
 // scripts/rules-bump.py reads and sets this line as written.
-pub const FORMAT: u16 = 57;
+pub const FORMAT: u16 = 58;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -188,6 +190,12 @@ pub struct Header {
     /// same regiments by the same ids (a reorder keeps the size); empty
     /// for files from before format 15, and for test recordings.
     pub unit_names: Vec<String>,
+    /// The `gc_map::MAP_MAKER` version of the build that made the map
+    /// from the choice and seed; `None` for files from before format 58
+    /// and for test recordings. When it isn't the viewing build's, the map
+    /// would be made differently now, so it is drawn from the stored
+    /// ground instead.
+    pub map_maker: Option<u16>,
 }
 
 /// What the replay list needs of a file, which format 10 keeps in a block
@@ -801,6 +809,7 @@ impl Replay {
         for name in &h.unit_names {
             w.bytes(name.as_bytes());
         }
+        w.var(h.map_maker.map_or(0, |v| u64::from(v) + 1));
         w.u64(self.seed);
         w.var(u64::from(self.regiments));
         w.var(u64::from(self.map_tiles));
@@ -1282,6 +1291,11 @@ fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
             unit_names.push(text(r)?);
         }
     }
+    let map_maker = if format >= 58 {
+        maybe(r)?.map(u16::try_from).transpose().ok()?
+    } else {
+        None
+    };
     Some(Header {
         build,
         data_hash,
@@ -1292,6 +1306,7 @@ fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
         result,
         map,
         unit_names,
+        map_maker,
     })
 }
 
@@ -1499,6 +1514,7 @@ mod tests {
             result: None,
             map: None,
             unit_names: vec!["Spears".into(), "Bows".into()],
+            map_maker: None,
         };
         let mut drill = Drill::new(7);
         drill.regiments_per_player = 6;
@@ -2014,8 +2030,8 @@ mod tests {
         replay.header = Header::default();
         let empty = replay.legacy_body();
         // The empty header: no build, data hash 0, no players, nobody, no
-        // desync, no sim version, no result, no map choice, no unit names.
-        let header_len = 1 + 8 + 1 + 1 + 1 + 1 + 1 + 1 + 1;
+        // desync, no sim version, no result, no map choice, no unit names, no map maker.
+        let header_len = 1 + 8 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1;
         body.extend_from_slice(&empty[body.len() + header_len..]);
         // Nor, from format 8 down, the system trail's count.
         assert_eq!(body.pop(), Some(0));
@@ -2037,8 +2053,9 @@ mod tests {
         let mut w = Writer::default();
         w.bytes(replay.note.as_bytes());
         let at = w.buf.len() + 1 + 8 + 1 + 1 + 1;
-        // Every format older than 15 has no unit names, and older than 11
+        // Every format older than 58 has no map maker, older than 15 no unit names, and older than 11
         // no map choice (after the sim version and result).
+        assert_eq!(body.remove(at + 4), 0);
         assert_eq!(body.remove(at + 3), 0);
         assert_eq!(body.remove(at + 2), 0);
         assert!(body.drain(at..at + dropped).all(|b| b == 0));
@@ -2140,7 +2157,8 @@ mod tests {
             .position(|w| w == tail.buf)
             .unwrap()
             - 1;
-        assert_eq!(info.remove(at), 0);
+        assert_eq!(info.remove(at), 0, "map maker");
+        assert_eq!(info.remove(at - 1), 0, "unit names");
         info
     }
 
@@ -2297,6 +2315,49 @@ mod tests {
         let mut replay = record();
         replay.header.map = Some(3);
         assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);
+    }
+
+    #[test]
+    fn the_map_maker_round_trips() {
+        let mut replay = record();
+        replay.header.map_maker = Some(7);
+        assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);
+        let path = temp("map-maker", &replay.encode());
+        assert_eq!(
+            Replay::read_header(&path).unwrap().header.map_maker,
+            Some(7)
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_format_57_replay_has_no_map_maker() {
+        let replay = record();
+        assert_eq!(replay.header.map_maker, None);
+        let new = replay.encode();
+        let len = u32::from_le_bytes(new[6..10].try_into().unwrap()) as usize;
+        let mut info = new[10..10 + len].to_vec();
+        // Format 58 adds one byte (0 for none) after the unit names, just
+        // before the seed.
+        let mut tail = Writer::default();
+        tail.u64(replay.seed);
+        tail.var(u64::from(replay.regiments));
+        tail.var(u64::from(replay.map_tiles));
+        let at = info
+            .windows(tail.buf.len())
+            .position(|w| w == tail.buf)
+            .unwrap()
+            - 1;
+        assert_eq!(info.remove(at), 0);
+        let mut old = MAGIC.to_vec();
+        old.extend_from_slice(&57u16.to_le_bytes());
+        old.extend_from_slice(&(info.len() as u32).to_le_bytes());
+        old.extend_from_slice(&info);
+        old.extend_from_slice(&new[10 + len..]);
+        assert_eq!(Replay::decode(&old).unwrap(), replay);
+        let path = temp("header-57", &old);
+        assert_eq!(Replay::read_header(&path).unwrap(), replay.info());
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

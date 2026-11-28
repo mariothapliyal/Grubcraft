@@ -46,7 +46,7 @@
         abilities: [],
     ),
     starting_buildings: ["Hive"],
-    starting_units: [("Gnawer", 4)],
+    starting_units: [("Gnawer", 6)],
     buildings: [
         (
             name: "Hive",
@@ -60,7 +60,7 @@
             supply: 12,
             flags: [Larvae, Veins],
             field: 15,
-            effect: "Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva. Root-veins spread 15 tiles from its edge.",
+            effect: "Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva, Gnawers here and fighters at a Hatchery Pit. Root-veins spread 15 tiles from its edge.",
         ),
         (
             name: "Great Hive",
@@ -108,7 +108,7 @@
         ),
         (
             name: "Hatchery Pit",
-            role: Economy,
+            role: Production,
             tier: 1,
             cost: (grub: 120, marrow: 0),
             build_time: 40.0,
@@ -116,7 +116,7 @@
             armour: Living,
             footprint: (3, 3),
             flags: [Larvae],
-            effect: "Holds 3 more larvae and spawns its own every 12 s.",
+            effect: "Where Skitterlings, Chitin Guard and Reclaimers hatch, from any larva. Holds 3 more larvae and spawns its own every 12 s.",
         ),
         (
             name: "Chrysalis Chamber",
@@ -427,7 +427,7 @@
             cost: (grub: 65, marrow: 0),
             supply: 2,
             train_time: 13.0,
-            from: Building("Hive"),
+            from: Building("Hatchery Pit"),
             flags: [Hatches],
             abilities: [
                 (
@@ -467,7 +467,7 @@
             cost: (grub: 90, marrow: 0),
             supply: 4,
             train_time: 22.0,
-            from: Building("Hive"),
+            from: Building("Hatchery Pit"),
             flags: [Hatches],
             abilities: [
                 (
@@ -507,7 +507,7 @@
             cost: (grub: 75, marrow: 0),
             supply: 2,
             train_time: 18.0,
-            from: Building("Hive"),
+            from: Building("Hatchery Pit"),
             flags: [Hatches],
             abilities: [
                 (

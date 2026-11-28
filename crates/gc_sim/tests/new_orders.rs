@@ -453,6 +453,32 @@ fn only_charging_cavalry_forms_a_wedge() {
     assert_eq!(view(&w, riders).files, 9);
 }
 
+/// From a column straight into a wedge and out again, riders form the
+/// line they stood in before the column, not one as narrow as it.
+#[test]
+fn a_column_into_a_wedge_still_widens_to_its_old_line() {
+    let units = units();
+    let mut w = world(&units);
+    let riders = spawn(&mut w, 0, RIDERS, 120, 100, NORTH);
+    let line = view(&w, riders).frontage;
+    let set = |w: &mut World, formation| {
+        order(
+            w,
+            0,
+            Command::SetFormation {
+                regiment: riders,
+                formation,
+            },
+        )
+    };
+    assert!(set(&mut w, Formation::Column));
+    let column = view(&w, riders).frontage;
+    assert!(column < line, "column {column}, line {line}");
+    assert!(set(&mut w, Formation::Wedge));
+    assert!(set(&mut w, Formation::Line));
+    assert_eq!(view(&w, riders).frontage, line);
+}
+
 /// Riders charging a line of infantry from 30 tiles: hit points the
 /// infantry lose in the 3 seconds after they meet.
 fn charge(wedge: bool) -> u32 {

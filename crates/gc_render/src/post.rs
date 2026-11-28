@@ -57,7 +57,8 @@ struct Grade {
     shadow_tint: [f32; 4],
     /// Tint for the bright end (rgb).
     light_tint: [f32; 4],
-    /// Film grain, time in seconds.
+    /// Film grain, time in seconds, and the world's resolution as a share
+    /// of the screen's (under 1, the composite sharpens as it scales up).
     film: [f32; 4],
     /// The screen's shake as an offset of the picture (a share of its
     /// size), the zoom that hides its edges, the height of each letterbox
@@ -221,12 +222,13 @@ impl PostGpu {
         look: &Look,
         time_seconds: f32,
         cinema: &Cinema,
+        world_scale: f32,
     ) {
         let grade = Grade {
             tone: [look.exposure, look.contrast, look.saturation, look.vignette],
             shadow_tint: rgba(look.shadow_tint, 0.0),
             light_tint: rgba(look.light_tint, 0.0),
-            film: [look.grain, time_seconds, 0.0, 0.0],
+            film: [look.grain, time_seconds, world_scale, 0.0],
             camera: [
                 cinema.shake[0],
                 cinema.shake[1],
@@ -333,12 +335,35 @@ impl PostGpu {
     }
 
     /// Build the glow chain from the drawn HDR image. Returns the passes run.
-    pub fn glow(&self, encoder: &mut wgpu::CommandEncoder, t: &PostTargets) -> u32 {
-        let pass = |encoder: &mut wgpu::CommandEncoder,
-                    pipeline: &wgpu::RenderPipeline,
-                    from: &wgpu::BindGroup,
-                    to: &wgpu::TextureView,
-                    load| {
+    pub fn glow(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        t: &PostTargets,
+        timer: Option<&mut crate::timing::GpuTimer>,
+    ) -> u32 {
+        // The chain is timed as one: from the start of its first pass to the
+        // end of its last.
+        let passes = (t.levels.len() * 2).saturating_sub(1);
+        // No queries are taken for a chain with no passes (glow off): none
+        // would write them.
+        let span = timer
+            .filter(|_| passes > 0)
+            .and_then(|timer| timer.span("glow"));
+        let mut index = 0;
+        let mut pass = |encoder: &mut wgpu::CommandEncoder,
+                        pipeline: &wgpu::RenderPipeline,
+                        from: &wgpu::BindGroup,
+                        to: &wgpu::TextureView,
+                        load| {
+            let (first_pass, last_pass) = (index == 0, index + 1 == passes);
+            let timestamp_writes =
+                span.filter(|_| first_pass || last_pass)
+                    .map(|(set, first, last)| wgpu::RenderPassTimestampWrites {
+                        query_set: set,
+                        beginning_of_pass_write_index: first_pass.then_some(first),
+                        end_of_pass_write_index: last_pass.then_some(last),
+                    });
+            index += 1;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("glow"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -351,7 +376,7 @@ impl PostGpu {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
