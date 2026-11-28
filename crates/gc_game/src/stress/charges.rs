@@ -268,7 +268,7 @@ fn run(real: &Real, report: &mut Report) {
     // A match goes its own way with any change to how battles play out, so
     // a few are played, until both have been seen.
     let mut seen = [0u32; 2];
-    for seed in [117, 118, 119, 120, 121] {
+    for seed in [123, 124, 125, 126, 127] {
         let more = ai_match(real, report, seed);
         seen = [seen[0] + more[0], seen[1] + more[1]];
         if seen.iter().all(|&n| n > 0) {

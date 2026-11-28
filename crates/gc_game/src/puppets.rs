@@ -100,6 +100,12 @@ const SMALL_GAP: f32 = 0.6;
 /// breaks up into a ragged band.
 const DUEL_LEASH: f32 = 0.6;
 const LEASH_BOLD: f32 = 0.6;
+/// A matched kill plays only when the two stand within the leash of its
+/// reach, as the killer is warped onto it; a big body (cavalry, monsters)
+/// lunges forward onto it as far as the boldest man strays, since one
+/// alone, a beast among men, keeps its foes further off than the length
+/// of its kill. It steps back no further than a man does.
+const HEAVY_LUNGE: f32 = DUEL_LEASH + LEASH_BOLD;
 /// Choosing a new man, the soldiers already fighting him make him seem
 /// further away by this much times their number squared, in tiles squared,
 /// so men spread along the enemy line and only gang up two (or three) on
@@ -2659,6 +2665,10 @@ impl Puppets {
                         let kr = killer / SLOTS;
                         let apart = self.pos[killer].distance(self.pos[victim]);
                         let front = hero.is_some() || killer % SLOTS < self.front(kr);
+                        let lunge = match self.fighter[kr].mass {
+                            Mass::Heavy => HEAVY_LUNGE,
+                            _ => DUEL_LEASH,
+                        };
                         let pair = match hero {
                             Some((_, pair, _)) => pair,
                             None => (!lying && front)
@@ -2667,7 +2677,9 @@ impl Puppets {
                                     self.kills.pick(self.unit[kr], block.unit, roll)
                                 })
                                 .flatten()
-                                .filter(|&(_, k)| (apart - k.reach).abs() <= DUEL_LEASH),
+                                .filter(|&(_, k)| {
+                                    (-DUEL_LEASH..=lunge).contains(&(apart - k.reach))
+                                }),
                         };
                         let gap = match pair {
                             Some((_, k)) => k.reach,
@@ -4204,6 +4216,47 @@ mod tests {
         assert!(dropped.age >= 0.0 && dropped.kill.is_none(), "{dropped:?}");
         assert_eq!(p.act[k].1, started);
         assert!(p.pair_of(k).is_some());
+    }
+
+    #[test]
+    fn a_big_body_lunges_further_onto_its_kills_reach() {
+        // A kill made for most of a tile closer than the gap a pair keeps:
+        // a man strikes his own blow rather than slide in to it, but a beast
+        // or a rider (heavy) lunges onto it, as a lone monster among men
+        // keeps them further off than the length of its kill.
+        let plays = |mass: Mass, beyond: f32| {
+            let gap = (Fighter {
+                mass,
+                ..Fighter::default()
+            }
+            .gap()
+                + DUEL_GAP)
+                / 2.0;
+            let kill = KillTiming {
+                seconds: 1.8,
+                contact: 0.2,
+                reach: gap + beyond,
+            };
+            let mut p = with_a_kill(kill);
+            let (a, mut b) = melee_pair(
+                Fighter {
+                    mass,
+                    ..Fighter::default()
+                },
+                Fighter::default(),
+            );
+            for _ in 0..30 {
+                frame(&mut p, &a, &b);
+            }
+            b.models -= 1;
+            frame(&mut p, &a, &b);
+            let k = (0..4).find(|&k| p.act[k].0 == Act::Kill).expect("a killer");
+            p.killing[k].pair.is_some()
+        };
+        assert!(!plays(Mass::Medium, -0.8));
+        assert!(plays(Mass::Heavy, -0.8));
+        // It steps back onto a longer kill no further than a man does.
+        assert!(!plays(Mass::Heavy, 0.9));
     }
 
     #[test]
