@@ -87,6 +87,7 @@ fn every_volley_is_told_loosed_then_landed_and_losses_add_up() {
         world.tick(&[]);
         let mut lost: HashMap<RegimentHandle, u16> = HashMap::new();
         let mut shot: HashMap<RegimentHandle, u16> = HashMap::new();
+        let mut gave_up: Vec<RegimentHandle> = Vec::new();
         for e in world.events() {
             match *e {
                 Event::Loosed {
@@ -110,6 +111,10 @@ fn every_volley_is_told_loosed_then_landed_and_losses_add_up() {
                 }
                 Event::Losses { regiment, lost: n } => {
                     assert!(lost.insert(regiment, n).is_none(), "told twice");
+                }
+                Event::Surrendered { regiment, .. } => {
+                    assert!(world.regiments.get(regiment).is_none(), "still there");
+                    gave_up.push(regiment);
                 }
                 Event::Morale { from, to, .. } => {
                     assert_ne!(from, to);
@@ -157,6 +162,10 @@ fn every_volley_is_told_loosed_then_landed_and_losses_add_up() {
         }
         // Losses told are exactly the soldiers gone.
         for (h, was) in before {
+            if gave_up.contains(&h) {
+                assert!(!lost.contains_key(&h), "a surrender told as losses");
+                continue;
+            }
             let now = world.regiments.get(h).map_or(0, |r| r.models);
             assert_eq!(lost.get(&h).copied().unwrap_or(0), was - now, "{h:?}");
         }

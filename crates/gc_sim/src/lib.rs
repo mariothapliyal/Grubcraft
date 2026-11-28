@@ -54,6 +54,9 @@ pub mod nav;
 pub mod orders;
 pub mod power;
 pub mod powers;
+#[cfg(test)]
+mod prisoner_tests;
+pub mod prisoners;
 pub mod production;
 mod regiments;
 pub mod reinforce;
@@ -906,6 +909,13 @@ pub enum Command {
         regiment: RegimentHandle,
         into: UnitId,
     },
+    /// Conquest: the issuer ransoms the oldest lot (at most a full
+    /// regiment) of their soldiers of `unit` that player `from` holds
+    /// prisoner, paying `from` what reinforcing them would cost; it comes
+    /// out at the issuer's main building (see [`prisoners`]). Refused
+    /// unless `from` is hostile and holds some, and the issuer has a
+    /// finished main building, the supply and the price.
+    Ransom { from: PlayerId, unit: UnitId },
     /// Conquest: one of the issuer's towers shoots enemy regiment `target`
     /// first whenever it is in range, until it falls; `None` lets the tower
     /// choose again (see [`towers`]). The target must be one the issuer's
@@ -1106,6 +1116,7 @@ impl Command {
             | Command::UsePower { .. }
             | Command::Cast { .. }
             | Command::Evolve { .. }
+            | Command::Ransom { .. }
             | Command::FocusTower { .. }
             | Command::SetGate { .. }
             | Command::BuildWall { .. }
@@ -1188,6 +1199,8 @@ pub struct World {
     flood_fords: Option<bool>,
     /// The brigades on the march (see [`brigades`]).
     brigades: brigades::Brigades,
+    /// Soldiers taken prisoner (see [`prisoners`]).
+    prisoners: prisoners::Prisoners,
     pub regiments: Regiments,
 }
 
@@ -1237,6 +1250,7 @@ impl World {
             stranded: Vec::new(),
             flood_fords: None,
             brigades: brigades::Brigades::new(setup.capacities.regiments as usize),
+            prisoners: prisoners::Prisoners::with_capacity(setup.capacities.regiments as usize),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
         .with_air()
@@ -2295,6 +2309,8 @@ impl World {
             self.tick,
             self.map_tiles,
         );
+        self.take_prisoners();
+        self.tend_prisoners();
         if let Some(c) = &mut self.conquest {
             c.see_off_shattered(&mut self.regiments);
             c.honor
@@ -2329,6 +2345,7 @@ impl World {
                 self.vision.ambushes(),
                 consumed,
                 left,
+                &self.prisoners.gone,
             );
             if let Some(conquest) = &self.conquest {
                 let s = &conquest.structures;
@@ -2359,6 +2376,7 @@ impl World {
             battle,
         );
         if out != 0 {
+            self.prisoners.forget_owners(out);
             c.eliminate(out, &mut self.regiments, &mut self.nav);
             self.stances.take_back_from(out);
         }
@@ -2917,6 +2935,7 @@ impl World {
             Command::Evolve { regiment, into } => self.conquest.as_mut().is_some_and(|c| {
                 c.evolve(&mut self.regiments, &self.units, pc.player, regiment, into)
             }),
+            Command::Ransom { from, unit } => self.ransom(pc.player, from, unit),
             Command::FocusTower { structure, target } => {
                 self.focus_tower(pc.player, structure, target)
             }
@@ -4230,6 +4249,7 @@ impl World {
                 self.regiments.hash_into(h);
                 self.stances.hash_into(h);
                 self.brigades.hash_into(&self.regiments, h);
+                self.prisoners.hash_into(h);
             }
             "combat" => self.combat.hash_into(h),
             "pathfinding" => self.nav.hash_into(h),

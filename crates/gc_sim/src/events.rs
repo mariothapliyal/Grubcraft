@@ -178,6 +178,17 @@ pub enum Event {
         slot: u8,
         why: crate::structures::Refusal,
     },
+    /// Regiment `regiment` (no longer live) gave itself up: its `soldiers`
+    /// of unit `unit`, at `at`, are prisoners of `captor` (see
+    /// [`crate::prisoners`]). Not told as losses.
+    Surrendered {
+        regiment: RegimentHandle,
+        owner: crate::PlayerId,
+        captor: crate::PlayerId,
+        unit: crate::UnitId,
+        soldiers: u16,
+        at: FxVec2,
+    },
 }
 
 /// The bit player `p` has in an owners mask (`DebrisStruck`,
@@ -260,6 +271,11 @@ impl Events {
         why: crate::structures::Refusal,
     ) {
         self.list.push(Event::CastRefused { hero, slot, why });
+    }
+
+    /// Tell of a regiment giving itself up (see [`Event::Surrendered`]).
+    pub(crate) fn surrendered(&mut self, e: Event) {
+        self.list.push(e);
     }
 
     /// Tell of the tile `(x, y)` cleared of `was` (burnt, if `burnt`).
@@ -389,6 +405,7 @@ impl Events {
         ambushes: &[Ambush],
         consumed: &[(RegimentHandle, StructureHandle)],
         left: &[RegimentHandle],
+        surrendered: &[RegimentHandle],
     ) {
         let list = &mut self.list;
         list.extend(
@@ -412,7 +429,10 @@ impl Events {
             };
             // Gone: wiped out, or used up.
             let still = regs.alive[i] && regs.generation[i] == b.generation;
-            if !still && (consumed.iter().any(|&(w, _)| w == regiment) || left.contains(&regiment))
+            if !still
+                && (consumed.iter().any(|&(w, _)| w == regiment)
+                    || left.contains(&regiment)
+                    || surrendered.contains(&regiment))
             {
                 continue;
             }
