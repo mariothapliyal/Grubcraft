@@ -1228,7 +1228,16 @@ mod tests {
             "Colossus Maw",
             "Broodmother Bulk",
         ] {
-            for victim in ["Katana Samurai", "Tuner", "Grubfolk Militia", "Bone Pikes"] {
+            // The small men on the farmers' rig too.
+            for victim in [
+                "Katana Samurai",
+                "Tuner",
+                "Grubfolk Militia",
+                "Bone Pikes",
+                "Hands",
+                "The Ronin",
+                "Spectral Samurai",
+            ] {
                 let p = clips
                     .kill_pair(by(killer), by(victim), 0)
                     .unwrap_or_else(|| panic!("{killer} on {victim}"));

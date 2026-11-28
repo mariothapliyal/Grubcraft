@@ -102,8 +102,9 @@ const DUEL_LEASH: f32 = 0.6;
 const LEASH_BOLD: f32 = 0.6;
 /// A matched kill plays only when the two stand within the leash of its
 /// reach, as the killer is warped onto it; a big body (cavalry, monsters)
-/// lunges as far as the boldest man strays, since one alone, a beast
-/// among men, keeps its foes further off than the length of its kill.
+/// lunges forward onto it as far as the boldest man strays, since one
+/// alone, a beast among men, keeps its foes further off than the length
+/// of its kill. It steps back no further than a man does.
 const HEAVY_LUNGE: f32 = DUEL_LEASH + LEASH_BOLD;
 /// Choosing a new man, the soldiers already fighting him make him seem
 /// further away by this much times their number squared, in tiles squared,
@@ -2637,7 +2638,9 @@ impl Puppets {
                                     self.kills.pick(self.unit[kr], block.unit, roll)
                                 })
                                 .flatten()
-                                .filter(|&(_, k)| (apart - k.reach).abs() <= lunge),
+                                .filter(|&(_, k)| {
+                                    (-DUEL_LEASH..=lunge).contains(&(apart - k.reach))
+                                }),
                         };
                         let gap = match pair {
                             Some((_, k)) => k.reach,
@@ -4177,11 +4180,11 @@ mod tests {
 
     #[test]
     fn a_big_body_lunges_further_onto_its_kills_reach() {
-        // A kill made at most of a tile beyond the gap a pair keeps: a man
-        // strikes his own blow rather than slide out to it, but a beast or
-        // a rider (heavy) lunges onto it, as a lone monster among men keeps
-        // them further off than the length of its kill.
-        let plays = |mass: Mass| {
+        // A kill made for most of a tile closer than the gap a pair keeps:
+        // a man strikes his own blow rather than slide in to it, but a beast
+        // or a rider (heavy) lunges onto it, as a lone monster among men
+        // keeps them further off than the length of its kill.
+        let plays = |mass: Mass, beyond: f32| {
             let gap = (Fighter {
                 mass,
                 ..Fighter::default()
@@ -4192,7 +4195,7 @@ mod tests {
             let kill = KillTiming {
                 seconds: 1.8,
                 contact: 0.2,
-                reach: gap + 0.9,
+                reach: gap + beyond,
             };
             let mut p = with_a_kill(kill);
             let (a, mut b) = melee_pair(
@@ -4210,8 +4213,10 @@ mod tests {
             let k = (0..4).find(|&k| p.act[k].0 == Act::Kill).expect("a killer");
             p.killing[k].pair.is_some()
         };
-        assert!(!plays(Mass::Medium));
-        assert!(plays(Mass::Heavy));
+        assert!(!plays(Mass::Medium, -0.8));
+        assert!(plays(Mass::Heavy, -0.8));
+        // It steps back onto a longer kill no further than a man does.
+        assert!(!plays(Mass::Heavy, 0.9));
     }
 
     #[test]
