@@ -120,6 +120,7 @@ impl World {
             stranded: Vec::new(),
             flood_fords: None,
             brigades: crate::brigades::Brigades::new(n as usize),
+            prisoners: crate::prisoners::Prisoners::with_capacity(n as usize),
             regiments: Regiments::with_capacity(n),
         }
         .with_air()

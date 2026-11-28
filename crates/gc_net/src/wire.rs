@@ -381,6 +381,11 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.handle(regiment);
             w.var(u64::from(into));
         }
+        Command::Ransom { from, unit } => {
+            w.u8(54);
+            w.u8(from);
+            w.var(u64::from(unit));
+        }
         Command::SpawnStructure {
             building,
             tile,
@@ -750,6 +755,10 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             regiment: r.handle()?,
             into: r.var_as()?,
         },
+        54 => Command::Ransom {
+            from: r.u8()?,
+            unit: r.var_as()?,
+        },
         8 => Command::SpawnStructure {
             building: r.var_as()?,
             tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
@@ -1070,6 +1079,7 @@ mod tests {
                 regiment: h(5, 1),
                 into: 3,
             },
+            Command::Ransom { from: 3, unit: 7 },
             Command::SpawnStructure {
                 building: 40,
                 tile: (-1, 4000),

@@ -551,7 +551,20 @@ impl Battle {
             (Some(true), Win::Heart) => "VICTORY  the Titan's Heart is yours".into(),
             (Some(true), Win::Surrender) => "VICTORY  the enemy surrendered".into(),
         };
-        self.outcome = Some(format!("{said} after {time}. Esc: menu"));
+        // Prisoners taken, by each side that took any (see
+        // `gc_sim::prisoners`).
+        let taken: Vec<String> = (0..parties.len() as PlayerId)
+            .filter_map(|q| {
+                let n = world.prisoners_taken(q);
+                (n > 0).then(|| format!("{} {n}", party_name(parties, q)))
+            })
+            .collect();
+        let prisoners = if taken.is_empty() {
+            String::new()
+        } else {
+            format!(". Prisoners taken: {}", taken.join(", "))
+        };
+        self.outcome = Some(format!("{said} after {time}{prisoners}. Esc: menu"));
         true
     }
 }

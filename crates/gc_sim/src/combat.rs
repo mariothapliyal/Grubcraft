@@ -1162,8 +1162,64 @@ impl Combat {
     }
 
     /// Whether regiment `i` is a worker or a caravan.
-    fn civil(&self, regs: &Regiments, i: usize) -> bool {
+    pub(crate) fn civil(&self, regs: &Regiments, i: usize) -> bool {
         (self.civil.get(usize::from(regs.unit[i]))).is_some_and(|&c| c)
+    }
+
+    /// The enemy regiment, not a worker or caravan, with the lowest slot
+    /// whose block touches regiment `i`'s at `gap`, as the grid saw them at
+    /// the start of this tick (see [`crate::prisoners`]).
+    pub(crate) fn catcher(
+        &self,
+        at: &Placement,
+        regs: &Regiments,
+        i: usize,
+        gap: Fx,
+    ) -> Option<usize> {
+        let me = self.blocks.get(i)?;
+        let range = self.radius[i] + self.max_radius + gap;
+        let mut best: Option<usize> = None;
+        self.each_near(
+            at,
+            at.position[i],
+            range,
+            Whose::Enemies(at.owner[i]),
+            |j| {
+                if best.is_some_and(|b| b < j)
+                    || self.civil(regs, j)
+                    || regs.morale_state[j].broken()
+                {
+                    return;
+                }
+                if self.blocks.get(j).is_some_and(|b| me.touches(b, gap)) {
+                    best = Some(j);
+                }
+            },
+        );
+        best
+    }
+
+    /// Whether a regiment of `i`'s side (its owner's or an ally's), other
+    /// than `i`, still fighting (not a worker or caravan, not broken), has
+    /// its centre within `range` of `i`'s.
+    pub(crate) fn friend_fighting_near(
+        &self,
+        at: &Placement,
+        regs: &Regiments,
+        i: usize,
+        range: Fx,
+    ) -> bool {
+        let mut found = false;
+        self.each_near(
+            at,
+            at.position[i],
+            range,
+            Whose::Friends(at.owner[i]),
+            |j| {
+                found |= j != i && !self.civil(regs, j) && !regs.morale_state[j].broken();
+            },
+        );
+        found
     }
 
     /// Call `f` for every other live friend of `i` whose bounding circle

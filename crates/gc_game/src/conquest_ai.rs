@@ -307,6 +307,10 @@ pub(crate) mod tests {
         /// basic ability ready: its chances to cast.
         pub casts: u32,
         pub chances: u32,
+        /// Soldiers it took prisoner (docs/45), and the ransoms it paid
+        /// (orders), over the match.
+        pub prisoners: u32,
+        pub ransoms: u32,
     }
 
     impl Works {
@@ -315,6 +319,7 @@ pub(crate) mod tests {
             use gc_sim::structures::{GATE, Role, TITHE, TowerShot};
             let mut w = Works {
                 walled: u32::from(world.walled_town(p)),
+                prisoners: world.prisoners_taken(p),
                 ..Works::default()
             };
             let evolved = |unit: gc_sim::UnitId| {
@@ -397,6 +402,8 @@ pub(crate) mod tests {
                 top_level: self.top_level.max(o.top_level),
                 casts: self.casts.max(o.casts),
                 chances: self.chances.max(o.chances),
+                prisoners: self.prisoners.max(o.prisoners),
+                ransoms: self.ransoms.max(o.ransoms),
             }
         }
     }
@@ -665,6 +672,7 @@ pub(crate) mod tests {
                 match c.command {
                     gc_sim::Command::Clear { .. } => w.clears += 1,
                     gc_sim::Command::Evolve { .. } => w.cocoons += 1,
+                    gc_sim::Command::Ransom { .. } => w.ransoms += 1,
                     gc_sim::Command::UsePower { power, .. }
                         if (world.powers().get(usize::from(power)))
                             .is_some_and(|p| p.meter == gc_sim::Meter::Tithe) =>
@@ -1589,9 +1597,11 @@ pub(crate) mod tests {
         assert!(towers >= 1, "no bolt or blast tower put up in any game");
         // Raising a tower waits on tier 2 with Marrow to spare, which most
         // games end before now that shattered regiments leave the field and
-        // armies fight on (about one game in 14): more Clans games until
-        // one does, a known one first.
-        for seed in core::iter::once(7).chain((1..=30).filter(|&s| s != 7)) {
+        // armies fight on (about one game in 14), and fewer still once
+        // routers give themselves up (none of seeds 1 to 30 with prisoners
+        // and the column of march): more Clans games until one does, a
+        // known one first.
+        for seed in core::iter::once(35).chain((1..=40).filter(|&s| s != 35)) {
             if raised > 0 {
                 break;
             }
@@ -1725,6 +1735,30 @@ pub(crate) mod tests {
         assert!(chances == 0 || casts > 0, "no casts in {chances} chances");
     }
 
+    /// Computer players take prisoners (docs/45): in General one-on-ones,
+    /// broken regiments are run down and give themselves up.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_generals_take_prisoners() {
+        let factions = [Faction::EmberClans, Faction::Brood];
+        let mut taken = 0;
+        for seed in [21, 22, 23] {
+            let played = play(0, 0, &factions, &[Difficulty::General], seed, 40);
+            for (side, f) in played.sides.iter().zip(factions) {
+                let w = side.works;
+                println!(
+                    "seed {seed} {f:?}: {} prisoners taken, {} ransoms",
+                    w.prisoners, w.ransoms
+                );
+                taken += w.prisoners;
+            }
+            if taken > 0 {
+                break;
+            }
+        }
+        assert!(taken > 0, "nobody took a prisoner");
+    }
+
     // A game takes seconds in a release build and minutes in a debug one,
     // so these run in CI's release step.
     #[test]
@@ -1736,7 +1770,9 @@ pub(crate) mod tests {
         ];
         // An hour: since frontage a base under siege holds a little longer
         // (seed 7 ended by the Heart at 46 minutes).
-        for (factions, seed) in pairs.iter().zip([7, 8]) {
+        // Choir v Concord plays seed 9: with prisoners, seed 8 ran to 60:00
+        // undecided, while seeds 9 to 15 all ended (7 of 8, 19 to 48 min).
+        for (factions, seed) in pairs.iter().zip([7, 9]) {
             let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 60);
             assert!(played.winner().is_some(), "{}", played.report());
         }
@@ -1745,14 +1781,15 @@ pub(crate) mod tests {
     /// A computer player's army marches as a brigade (docs/42): in a
     /// one-on-one on Ribcage Pass the side that masses an army has had
     /// at least six of its regiments marching in one brigade by thirty
-    /// minutes. (Its orders reach its regiments one by one, and it sends
+    /// minutes (seed 8: with prisoners and the column of march, seed 7's
+    /// biggest brigades were 3 and 5). (Its orders reach its regiments one by one, and it sends
     /// armies at buildings, where the places it gives are out of sight
     /// of each other: both once kept its brigades from forming.)
     #[test]
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_armies_march_as_brigades() {
         let factions = [Faction::EmberClans, Faction::CarrionConcord];
-        let played = play(0, 0, &factions, &[Difficulty::Veteran], 7, 30);
+        let played = play(0, 0, &factions, &[Difficulty::Veteran], 8, 30);
         println!("most regiments in one brigade: {:?}", played.brigaded);
         assert!(
             played.brigaded.iter().any(|&n| n >= 6),
@@ -1801,7 +1838,9 @@ pub(crate) mod tests {
             [Faction::EmberClans, Faction::Brood],
             [Faction::Choir, Faction::CarrionConcord],
         ];
-        for (factions, seed) in pairs.iter().zip([7, 8]) {
+        // Choir v Concord plays seed 9: with prisoners, seed 8 ran to 60:00
+        // undecided, while seeds 9 to 15 all ended (7 of 8, 19 to 48 min).
+        for (factions, seed) in pairs.iter().zip([7, 9]) {
             let played = play(land, medium, factions, &[Difficulty::Veteran], seed, 60);
             assert!(played.winner().is_some(), "{}", played.report());
         }

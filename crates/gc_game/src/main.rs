@@ -204,6 +204,8 @@ mod match_kit;
 mod models;
 mod moves;
 mod online;
+#[cfg(test)]
+mod prisoners_golden;
 mod profile;
 mod puppets;
 mod replays;
@@ -388,7 +390,7 @@ fn push_standard(
 /// he will lie), leaving out those sinking to make room for newer dead.
 fn lying_bodies(puppets: &Puppets) -> impl Iterator<Item = Vec2> + '_ {
     (puppets.corpses())
-        .filter(|c| c.sink == 0.0)
+        .filter(|c| c.sink == 0.0 && !c.yielded)
         .map(|c| aftermath::body_at(c.rest, c.rest_facing))
 }
 
@@ -8044,8 +8046,11 @@ impl Running {
                     if lod < LODS && room > 0 {
                         room -= 1;
                         let look = models::look(c.look);
-                        let ([wr, wg, wb], tone) =
-                            aftermath::worn([r, g, b], look.tone, aftermath::DEAD_DIRT);
+                        let ([wr, wg, wb], tone) = aftermath::worn(
+                            [r, g, b],
+                            look.tone,
+                            if c.yielded { 0.0 } else { aftermath::DEAD_DIRT },
+                        );
                         art.buckets[model * LODS + lod].push(SoldierInstance {
                             pos: c.pos.to_array(),
                             facing: c.facing.to_array(),
@@ -8125,6 +8130,9 @@ impl Running {
         }
         // Buildings whose blows this tick were shown.
         let mut shown = Vec::new();
+        // Soldiers who gave themselves up this tick: taken by the viewer's
+        // side, and the viewer's own (see `gc_sim::prisoners`).
+        let (mut took, mut lost_men) = (0u32, 0u32);
         let mut news = Vec::new();
         let (focus, distance) = self.view_focus();
         // What happened while catching up online is old news.
@@ -8183,7 +8191,7 @@ impl Running {
                         self.online.is_some() && self.menu.net().catching_up(),
                     ) {
                         let dead = (self.puppets.corpses())
-                            .filter(|c| c.pos.distance(at) <= aftermath::DEAD_RADIUS)
+                            .filter(|c| !c.yielded && c.pos.distance(at) <= aftermath::DEAD_RADIUS)
                             .count();
                         let tint = color_of(&self.parties, owner);
                         // The nearest foe by takes the standard.
@@ -8305,6 +8313,29 @@ impl Running {
                         self.effects.cast(glam::Vec3::new(p.x, ground, p.y));
                     }
                 }
+                Event::Surrendered {
+                    regiment,
+                    owner,
+                    captor,
+                    soldiers,
+                    at,
+                    ..
+                } => {
+                    let side = self.sandbox.side;
+                    if captor == side {
+                        took += u32::from(soldiers);
+                    } else if owner == side {
+                        lost_men += u32::from(soldiers);
+                    }
+                    // The men kneel and fade where they gave up.
+                    let seen = self.reveal_all
+                        || owner == side
+                        || {
+                            let p = from_fx_vec(at);
+                            self.fog.sees_tile((p.x.floor() as i32, p.y.floor() as i32))
+                        };
+                    self.puppets.surrendered(regiment, seen);
+                }
                 // A hero of ours walked to cast and found it couldn't.
                 Event::CastRefused { hero, why, .. }
                     if self.world.regiments.owner(hero) == Some(self.sandbox.side) =>
@@ -8400,6 +8431,17 @@ impl Running {
         }
         if let Some(w) = &watched {
             news.push(w.as_str());
+        }
+        let prisoners = match (took, lost_men) {
+            (0, 0) => None,
+            (n, 0) => Some(format!("{n} prisoners taken")),
+            (0, n) => Some(format!("{n} of your soldiers gave themselves up")),
+            (n, m) => Some(format!(
+                "{n} prisoners taken, and {m} of yours gave themselves up"
+            )),
+        };
+        if let (Some(p), false) = (&prisoners, old_news) {
+            news.push(p.as_str());
         }
         // Kept up while catching up online, but what happened then is old
         // news.

@@ -111,6 +111,15 @@ Regiments that lose soldiers **reinforce** instead of being replaced, which keep
 - **Veterancy** (3 ranks, earned by kills) survives reinforcement: new soldiers join at the regiment's rank. +10% damage and 5 points off the breaking point per rank (built 2026-10-31, [05](05-combat.md#veterancy)).
 - Computer players send a regiment at home that is below 85% of its soldiers to stand a few tiles out from the nearest reinforcement point until it is full again. A threat at home or an attack setting out takes it along as before.
 
+## Prisoners and ransom
+
+Added 2026-11-28 ([45](45-prisoners.md)).
+
+- **Where they are held:** soldiers taken prisoner in Conquest are held at the captor's nearest finished main building or outpost hall. A main building holds 60 and an outpost hall 30; what fits nowhere is let go.
+- **Work:** each held soldier earns its captor 1 Grub a minute, cut by upkeep like gathered Grub.
+- **Ransom:** their owner can buy back a lot (at most a full regiment) at once with the Ransom button, for what reinforcing those soldiers would cost, paid to the captor. It comes out at the owner's main building with its rank and needs the supply.
+- **When a stockade falls:** its prisoners stand up there as their owner's regiments, while the owner has the supply.
+
 ## Expansion
 
 Each faction expands differently, consistent with its economy:

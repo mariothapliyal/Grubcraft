@@ -407,6 +407,12 @@ impl Writer {
                 self.handle(regiment);
                 self.var(u64::from(into));
             }
+            // Format 60.
+            Command::Ransom { from, unit } => {
+                self.u8(56);
+                self.u8(from);
+                self.var(u64::from(unit));
+            }
             Command::SpawnStructure {
                 building,
                 tile,
@@ -1137,6 +1143,10 @@ impl<'a> Reader<'a> {
                 regiment: self.handle()?,
                 into: self.var_as()?,
             },
+            56 => Command::Ransom {
+                from: self.u8()?,
+                unit: self.var_as()?,
+            },
             tag @ (8 | 25) => Command::SpawnStructure {
                 building: self.var_as()?,
                 tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
@@ -1412,6 +1422,7 @@ mod tests {
                 regiment: h,
                 into: 3,
             },
+            Command::Ransom { from: 2, unit: 5 },
             Command::SpawnStructure {
                 building: 3,
                 tile: (-2, 140),
