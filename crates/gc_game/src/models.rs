@@ -1214,6 +1214,38 @@ mod tests {
     }
 
     #[test]
+    fn walkers_debt_collectors_and_the_big_brood_kill_men() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name).unwrap();
+        // Each made on its own rig at the man's size it draws beside: a
+        // Walker's fork, a Debt Collector's lance from the saddle, the
+        // Maw's bite and the Bulk's forelegs, on a man of any faction, the
+        // blow landing well before he is down.
+        for killer in [
+            "Harmonic Walkers",
+            "Debt Collectors",
+            "Colossus Maw",
+            "Broodmother Bulk",
+        ] {
+            for victim in ["Katana Samurai", "Tuner", "Grubfolk Militia", "Bone Pikes"] {
+                let p = clips
+                    .kill_pair(by(killer), by(victim), 0)
+                    .unwrap_or_else(|| panic!("{killer} on {victim}"));
+                assert_eq!((p.kill.act, p.killed.act), (Act::Kill, Act::Killed));
+                assert_eq!(p.kill.frames, p.killed.frames);
+                assert!((0.2..0.5).contains(&p.contact), "{killer}: {}", p.contact);
+                assert!(p.reach > 0.0, "{killer}: {}", p.reach);
+            }
+        }
+        // Not on one another: an insect is no man.
+        assert_eq!(
+            clips.kill_pair(by("Colossus Maw"), by("Chitin Guard"), 0),
+            None
+        );
+    }
+
+    #[test]
     fn a_soldier_varies_his_blows_and_his_regiment_its_staggers() {
         let models = load().unwrap();
         let clips = Clips::new(&models);
