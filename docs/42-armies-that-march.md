@@ -1112,12 +1112,9 @@ field, each with one 10-tile gap, the gaps 80 tiles apart):
 | Narrow, ordinary order | 76.1 s | 24.7 regiment-s |
 | Narrow, column of march (deployed at 65.2 s) | 73.6 s | 51.1 regiment-s |
 
-Before the rule change the open column took 55.8 s, deploying at the
-end: its head was no quicker than a line.
-
 With three enemy spearmen standing 28 tiles beside the way, the column
 deployed when they were 32 tiles off, stood formed in line facing them
-6.0 s later, and no regiment fought in column.
+6.2 s later, and no regiment fought in column.
 
 ### What it does not do yet
 

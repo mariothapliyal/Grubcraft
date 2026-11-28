@@ -191,6 +191,7 @@ mod stress;
 #[cfg(test)]
 mod wall_survey;
 // The Guide's data (docs/08-ui-ux.md#guide).
+mod column;
 mod drawn_tool;
 mod guide_data;
 mod hero_casts;
@@ -214,7 +215,6 @@ mod river_debris;
 #[cfg(test)]
 mod river_golden;
 mod river_watch;
-mod column;
 mod road;
 mod roster;
 mod sandbox;
@@ -995,6 +995,9 @@ fn usage() -> ! {
     std::process::exit(2);
 }
 
+/// A road preview: (points, shift, alt, waypoints, the last leg's moves).
+type RoadPreview = (usize, bool, bool, Vec<Vec2>, Vec<gc_sim::Command>);
+
 /// Everything that exists once the window and GPU are up.
 struct Running {
     window: Arc<Window>,
@@ -1141,7 +1144,7 @@ struct Running {
     /// The road preview last planned, kept while the road has as many
     /// points and Shift and Alt are as they were: (points, shift, alt,
     /// waypoints, the last leg's moves).
-    road_preview: Option<(usize, bool, bool, Vec<Vec2>, Vec<gc_sim::Command>)>,
+    road_preview: Option<RoadPreview>,
     /// Armies sent in column of march (Alt+right-click), watched until
     /// they deploy (docs/42-armies-that-march.md, "Column of march").
     columns: Vec<column::March>,
@@ -3576,7 +3579,9 @@ impl Running {
             }
         }
         self.columns.push(march);
-        self.say("In column of march: it deploys at the end, or facing an enemy that comes near".into());
+        self.say(
+            "In column of march: it deploys at the end, or facing an enemy that comes near".into(),
+        );
     }
 
     /// Take out of the columns of march the regiments the orders about to
@@ -3628,7 +3633,14 @@ impl Running {
                     },
                 }
             };
-            out.extend(column::deploy(&self.world, march, why, brigade, roles, arrange));
+            out.extend(column::deploy(
+                &self.world,
+                march,
+                why,
+                brigade,
+                roles,
+                arrange,
+            ));
         }
         columns.retain(|m| !m.is_empty());
         self.columns = columns;

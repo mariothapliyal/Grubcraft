@@ -14,7 +14,9 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::arrange::{Arrangement, Preset, Role, Shape};
-use gc_sim::formation::{GROUP_LINE_GAP, GroupMember, GroupOrder, block_size, centre_of, middle_of};
+use gc_sim::formation::{
+    GROUP_LINE_GAP, GroupMember, GroupOrder, block_size, centre_of, middle_of,
+};
 use gc_sim::orders::Step;
 use gc_sim::{Command, Formation, PlayerId, RegimentHandle, World};
 
@@ -173,7 +175,11 @@ const TURNS: [u16; 18] = {
     let mut k = 1;
     while k < 18 {
         let n = (k as u32).div_ceil(2) * step;
-        t[k] = if k % 2 == 1 { n as u16 } else { (0x10000 - n) as u16 };
+        t[k] = if k % 2 == 1 {
+            n as u16
+        } else {
+            (0x10000 - n) as u16
+        };
         k += 1;
     }
     t
@@ -528,6 +534,9 @@ mod tests {
             assert!((p.x - Fx::from_int(60)).abs() <= Fx::ONE, "{at:?}");
         }
         assert_eq!(ys[0], Fx::from_int(20));
-        assert!(ys.windows(2).all(|w| w[1] - w[0] >= Fx::from_int(8)), "{ys:?}");
+        assert!(
+            ys.windows(2).all(|w| w[1] - w[0] >= Fx::from_int(8)),
+            "{ys:?}"
+        );
     }
 }

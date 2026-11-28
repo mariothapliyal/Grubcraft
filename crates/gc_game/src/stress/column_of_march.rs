@@ -7,7 +7,7 @@
 //! column marches again with an enemy line standing beside the way: it
 //! should deploy facing the enemy before any of it is caught in column.
 
-use gc_fixed::{Angle, FxVec2};
+use gc_fixed::Angle;
 use gc_sim::arrange::{Arrangement, Preset, arranged_move};
 use gc_sim::formation::{GroupMember, GroupOrder};
 use gc_sim::scenario::NORTH;
@@ -197,7 +197,10 @@ fn run(real: &Real, report: &mut Report) {
             format!("{:.1}", w.disorder as f32 / tps),
         );
         if how.column {
-            report.metric(format!("{name}: deployed at"), seconds(w.deployed.map(|d| d.0)));
+            report.metric(
+                format!("{name}: deployed at"),
+                seconds(w.deployed.map(|d| d.0)),
+            );
         }
         if !how.narrow && !how.enemy {
             open[usize::from(how.column)] = w.done;
@@ -210,7 +213,8 @@ fn run(real: &Real, report: &mut Report) {
             );
             report.metric(
                 format!("{name}: formed, seconds after deploying"),
-                w.done.map_or("never".into(), |d| format!("{:.1}", (d - at) as f32 / tps)),
+                w.done
+                    .map_or("never".into(), |d| format!("{:.1}", (d - at) as f32 / tps)),
             );
             report.metric(
                 format!("{name}: regiment-seconds fighting in column"),
