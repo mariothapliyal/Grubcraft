@@ -44,6 +44,7 @@ mod make_way;
 mod mountain;
 mod new_orders;
 mod orders;
+mod prisoners;
 mod rally;
 mod reinforce;
 mod town;
@@ -105,6 +106,7 @@ const SCENARIOS: &[Scenario] = &[
     abilities::SCENARIO,
     dropped::SCENARIO,
     high_water::SCENARIO,
+    prisoners::SCENARIO,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.

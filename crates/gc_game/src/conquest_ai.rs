@@ -301,6 +301,10 @@ pub(crate) mod tests {
         /// basic ability ready: its chances to cast.
         pub casts: u32,
         pub chances: u32,
+        /// Soldiers it took prisoner (docs/45), and the ransoms it paid
+        /// (orders), over the match.
+        pub prisoners: u32,
+        pub ransoms: u32,
     }
 
     impl Works {
@@ -309,6 +313,7 @@ pub(crate) mod tests {
             use gc_sim::structures::{GATE, Role, TITHE, TowerShot};
             let mut w = Works {
                 walled: u32::from(world.walled_town(p)),
+                prisoners: world.prisoners_taken(p),
                 ..Works::default()
             };
             let evolved = |unit: gc_sim::UnitId| {
@@ -379,6 +384,8 @@ pub(crate) mod tests {
                 top_level: self.top_level.max(o.top_level),
                 casts: self.casts.max(o.casts),
                 chances: self.chances.max(o.chances),
+                prisoners: self.prisoners.max(o.prisoners),
+                ransoms: self.ransoms.max(o.ransoms),
             }
         }
     }
@@ -647,6 +654,7 @@ pub(crate) mod tests {
                 match c.command {
                     gc_sim::Command::Clear { .. } => w.clears += 1,
                     gc_sim::Command::Evolve { .. } => w.cocoons += 1,
+                    gc_sim::Command::Ransom { .. } => w.ransoms += 1,
                     gc_sim::Command::UsePower { power, .. }
                         if (world.powers().get(usize::from(power)))
                             .is_some_and(|p| p.meter == gc_sim::Meter::Tithe) =>
@@ -1661,6 +1669,30 @@ pub(crate) mod tests {
         assert!(top >= 1);
         // Their heroes cast their abilities when foes are near (docs/44).
         assert!(chances == 0 || casts > 0, "no casts in {chances} chances");
+    }
+
+    /// Computer players take prisoners (docs/45): in General one-on-ones,
+    /// broken regiments are run down and give themselves up.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_generals_take_prisoners() {
+        let factions = [Faction::EmberClans, Faction::Brood];
+        let mut taken = 0;
+        for seed in [21, 22, 23] {
+            let played = play(0, 0, &factions, &[Difficulty::General], seed, 40);
+            for (side, f) in played.sides.iter().zip(factions) {
+                let w = side.works;
+                println!(
+                    "seed {seed} {f:?}: {} prisoners taken, {} ransoms",
+                    w.prisoners, w.ransoms
+                );
+                taken += w.prisoners;
+            }
+            if taken > 0 {
+                break;
+            }
+        }
+        assert!(taken > 0, "nobody took a prisoner");
     }
 
     // A game takes seconds in a release build and minutes in a debug one,
