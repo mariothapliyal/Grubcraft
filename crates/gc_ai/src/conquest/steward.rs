@@ -166,6 +166,8 @@ pub struct Steward {
     engineer: engineer::Engineer,
     /// Keeping its bridges standing.
     bridgework: bridgework::Bridgework,
+    /// Heroes it had cast an ability lately, and when.
+    cast: Vec<(RegimentHandle, u32)>,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -289,6 +291,7 @@ impl Steward {
         self.arming = self.must_arm(s, &look);
         // Heroes before the army, which would spend all there is.
         self.hire_heroes(s, clicks, &look);
+        self.cast_abilities(s, clicks, &look);
         self.put_to_work(s, clicks, &look);
         self.rebalance(s, clicks, &look);
         self.finish_buildings(s, clicks, &look);

@@ -42,8 +42,9 @@ pub const GRID_SLOTS: usize = GRID_COLS * GRID_ROWS;
 /// The key on each slot (docs/08-ui-ux.md: one grid, the same keys everywhere).
 pub const GRID_KEYS: [char; GRID_SLOTS] =
     ['Q', 'W', 'E', 'R', 'A', 'S', 'D', 'F', 'Z', 'X', 'C', 'V'];
-/// A hero's four abilities take the A, S, D and F slots.
+/// A hero's two abilities take the A and S slots (docs/44).
 pub const HERO_SLOT_FIRST: usize = 4;
+pub const HERO_ABILITIES: usize = 2;
 const GRID_GAP: i32 = 4;
 /// A button must be hovered this long before its tooltip shows, in ms.
 pub const TOOLTIP_DELAY_MS: u64 = 350;

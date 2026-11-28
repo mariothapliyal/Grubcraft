@@ -18,7 +18,7 @@ use gc_sim::economy::{SEEP_GRUB, VEIN_MARROW};
 use gc_sim::structures::Breaker;
 use gc_sim::{
     Command, ConquestSetup, ConquestUnit, MAX_PARTIES, Meter, NodeSetup, PlayerCommand, PlayerId,
-    Resource, Victories, World,
+    Resource, UnitId, Victories, World,
 };
 use gc_ui::Settings;
 use gc_ui::lobby::{COLORS, GameMode, LobbySettings, MatchStart, Slot, SlotKind, Tempo, Victory};
@@ -182,6 +182,11 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
             melee: u.level_melee,
             missile: u.level_missile,
         }),
+        // What it summons the table says by name (see `units_of`).
+        kit: (u.hero())
+            .then(|| gc_sim::abilities::Kit::named(u.name()))
+            .flatten()
+            .map(|kit| gc_sim::abilities::HeroKit { kit, summons: None }),
     }
 }
 
@@ -234,10 +239,19 @@ pub fn units_of(data: &GameData) -> Vec<ConquestUnit> {
             let has = (data.buildings.iter())
                 .filter(|b| b.faction() == u.faction())
                 .fold(0, |flags, b| flags | b.flags);
-            ConquestUnit {
+            let mut c = ConquestUnit {
                 cannot_bank: !has & drop_offs,
                 ..unit_of(u)
+            };
+            // The unit type a hero's ability summons, by its name.
+            if let Some(k) = &mut c.kit {
+                k.summons = k.kit.summons().and_then(|name| {
+                    (data.conquest_units.iter())
+                        .position(|s| s.faction() == u.faction() && s.name() == name)
+                        .map(|s| s as UnitId)
+                });
             }
+            c
         })
         .collect()
 }

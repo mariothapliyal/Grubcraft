@@ -16,6 +16,9 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+pub mod abilities;
+#[cfg(test)]
+mod ability_tests;
 pub mod arrange;
 pub mod blueprints;
 pub mod bridges;
@@ -142,7 +145,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 100;
+pub const SIM_VERSION: u32 = 101;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -884,6 +887,16 @@ pub enum Command {
     /// faction meter (see [`powers`]). Refused before their tier allows it,
     /// while it cools down, or when they can't pay.
     UsePower { power: u8, target: PowerTarget },
+    /// Conquest: hero `regiment` casts its ability `ability` (0 its basic
+    /// one, 1 its ultimate) at `target` (see [`abilities`]). Refused before
+    /// its level opens it, while it cools down, while the hero is stunned
+    /// or cocooned, and for a target its side can't see. Out of reach, the
+    /// hero walks into reach and casts there; another order calls it off.
+    Cast {
+        regiment: RegimentHandle,
+        ability: u8,
+        target: abilities::CastTarget,
+    },
     /// Conquest: the issuer's regiment cocoons where it stands and comes
     /// out as `into`, one of its unit type's evolutions (see [`evolve`]).
     /// Refused unless they are at its tier, have a finished building that
@@ -1050,6 +1063,19 @@ impl Command {
         }
     }
 
+    /// The regiment a move, attack or work order sends elsewhere: a hero's
+    /// waiting cast (see [`abilities`]) is called off by it.
+    pub fn redirects(&self) -> Option<RegimentHandle> {
+        match *self {
+            Command::MoveTo { regiment, .. }
+            | Command::AttackMove { regiment, .. }
+            | Command::Attack { regiment, .. }
+            | Command::FallBack { regiment }
+            | Command::Hold { regiment, on: true } => Some(regiment),
+            _ => self.sets_to_work(),
+        }
+    }
+
     pub fn is_player_order(&self) -> bool {
         match self {
             Command::MoveTo { .. }
@@ -1078,6 +1104,7 @@ impl Command {
             | Command::Untrain { .. }
             | Command::Upgrade { .. }
             | Command::UsePower { .. }
+            | Command::Cast { .. }
             | Command::Evolve { .. }
             | Command::FocusTower { .. }
             | Command::SetGate { .. }
@@ -2032,6 +2059,10 @@ impl World {
                 if let Some(h) = pc.command.sets_to_work() {
                     self.regiments.fresh(h, None);
                 }
+                // A hero given another order forgets the cast it walked to.
+                if let Some(h) = pc.command.redirects() {
+                    self.call_off_cast(h);
+                }
                 stats.commands_applied += 1;
             } else {
                 stats.commands_rejected += 1;
@@ -2125,6 +2156,8 @@ impl World {
             &mut self.combat_rng,
         );
         self.terrain.settle_rubble();
+        // Heroes cast: before the towers and the tick's dead are counted.
+        self.abilities();
         if let Some(conquest) = &mut self.conquest {
             conquest.towers(
                 &mut self.combat,
@@ -2225,6 +2258,7 @@ impl World {
                     .collect(&c.meters, &c.structures, &self.regiments, self.tick);
                 (c.heroes).earn(&mut self.regiments, &self.units, &c.units, &self.stances);
             }
+            self.abilities_late();
             self.raise_trained();
         }
         // What powers left on regiments wears off in any world, a copy of
@@ -2875,6 +2909,11 @@ impl World {
                 .as_mut()
                 .is_some_and(|c| c.set_rally(pc.player, structure, at)),
             Command::UsePower { power, target } => self.use_power(pc.player, power, target),
+            Command::Cast {
+                regiment,
+                ability,
+                target,
+            } => self.cast(pc.player, regiment, ability, target),
             Command::Evolve { regiment, into } => self.conquest.as_mut().is_some_and(|c| {
                 c.evolve(&mut self.regiments, &self.units, pc.player, regiment, into)
             }),
@@ -3226,9 +3265,11 @@ impl World {
                 conquest.economy.refund(t.owner, grub, marrow);
                 continue;
             };
-            if let Some(growth) = conquest.unit(t.unit).hero {
+            let u = conquest.unit(t.unit);
+            if let Some(growth) = u.hero {
                 let stats = &self.units[usize::from(t.unit)];
-                (conquest.heroes).raised(&mut self.regiments, stats, growth, t.owner, t.unit, h);
+                let kit = (growth, u.kit);
+                (conquest.heroes).raised(&mut self.regiments, stats, kit, t.owner, t.unit, h);
             }
             self.vision.start(
                 &self.regiments,

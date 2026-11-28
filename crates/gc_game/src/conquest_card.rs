@@ -142,7 +142,7 @@ impl Running {
 
     /// The card for a selection of Brood regiments that can evolve: one
     /// button per evolution of the first such regiment's unit (the grid has
-    /// room for two), going over the battle grid. A hero shown owns F.
+    /// room for two), going over the battle grid; not over the made-up hero.
     fn evolve_card(&self) -> Option<Card> {
         if self.hud.hero_shown() {
             return None;

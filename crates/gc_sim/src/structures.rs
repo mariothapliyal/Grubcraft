@@ -291,6 +291,15 @@ pub enum Refusal {
     /// As many heroes as its owner's tier allows (one a tier), counting
     /// the fallen and those in training.
     HeroLimit,
+    /// A hero ability its hero's level hasn't opened yet (see
+    /// [`crate::abilities`]).
+    Locked,
+    /// A hero stunned or in a cocoon: it can't cast.
+    Stunned,
+    /// A target the caster's side can't see, or not an enemy.
+    Unseen,
+    /// A Foreclosure on a regiment not below half strength.
+    Sturdy,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -853,6 +862,10 @@ pub struct Structures {
     pub(crate) chord_count: [u8; crate::MAX_PARTIES],
     pub(crate) charging: [u8; crate::MAX_PARTIES],
     pub(crate) resonance: [u32; crate::MAX_PARTIES],
+    /// By player: ticks left of a Symphony (see [`crate::abilities`]), their
+    /// chords' seeps yielding twice the Grub and their Resonance charging
+    /// twice as fast.
+    pub(crate) symphony_left: [u16; crate::MAX_PARTIES],
     /// Bumped whenever the tuners or the chords change, so the economy
     /// only works out again which tuner and chord each node has then.
     pub(crate) power_stamp: u32,
@@ -1014,6 +1027,7 @@ impl Structures {
             chord_count: [0; crate::MAX_PARTIES],
             charging: [0; crate::MAX_PARTIES],
             resonance: [0; crate::MAX_PARTIES],
+            symphony_left: [0; crate::MAX_PARTIES],
             power_stamp: 0,
             restats: false,
             build_percent: build_percent.clamp(10, 1000),
@@ -2150,6 +2164,9 @@ impl Structures {
         self.drawings.hash_into(h);
         for &r in &self.resonance {
             h.u32(r);
+        }
+        for &s in &self.symphony_left {
+            h.u16(s);
         }
         self.hash_pools(h);
         for r in 0..self.siege.len() {
