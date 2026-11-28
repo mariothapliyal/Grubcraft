@@ -1270,7 +1270,10 @@ mod tests {
             let own = &clips.by_model[by(name)];
             assert_eq!((own.swings.len(), own.staggers.len()), (blows, 2), "{name}");
             let made_for = |c: &MoveClip| c.weapon == weapon;
-            assert!(own.swings.iter().chain(&own.staggers).all(made_for), "{name}");
+            assert!(
+                own.swings.iter().chain(&own.staggers).all(made_for),
+                "{name}"
+            );
         }
         // Every other man of the rig reels his own hit and the library's
         // two, the other factions' too, but not the Lantern Wraiths or the
