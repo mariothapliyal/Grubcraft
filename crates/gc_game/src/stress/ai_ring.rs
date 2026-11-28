@@ -117,6 +117,11 @@ fn play(
             format!("match {seed}, {faction:?} wall tiles and gates"),
             format!("{} and {}", count(p as u8, false), count(p as u8, true)),
         );
+        let (curved, lines) = crate::wall_survey::drawn_walls(&world, p as u8);
+        report.metric(
+            format!("match {seed}, {faction:?} walls drawn as curves, of all drawn"),
+            format!("{curved} of {lines}"),
+        );
     }
     (walled, core::array::from_fn(|p| count(p as u8, true)))
 }
