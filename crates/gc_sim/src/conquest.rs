@@ -14,6 +14,7 @@ use gc_fixed::FxVec2;
 use crate::blueprints::Blueprints;
 use crate::clearing::{ClearStyle, Clearing, Pledge};
 use crate::economy::{Bank, Economy, NodeSetup, TradePost};
+use crate::heroes::Heroes;
 use crate::honor::Honor;
 use crate::nav::Nav;
 use crate::powers::{Meter, PowerStats, Powers};
@@ -122,7 +123,7 @@ impl ConquestUnit {
         }
     }
 
-    fn hash_into(&self, h: &mut StateHasher) {
+    pub(crate) fn hash_into(&self, h: &mut StateHasher) {
         h.u8(self.breaker as u8);
         h.u8(u8::from(self.worker));
         h.u8(self.supply);
@@ -259,8 +260,6 @@ pub(crate) struct Conquest {
     /// standing and their reach, room for every slot kept so a tick never
     /// allocates.
     pub(crate) points: Vec<(u32, i32)>,
-    /// Every player's heroes (see [`crate::heroes`]).
-    pub(crate) heroes: crate::heroes::Heroes,
 }
 
 /// Whether the footprints `a` and `b` (`[x, y, w, d]`) share a tile.
@@ -298,7 +297,6 @@ impl Conquest {
             manning: crate::manning::Manning::new(setup.structures as usize),
             planting: Vec::new(),
             left: Vec::with_capacity(regiments),
-            heroes: crate::heroes::Heroes::new(),
         }
     }
 
@@ -819,6 +817,7 @@ impl Conquest {
     /// now, and if not, why.
     pub(crate) fn can_train(
         &self,
+        heroes: &Heroes,
         player: PlayerId,
         h: StructureHandle,
         unit: UnitId,
@@ -842,7 +841,6 @@ impl Conquest {
             return Err(Refusal::Larva);
         }
         if u.hero.is_some() {
-            let heroes = &self.heroes;
             let (queued, this) = self.production.heroes_in_training(
                 &self.structures,
                 &self.units,
@@ -852,7 +850,7 @@ impl Conquest {
             );
             heroes.check_hire(player, unit, self.structures.tier_of(player), queued, this)?;
         }
-        let (grub, marrow) = self.price(player, unit);
+        let (grub, marrow) = self.price(heroes, player, unit);
         if !self.economy.can_afford(player, grub, marrow) {
             return Err(Refusal::Price);
         }
@@ -861,8 +859,8 @@ impl Conquest {
 
     /// What `player` pays for a regiment of type `unit` (Grub, Marrow): a
     /// fallen hero of theirs is revived, for a price of its level.
-    pub(crate) fn price(&self, player: PlayerId, unit: UnitId) -> (u32, u32) {
-        match self.revive(player, unit) {
+    pub(crate) fn price(&self, heroes: &Heroes, player: PlayerId, unit: UnitId) -> (u32, u32) {
+        match self.revive(heroes, player, unit) {
             Some((grub, marrow, _)) => (grub, marrow),
             None => {
                 let u = self.unit(unit);
@@ -874,22 +872,30 @@ impl Conquest {
     /// What reviving `player`'s fallen hero of type `unit` costs and the
     /// ticks it takes at Standard tempo (see
     /// [`crate::heroes::revive_price`]), if they have one.
-    fn revive(&self, player: PlayerId, unit: UnitId) -> Option<(u32, u32, u32)> {
+    fn revive(&self, heroes: &Heroes, player: PlayerId, unit: UnitId) -> Option<(u32, u32, u32)> {
         let u = self.unit(unit);
         u.hero?;
-        let hero = self.heroes.find(player, unit).filter(|h| h.dead())?;
+        let hero = heroes.find(player, unit).filter(|h| h.dead())?;
         Some(crate::heroes::revive_price(&u, hero.level))
     }
 
     /// `player`'s building `h` queues a regiment of type `unit`, paying
     /// for it, and a larva if it hatches from one.
-    pub(crate) fn train(&mut self, player: PlayerId, h: StructureHandle, unit: UnitId) -> bool {
-        if self.can_train(player, h, unit).is_err() {
+    pub(crate) fn train(
+        &mut self,
+        heroes: &Heroes,
+        player: PlayerId,
+        h: StructureHandle,
+        unit: UnitId,
+    ) -> bool {
+        if self.can_train(heroes, player, h, unit).is_err() {
             return false;
         }
         let u = self.unit(unit);
-        let (grub, marrow) = self.price(player, unit);
-        let full = self.revive(player, unit).map_or(0, |(_, _, ticks)| ticks);
+        let (grub, marrow) = self.price(heroes, player, unit);
+        let full = self
+            .revive(heroes, player, unit)
+            .map_or(0, |(_, _, ticks)| ticks);
         self.economy.spend(player, grub, marrow);
         if u.hatches {
             self.structures.take_larva(player, h.index as usize);
@@ -900,7 +906,12 @@ impl Conquest {
 
     /// `player` takes the last regiment off building `h`'s queue, for all
     /// it cost.
-    pub(crate) fn untrain(&mut self, player: PlayerId, h: StructureHandle) -> bool {
+    pub(crate) fn untrain(
+        &mut self,
+        heroes: &Heroes,
+        player: PlayerId,
+        h: StructureHandle,
+    ) -> bool {
         if self.ready(player, h).is_none() {
             return false;
         }
@@ -909,7 +920,7 @@ impl Conquest {
         };
         let u = self.unit(unit);
         // A fallen hero's revive is still priced by its level.
-        let (grub, marrow) = self.price(player, unit);
+        let (grub, marrow) = self.price(heroes, player, unit);
         self.economy.refund(player, grub, marrow);
         if u.hatches {
             self.structures.give_back_larva(player);
@@ -1064,6 +1075,5 @@ impl Conquest {
         self.blueprints.hash_into(regs, h);
         self.manning.hash_into(regs, h);
         self.hash_planting(regs, h);
-        self.heroes.hash_into(h);
     }
 }

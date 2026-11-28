@@ -50,6 +50,11 @@ impl Running {
             self.say(format!("{} works by itself", a.name));
             return;
         }
+        // In a Field Battle, an ability that moves Grub or raises the
+        // Tithe's dead has nothing to work on.
+        if self.world.can_cast(self.sandbox.side, h, slot) == Err(gc_sim::Refusal::NoBuildings) {
+            return self.say(format!("{} works only in Conquest", a.name));
+        }
         if a.aim == Aim::Hero {
             return self.send_cast(h, slot, CastTarget::Hero);
         }

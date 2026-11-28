@@ -287,6 +287,16 @@ fn raises(kit: Kit, slot: u8) -> bool {
     )
 }
 
+/// Whether hero `kit`'s ability `slot` works only in Conquest: it moves
+/// Grub, or raises the dead from the Tithe's graves, which a Field Battle
+/// has none of.
+pub fn needs_conquest(kit: Kit, slot: u8) -> bool {
+    matches!(
+        (kit, slot),
+        (Kit::Maestro, 1) | (Kit::Magnate, _) | (Kit::Undertaker, _)
+    )
+}
+
 /// Whether hero `kit`'s ability `slot` leaves a pulsing zone.
 fn zoned(kit: Kit, slot: u8) -> bool {
     matches!(
@@ -556,14 +566,16 @@ impl World {
         hero: RegimentHandle,
         slot: u8,
     ) -> Result<(), Refusal> {
-        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
-        let h = c.heroes.of_regiment(hero).ok_or(Refusal::Unknown)?;
+        let h = self.heroes.of_regiment(hero).ok_or(Refusal::Unknown)?;
         let i = self.regiments.resolve(hero).ok_or(Refusal::Unknown)?;
         if !self.stances.can_command(player, self.regiments.owner[i]) {
             return Err(Refusal::Unknown);
         }
         if h.ability(slot).is_none_or(|a| a.passive) {
             return Err(Refusal::Unknown);
+        }
+        if self.conquest.is_none() && h.kit.is_some_and(|k| needs_conquest(k.kit, slot)) {
+            return Err(Refusal::NoBuildings);
         }
         if rank(slot, h.level) == 0 {
             return Err(Refusal::Locked);
@@ -628,17 +640,18 @@ impl World {
         if self.cast_check(player, hero, slot, target).is_err() {
             return false;
         }
-        let Some(c) = &mut self.conquest else {
-            return false;
-        };
-        let Some(k) = c.heroes.index_of(hero) else {
+        let Some(k) = self.heroes.index_of(hero) else {
             return false;
         };
         // It goes off (or the hero sets out) when the heroes cast this
         // tick, after the tick's events are cleared, so it is told. A cast
         // it was walking to is replaced, and so is that walk.
-        let walking = c.heroes.get(k).pending.is_some_and(|p| p.toward.is_some());
-        c.heroes.get_mut(k).pending = Some(Pending {
+        let walking = self
+            .heroes
+            .get(k)
+            .pending
+            .is_some_and(|p| p.toward.is_some());
+        self.heroes.get_mut(k).pending = Some(Pending {
             slot,
             target,
             toward: None,
@@ -652,10 +665,7 @@ impl World {
     /// Heroes casting, once a tick, before the tick's dead are counted:
     /// the Magnate's interest, casts walking into reach, and the zones.
     pub(crate) fn abilities(&mut self) {
-        let Some(c) = &self.conquest else {
-            return;
-        };
-        if c.heroes.iter().all(Hero::dead) && c.heroes.zones().is_empty() {
+        if self.heroes.iter().all(Hero::dead) && self.heroes.zones().is_empty() {
             return;
         }
         if self.tick > 0 && self.tick.is_multiple_of(60 * TICKS_PER_SECOND) {
@@ -664,11 +674,7 @@ impl World {
         // The zones pulse before the casts, so a zone cast now waits its
         // full time for its second pulse.
         self.pulse(None);
-        let n = self
-            .conquest
-            .as_ref()
-            .map_or(0, |c| c.heroes.iter().count());
-        for k in 0..n {
+        for k in 0..self.heroes.iter().count() {
             self.go_cast(k, false);
         }
     }
@@ -679,13 +685,10 @@ impl World {
     /// tick's corpses), and Mass Grave's regiments growing by the tick's
     /// dead.
     pub(crate) fn abilities_late(&mut self) {
-        let Some(c) = &self.conquest else {
-            return;
-        };
-        if c.heroes.iter().all(|h| h.pending.is_none()) && c.heroes.zones.is_empty() {
+        if self.heroes.iter().all(|h| h.pending.is_none()) && self.heroes.zones.is_empty() {
             return;
         }
-        for k in 0..c.heroes.iter().count() {
+        for k in 0..self.heroes.iter().count() {
             self.go_cast(k, true);
         }
         self.grow_graves();
@@ -697,8 +700,8 @@ impl World {
         let Some(c) = &mut self.conquest else {
             return;
         };
-        for k in 0..c.heroes.iter().count() {
-            let h = *c.heroes.get(k);
+        for k in 0..self.heroes.iter().count() {
+            let h = *self.heroes.get(k);
             if h.dead() || h.kit.map(|k| k.kit) != Some(Kit::Magnate) {
                 continue;
             }
@@ -714,18 +717,11 @@ impl World {
     /// raises goes off only `late` (see [`World::abilities_late`]), the
     /// others only early; the hero walks early.
     fn go_cast(&mut self, k: usize, late: bool) {
-        let Some(c) = &self.conquest else {
-            return;
-        };
-        let h = *c.heroes.get(k);
+        let h = *self.heroes.get(k);
         let Some(p) = h.pending else {
             return;
         };
-        let call_off = |w: &mut World| {
-            if let Some(c) = &mut w.conquest {
-                c.heroes.get_mut(k).pending = None;
-            }
-        };
+        let call_off = |w: &mut World| w.heroes.get_mut(k).pending = None;
         let (Some(r), Some(a)) = (h.regiment, h.ability(p.slot)) else {
             return call_off(self);
         };
@@ -758,9 +754,7 @@ impl World {
             match self.cast_now(k, i, p.slot, p.target) {
                 Ok(()) => {
                     let ready = self.tick + u32::from(a.cooldown_secs) * TICKS_PER_SECOND;
-                    if let Some(c) = &mut self.conquest {
-                        c.heroes.get_mut(k).ready_at[usize::from(p.slot)] = ready;
-                    }
+                    self.heroes.get_mut(k).ready_at[usize::from(p.slot)] = ready;
                     // Walked there to cast: it stops where it cast from.
                     if p.toward.is_some() && self.regiments.resolve(r) == Some(i) {
                         self.regiments.target[i] = None;
@@ -797,21 +791,17 @@ impl World {
         if !self.march(r, step) {
             return call_off(self);
         }
-        if let Some(c) = &mut self.conquest {
-            c.heroes.get_mut(k).pending = Some(Pending {
-                toward: Some(to),
-                ..p
-            });
-        }
+        self.heroes.get_mut(k).pending = Some(Pending {
+            toward: Some(to),
+            ..p
+        });
     }
 
     /// A move, attack or work order for regiment `h` calls off its
     /// waiting cast.
     pub(crate) fn call_off_cast(&mut self, h: RegimentHandle) {
-        if let Some(c) = &mut self.conquest
-            && let Some(k) = c.heroes.index_of(h)
-        {
-            c.heroes.get_mut(k).pending = None;
+        if let Some(k) = self.heroes.index_of(h) {
+            self.heroes.get_mut(k).pending = None;
         }
     }
 
@@ -823,11 +813,10 @@ impl World {
         slot: u8,
         target: CastTarget,
     ) -> Result<(), Refusal> {
-        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
-        let h = *c.heroes.get(k);
+        let h = *self.heroes.get(k);
         let kit = h.kit.ok_or(Refusal::Unknown)?;
         // No room for its zone: refused before anything happens.
-        if zoned(kit.kit, slot) && c.heroes.zones.len() >= MAX_ZONES {
+        if zoned(kit.kit, slot) && self.heroes.zones.len() >= MAX_ZONES {
             return Err(Refusal::NoRoom);
         }
         let r = rank(slot, h.level);
@@ -1164,14 +1153,15 @@ impl World {
         lasts: u16,
         raise: Option<(u8, u16)>,
     ) -> Result<RegimentHandle, Refusal> {
-        let c = self.conquest.as_mut().ok_or(Refusal::NoBuildings)?;
-        let h = *c.heroes.get(k);
+        let h = *self.heroes.get(k);
         let unit = h.kit.and_then(|k| k.summons).ok_or(Refusal::Unknown)?;
         let (p, at) = (h.owner, self.regiments.position[i]);
         let mut first = None;
         for _ in 0..count {
-            let put = match raise {
-                Some((tiles, most)) => c.raise_up_to(
+            let put = match (raise, &mut self.conquest) {
+                // A Field Battle keeps no graves to raise from.
+                (Some(_), None) => Err(Refusal::NoCorpses),
+                (Some((tiles, most)), Some(c)) => c.raise_up_to(
                     &mut self.regiments,
                     &self.nav,
                     &self.units,
@@ -1180,7 +1170,7 @@ impl World {
                     (tiles, at, most),
                     lasts,
                 ),
-                None => summon_beside(
+                (None, _) => summon_beside(
                     &mut self.regiments,
                     &self.nav,
                     &self.units,
@@ -1209,18 +1199,16 @@ impl World {
 
     /// Start zone `z`; refused with the field's zones all taken.
     fn add_zone(&mut self, z: Zone) -> Result<(), Refusal> {
-        let c = self.conquest.as_mut().ok_or(Refusal::NoBuildings)?;
-        c.heroes.add_zone(z).then_some(()).ok_or(Refusal::NoRoom)
+        (self.heroes.add_zone(z))
+            .then_some(())
+            .ok_or(Refusal::NoRoom)
     }
 
     /// Every zone pulses when its time comes, and ends when its pulses
     /// (or what it follows) are gone; with `first`, only the zones hero
     /// `first` cast this tick pulse, at once (a cast's first pulse).
     fn pulse(&mut self, first: Option<RegimentHandle>) {
-        let Some(c) = &mut self.conquest else {
-            return;
-        };
-        let mut zones = core::mem::take(&mut c.heroes.zones);
+        let mut zones = core::mem::take(&mut self.heroes.zones);
         for z in &mut zones {
             if first.is_some_and(|h| z.hero != h || z.next != 0) {
                 continue;
@@ -1245,11 +1233,9 @@ impl World {
             self.pulse_once(z);
         }
         zones.retain(|z| z.left > 0);
-        if let Some(c) = &mut self.conquest {
-            // Zones cast while these pulsed (none can be) would be lost.
-            debug_assert!(c.heroes.zones.is_empty());
-            c.heroes.zones = zones;
-        }
+        // Zones cast while these pulsed (none can be) would be lost.
+        debug_assert!(self.heroes.zones.is_empty());
+        self.heroes.zones = zones;
     }
 
     /// One pulse of zone `z`.
@@ -1299,10 +1285,7 @@ impl World {
     /// Each Mass Grave's regiment grows by a soldier for each soldier who
     /// died this tick within its reach, up to full strength.
     fn grow_graves(&mut self) {
-        let Some(c) = &self.conquest else {
-            return;
-        };
-        let graves: Vec<(RegimentHandle, FxVec2, u8)> = (c.heroes.zones.iter())
+        let graves: Vec<(RegimentHandle, FxVec2, u8)> = (self.heroes.zones.iter())
             .filter(|z| z.left > 0)
             .filter_map(|z| match z.pulse {
                 Pulse::Grave { raised } => Some((raised, z.at, z.tiles)),

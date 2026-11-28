@@ -121,6 +121,9 @@ impl World {
             flood_fords: None,
             brigades: crate::brigades::Brigades::new(n as usize),
             prisoners: crate::prisoners::Prisoners::with_capacity(n as usize),
+            // Rehearsals have no heroes: one fights as a regiment of one.
+            roster: Vec::new(),
+            heroes: crate::heroes::Heroes::new(),
             regiments: Regiments::with_capacity(n),
         }
         .with_air()

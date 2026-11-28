@@ -4588,6 +4588,7 @@ mod tests {
             picked: 0,
             spoke: None,
             fell: None,
+            hero: false,
         };
         let tick = TICKS_PER_SECOND as f32 * FRAME;
         let frame = |p: &mut Puppets, a: &Block, g: &General, now: f32| {

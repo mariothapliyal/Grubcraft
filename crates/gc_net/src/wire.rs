@@ -395,6 +395,18 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(56);
             w.structure(stockade);
         }
+        Command::SpawnHero {
+            unit,
+            position,
+            facing,
+            level,
+        } => {
+            w.u8(57);
+            w.var(u64::from(unit));
+            w.vec(position);
+            w.var(u64::from(facing.0));
+            w.u8(level);
+        }
         Command::SpawnStructure {
             building,
             tile,
@@ -775,6 +787,12 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         56 => Command::Execute {
             stockade: r.structure()?,
         },
+        57 => Command::SpawnHero {
+            unit: r.var_as()?,
+            position: r.vec()?,
+            facing: Angle(r.var_as()?),
+            level: r.u8()?,
+        },
         8 => Command::SpawnStructure {
             building: r.var_as()?,
             tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
@@ -1097,6 +1115,12 @@ mod tests {
             },
             Command::Ransom { from: 3, unit: 7 },
             Command::Recruit { from: 2, unit: 4 },
+            Command::SpawnHero {
+                unit: 11,
+                position: FxVec2::from_ints(-8, 30),
+                facing: Angle(512),
+                level: 4,
+            },
             Command::Execute {
                 stockade: StructureHandle {
                     index: 5,

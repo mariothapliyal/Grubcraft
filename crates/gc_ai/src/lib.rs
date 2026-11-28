@@ -26,6 +26,7 @@
 
 pub mod army;
 pub mod captain;
+pub mod casting;
 pub mod conquest;
 pub mod deployment;
 pub mod difficulty;
@@ -176,6 +177,8 @@ pub struct Mind {
     live: bool,
     /// When it next looks for woods to burn on an enemy (see [`firing`]).
     next_burn: u32,
+    /// Its heroes that cast lately, and when (see [`casting`]).
+    casts: Vec<(gc_sim::RegimentHandle, u32)>,
     /// Where it stands with smoking out an enemy hidden in woods.
     smoke: Smoke,
     /// Its economy and army, in Conquest.
@@ -241,6 +244,7 @@ impl Mind {
             readings: Vec::new(),
             live: false,
             next_burn: 0,
+            casts: Vec::new(),
             smoke: Smoke::Ready,
             realm: None,
         }
@@ -388,7 +392,37 @@ impl Mind {
         self.torches(view);
         self.stances(view);
         self.fire_woods(view, world);
+        self.cast_heroes(view, world);
         self.orders.release(view.tick, out);
+    }
+
+    /// Twice a second, its Field Battle heroes cast by the simple rules of
+    /// [`casting`].
+    fn cast_heroes(&mut self, view: &Perception, world: &World) {
+        let tick = view.tick;
+        if !tick.is_multiple_of(gc_sim::TICKS_PER_SECOND / 2)
+            || !world.heroes().any(|h| h.owner == self.party && !h.dead())
+        {
+            return;
+        }
+        let again = self.knobs.think_ticks + casting::CAST_AGAIN_TICKS;
+        self.casts.retain(|&(_, t)| tick < t + again);
+        let foes: Vec<&perception::Seen> = (view.regiments.iter())
+            .filter(|r| view.hostile(self.party, r.owner) && !r.broken())
+            .collect();
+        let mine = (view.regiments.iter())
+            .filter(|r| r.owner == self.party && !r.broken() && world.hero_of(r.handle).is_some());
+        for me in mine {
+            if self.casts.iter().any(|&(h, _)| h == me.handle) {
+                continue;
+            }
+            let Some(cast) = casting::cast_for(world, self.party, me, &foes) else {
+                continue;
+            };
+            if self.orders.give(tick, cast) {
+                self.casts.push((me.handle, tick));
+            }
+        }
     }
 
     /// Smoke out an enemy hidden in woods rather than go in after it (see

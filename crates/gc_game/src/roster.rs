@@ -10,7 +10,8 @@
 //! Carrion Concord's Caravan, which hauls Grub.
 //!
 //! The table holds no buildings (they have their own, and the sandbox's
-//! building tool places those) and no heroes yet.
+//! building tool places those). Its heroes take the field at a level in a
+//! Field Battle (docs/43-heroes.md, H3), priced by it.
 
 use gc_data::conquest::UNIT_BUILDS_ONLY;
 use gc_data::{ConquestUnitRecord, Faction};
@@ -67,6 +68,26 @@ fn field_price_percent(faction: Faction) -> u32 {
     }
 }
 
+/// What a hero costs in a Field Battle army at level 1, whatever its
+/// faction (every hero is hired for the same in Conquest); each level past
+/// the first adds [`gc_data::army::LEVEL_PERCENT`] of it.
+pub const FIELD_HERO_POINTS: u32 = 600;
+
+/// Whether `unit` is a hero in a Field Battle army, and whether the
+/// computer players take it: every ability it has works there (none moves
+/// Grub or raises the Tithe's dead).
+pub fn hero_type(unit: &ConquestUnitRecord) -> gc_ai::army::HeroType {
+    use gc_ai::army::HeroType;
+    if !unit.hero() {
+        return HeroType::No;
+    }
+    let kit = crate::conquest::unit_of(unit).kit.map(|k| k.kit);
+    match kit {
+        Some(k) if (0..2).any(|slot| gc_sim::abilities::needs_conquest(k, slot)) => HeroType::Hero,
+        _ => HeroType::Whole,
+    }
+}
+
 /// What `unit` costs in a Field Battle army, from its roster cost: three
 /// points a Grub and six a Marrow, times its faction's
 /// [`field_price_percent`], to the nearest 10 (a Yari Ashigaru regiment is
@@ -76,9 +97,29 @@ pub fn field_points(unit: &ConquestUnitRecord) -> u32 {
     if left_out(unit) || unit.tier == 0 {
         return 0;
     }
+    if unit.hero() {
+        return FIELD_HERO_POINTS;
+    }
     let raw = 3 * (u32::from(unit.cost_grub) + 2 * u32::from(unit.cost_marrow));
     let raw = raw * field_price_percent(unit.faction()) / 100;
     (raw + 5) / 10 * 10
+}
+
+/// The tables a Field Battle plays with on the roster table, as the lobby
+/// sets one up: its stats, factions and points, which types are heroes,
+/// and the Conquest unit table they take the field with.
+pub fn field_tables(data: &gc_data::GameData) -> gc_match::Tables {
+    gc_match::Tables {
+        units: (data.conquest_units.iter())
+            .map(|u| gc_match::stats_of(&u.stats))
+            .collect(),
+        factions: (data.conquest_units.iter())
+            .map(|u| u.stats.faction())
+            .collect(),
+        points: data.conquest_units.iter().map(field_points).collect(),
+        heroes: data.conquest_units.iter().map(hero_type).collect(),
+        roster: crate::conquest::units_of(data),
+    }
 }
 
 /// What a troop costs, in a few words: its Grub and Marrow, or that it is
@@ -153,6 +194,42 @@ mod tests {
                 .count();
             assert!(n >= 6, "{f:?} fields {n} types");
         }
+    }
+
+    /// Every faction fields its three heroes in a Field Battle, at the same
+    /// price; the computer players take the first whose abilities all work
+    /// there, at a quarter of their budget.
+    #[test]
+    fn heroes_are_bought_by_level_and_the_computer_takes_a_whole_one() {
+        use gc_ai::army::{HeroType, pick_hero};
+        let data = crate::data::load();
+        let t = field_tables(&data);
+        for f in Faction::ALL {
+            let heroes: Vec<usize> = (0..t.heroes.len())
+                .filter(|&u| t.factions[u] == f && t.heroes[u] != HeroType::No)
+                .collect();
+            assert_eq!(heroes.len(), 3, "{f:?}");
+            assert!(heroes.iter().all(|&u| t.points[u] == FIELD_HERO_POINTS));
+        }
+        let name = |e: u16| data.conquest_units[usize::from(gc_data::army::unit(e))].name();
+        let pick = |f, budget| pick_hero(&t.points, &t.factions, &t.heroes, f, budget);
+        assert_eq!(pick(Faction::EmberClans, 2_000), None);
+        let picked: Vec<(&str, u8)> = Faction::ALL
+            .iter()
+            .map(|&f| {
+                let e = pick(f, 4_000).unwrap();
+                (name(e), gc_data::army::level(e))
+            })
+            .collect();
+        assert_eq!(
+            picked,
+            [
+                ("The Daimyo", 5),
+                ("The Queen-in-Waiting", 5),
+                ("The Refractor", 5),
+                ("The Usurer", 5)
+            ]
+        );
     }
 
     /// A flat 128-tile world on the roster table, set up as the sandbox on

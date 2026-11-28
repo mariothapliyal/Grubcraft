@@ -186,8 +186,7 @@ fn hero(kit: Kit, level: u8) -> (World, RegimentHandle) {
     assert!(order(&mut w, 0, hire));
     seconds(&mut w, 2);
     let r = w.heroes().next().and_then(|h| h.regiment).expect("hired");
-    let c = w.conquest.as_mut().unwrap();
-    let h = c.heroes.get_mut(0);
+    let h = w.heroes.get_mut(0);
     h.kit = Some(HeroKit {
         kit,
         summons: Some(SPAWN),

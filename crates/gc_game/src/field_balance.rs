@@ -79,17 +79,19 @@ pub(crate) fn pairs() -> Vec<(F, F)> {
 /// `army` it prints the armies of each pair's first battle.
 pub(crate) fn play_pairs(pairs: &[(F, F)], from: u64, n: u64, army: bool) -> Vec<(u64, u64)> {
     let data = crate::data::load();
-    let tables = gc_match::Tables {
-        units: (data.conquest_units.iter())
-            .map(|u| gc_match::stats_of(&u.stats))
-            .collect(),
-        factions: (data.conquest_units.iter())
-            .map(|u| u.stats.faction())
-            .collect(),
-        points: (data.conquest_units.iter())
-            .map(roster::field_points)
-            .collect(),
-    };
+    let mut tables = roster::field_tables(&data);
+    // `AI_HEROES=0` plays the table without heroes, to weigh them.
+    if std::env::var("AI_HEROES").is_ok_and(|v| v == "0") {
+        tables.heroes.clear();
+    }
+    // `AI_NOHERO=<faction>` takes that faction's heroes away, to weigh them.
+    if let Ok(f) = std::env::var("AI_NOHERO") {
+        for u in 0..tables.heroes.len() {
+            if data.conquest_units[u].faction().name() == f {
+                tables.heroes[u] = gc_ai::army::HeroType::No;
+            }
+        }
+    }
     let limit = 10 * 60 * gc_sim::TICKS_PER_SECOND;
     let (tables, data) = (&tables, &data);
     std::thread::scope(|s| {

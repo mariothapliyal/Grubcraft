@@ -423,6 +423,19 @@ impl Writer {
                 self.u8(58);
                 self.structure(stockade);
             }
+            // Format 62.
+            Command::SpawnHero {
+                unit,
+                position,
+                facing,
+                level,
+            } => {
+                self.u8(59);
+                self.var(u64::from(unit));
+                self.vec(position);
+                self.var(u64::from(facing.0));
+                self.u8(level);
+            }
             Command::SpawnStructure {
                 building,
                 tile,
@@ -1164,6 +1177,12 @@ impl<'a> Reader<'a> {
             58 => Command::Execute {
                 stockade: self.structure()?,
             },
+            59 => Command::SpawnHero {
+                unit: self.var_as()?,
+                position: self.vec()?,
+                facing: Angle(self.var_as()?),
+                level: self.u8()?,
+            },
             tag @ (8 | 25) => Command::SpawnStructure {
                 building: self.var_as()?,
                 tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
@@ -1441,6 +1460,12 @@ mod tests {
             },
             Command::Ransom { from: 2, unit: 5 },
             Command::Recruit { from: 1, unit: 6 },
+            Command::SpawnHero {
+                unit: 9,
+                position: FxVec2::from_ints(12, -3),
+                facing: Angle(4096),
+                level: 7,
+            },
             Command::Execute {
                 stockade: StructureHandle {
                     index: 3,

@@ -22,11 +22,16 @@
 //! the `led` flags of the tick before), and when he falls those within
 //! [`PANIC_TILES`] fall into full disorder. The side's pick is looked at
 //! once a second.
-//! Conquest has no generals: heroes come there later.
+//! Conquest has no generals: its heroes lead instead. In a Field Battle
+//! a side that brought heroes (see [`crate::Command::SpawnHero`]) has its
+//! first one as its general instead of a soldier of its best regiment
+//! (docs/43-heroes.md, H3): he leads, speaks and falls as a general, at
+//! his own hit points, and his own fall as a hero isn't counted twice.
 
 use gc_fixed::{Fx, FxVec2};
 
 use crate::combat::{Combat, Whose, placement};
+use crate::heroes::Heroes;
 use crate::morale;
 use crate::regiments::{Regiments, hash_handle};
 use crate::vision::Vision;
@@ -80,6 +85,9 @@ pub struct General {
     pub spoke: Option<u32>,
     /// Tick he fell, if he has.
     pub fell: Option<u32>,
+    /// He is one of his side's heroes (the first it brought), his
+    /// regiment of one his own.
+    pub hero: bool,
 }
 
 /// The slot a general keeps in a regiment of `models` soldiers in ranks of
@@ -146,10 +154,11 @@ impl Generals {
         units: &[UnitStats],
         stances: &Stances,
         vision: &Vision,
+        heroes: &Heroes,
         tick: u32,
     ) {
         if tick.is_multiple_of(TICKS_PER_SECOND) {
-            self.pick_due(regs, units, tick);
+            self.pick_due(regs, units, heroes, tick);
         }
         for p in 0..MAX_PARTIES {
             let Some(mut g) = self.list[p] else {
@@ -190,8 +199,9 @@ impl Generals {
     }
 
     /// Give each party that has had a regiment on the field for
-    /// [`PICK_DELAY`] and no general yet its general. Once a second.
-    fn pick_due(&mut self, regs: &mut Regiments, units: &[UnitStats], tick: u32) {
+    /// [`PICK_DELAY`] and no general yet its general: its first standing
+    /// hero, or else a soldier of its best regiment. Once a second.
+    fn pick_due(&mut self, regs: &mut Regiments, units: &[UnitStats], heroes: &Heroes, tick: u32) {
         let due = |g: &Generals, p: usize| g.list[p].is_none() && !g.skip[p];
         if !(0..MAX_PARTIES).any(|p| due(self, p)) {
             return;
@@ -205,11 +215,16 @@ impl Generals {
             if !due(self, p) || self.seen[p].is_none_or(|t| tick < t + PICK_DELAY) {
                 continue;
             }
-            if let Some(i) = best(regs, units, p as PlayerId) {
+            let hero = first_hero(regs, heroes, p as PlayerId);
+            if let Some(i) = hero.or_else(|| best(regs, units, p as PlayerId)) {
                 let slot = place(regs.files[i], regs.models[i]);
                 regs.general[i] = Some(slot);
-                let hp = regs.hp_mut(i, slot);
-                *hp = (u32::from(*hp) * GENERAL_HP_PERCENT / 100).min(u32::from(u16::MAX)) as u16;
+                // A hero has his own hit points, and his level's.
+                if hero.is_none() {
+                    let hp = regs.hp_mut(i, slot);
+                    *hp =
+                        (u32::from(*hp) * GENERAL_HP_PERCENT / 100).min(u32::from(u16::MAX)) as u16;
+                }
                 self.list[p] = Some(General {
                     party: p as PlayerId,
                     regiment: regs.handle(i),
@@ -217,9 +232,15 @@ impl Generals {
                     picked: tick,
                     spoke: None,
                     fell: None,
+                    hero: hero.is_some(),
                 });
             }
         }
+    }
+
+    /// Whether `r` is the regiment of a side's general who is a hero.
+    pub(crate) fn hero_general(&self, r: RegimentHandle) -> bool {
+        self.iter().any(|g| g.hero && g.regiment == r)
     }
 
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
@@ -242,8 +263,19 @@ impl Generals {
             h.u32(g.picked);
             h.u32(g.spoke.unwrap_or(u32::MAX));
             h.u32(g.fell.unwrap_or(u32::MAX));
+            h.u8(u8::from(g.hero));
         }
     }
+}
+
+/// Party `p`'s first hero (in the order they took the field) that stands
+/// and isn't running: its general, if it has one.
+fn first_hero(regs: &Regiments, heroes: &Heroes, p: PlayerId) -> Option<usize> {
+    heroes
+        .iter()
+        .filter(|h| h.owner == p)
+        .filter_map(|h| regs.resolve(h.regiment?))
+        .find(|&i| regs.models[i] > 0 && !regs.morale_state[i].broken())
 }
 
 /// Party `p`'s best fighting regiment, the one its general rides with: one

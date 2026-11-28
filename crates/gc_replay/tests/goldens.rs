@@ -86,6 +86,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Evolve { .. } => "Evolve",
         Command::Ransom { .. } => "Ransom",
         Command::Recruit { .. } => "Recruit",
+        Command::SpawnHero { .. } => "SpawnHero",
         Command::Execute { .. } => "Execute",
         Command::FocusTower { .. } => "FocusTower",
         Command::SetGate { .. } => "SetGate",
@@ -103,7 +104,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Burn { .. } => "Burn",
         Command::Concede => "Concede",
     };
-    const KINDS: [&str; 49] = [
+    const KINDS: [&str; 50] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -152,6 +153,7 @@ fn the_goldens_cover_every_kind_of_command() {
         "Concede",
         "Ransom",
         "Recruit",
+        "SpawnHero",
         "Execute",
     ];
     let seen: BTreeSet<&str> = goldens()
@@ -169,29 +171,30 @@ fn the_goldens_cover_every_kind_of_command() {
 /// rewritten by `cargo run --release -p gc_replay -- pin` (or by
 /// `scripts/rules-bump.py`, which also takes the next free version).
 const PINNED: (u32, &[(&str, u64)]) = (
-    104,
+    105,
     &[
-        ("conquest-evolve-tithe-1v1", 0x7989c2d9e1887899),
-        ("conquest-heroes-1v1", 0x960f882db333c709),
-        ("conquest-prisoners-1v1", 0x4b698b6fd8ce67aa),
-        ("conquest-ribcage-1v1", 0xc5b513af27f0df39),
-        ("conquest-river-1v1", 0x8121c343558b265b),
-        ("field-1v1", 0x3c62fe116286207a),
-        ("field-2v2", 0x4d884467b85b5dd8),
-        ("field-8000pt-2v2", 0xf5a34ba24e13c47c),
-        ("field-brace-1v1", 0xe6a49bb5e6c052f5),
-        ("field-brigade-1v1", 0x654cb3bf85a1798e),
-        ("field-champions-1v1", 0x471fcb52ea14129d),
-        ("field-deploy-1v1", 0x44890c53f0248b8f),
-        ("field-fire-1v1", 0x7b141bf551850358),
-        ("field-flood-1v1", 0xe323068ec582bcb8),
-        ("field-handover-2v2", 0x6c8521c9c7da4a10),
-        ("field-new-orders-1v1", 0xa9708833061b54cb),
-        ("field-night-rain-1v1", 0xa54f5cb5cd362251),
-        ("field-orders-1v1", 0xbbacbaffc7863e78),
-        ("field-river-storm-1v1", 0xc99650635fd4cbfb),
-        ("field-woods-1v1", 0x971489562b3534d3),
-        ("sandbox-tuning", 0xa0504c734c60706b),
+        ("conquest-evolve-tithe-1v1", 0x391afa4d63f052cf),
+        ("conquest-heroes-1v1", 0x4fd4c977ffc07bef),
+        ("conquest-prisoners-1v1", 0xae85619c477ca20d),
+        ("conquest-ribcage-1v1", 0xd4e3dd5526242809),
+        ("conquest-river-1v1", 0x135c703e98b14ff4),
+        ("field-1v1", 0x0bf905a041e4eb3a),
+        ("field-2v2", 0xfefdf5b7ad3b514c),
+        ("field-8000pt-2v2", 0x4702521a144b6b93),
+        ("field-brace-1v1", 0x6b5c9711e7f217cd),
+        ("field-brigade-1v1", 0xec3fb5f9242f4f23),
+        ("field-champions-1v1", 0x3be9aebd745e8f43),
+        ("field-deploy-1v1", 0x934d9c9a1d7ee275),
+        ("field-fire-1v1", 0x2a2e90d7f509f5c8),
+        ("field-flood-1v1", 0x54a8de838f65cdcc),
+        ("field-handover-2v2", 0xa293693559876df2),
+        ("field-heroes-1v1", 0xa98425a34f0b12d8),
+        ("field-new-orders-1v1", 0xa2a945871b6b1ea9),
+        ("field-night-rain-1v1", 0x0f070f3bdd56d269),
+        ("field-orders-1v1", 0x29be71667e69e9c0),
+        ("field-river-storm-1v1", 0x977f029535678570),
+        ("field-woods-1v1", 0xe5755a9e6d47f965),
+        ("sandbox-tuning", 0xcce20faa47ead1ba),
     ],
 );
 

@@ -481,15 +481,20 @@ pub const MAX_ARMY: usize = 40;
 pub struct RosterUnit {
     pub name: String,
     pub faction: Faction,
+    /// A hero's at its first level.
     pub points: u32,
+    /// A hero, bought once, at a level (docs/43-heroes.md, H3).
+    pub hero: bool,
 }
 
-/// What `army` (unit types, indexes into `roster`) costs. Unknown types
-/// count nothing.
+/// What `army` (entries as [`gc_data::army`] has them: unit types, indexes
+/// into `roster`, and a hero's level) costs. Unknown types count nothing.
 pub fn army_points(roster: &[RosterUnit], army: &[u16]) -> u32 {
     army.iter()
-        .filter_map(|&u| roster.get(u as usize))
-        .map(|r| r.points)
+        .filter_map(|&e| {
+            let r = roster.get(usize::from(gc_data::army::unit(e)))?;
+            Some(gc_data::army::points(e, r.points))
+        })
         .sum()
 }
 

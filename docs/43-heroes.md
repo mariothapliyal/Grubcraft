@@ -12,13 +12,13 @@ Faction depth stage 9 ([03](03-factions.md), [17](17-unit-rosters.md#heroes), [0
 - **Leadership.** The Field Battle general's rules, shared code: every regiment of the hero's player within 16 tiles is led, as the general leads: it gains 1 morale point a second (scaled by the battle's pace) and its breaking point is 5 points lower; the Concord's undead (by the units' undead flag, not by having no morale, so workers and heroes are not counted) strike 10% harder instead. Being led is one flag, so two heroes near a regiment lead it no more than one. Not while the hero is routing (it never routs) or in a cocoon. The rosters' "25% less from casualties" is dropped: the breaking point is what decides a rout.
 - **When a hero falls,** every regiment of its player within 16 tiles loses 10 morale, as at a general's fall (a hero falls more often than a general, so its player's whole army doesn't panic as well), and undead within 16 tiles fall into disorder. Swarm Instinct's "50% more when a nearby hero dies" is not built yet (it is a follow-up).
 - **Revive:** a dead hero is revived at any finished hero building of its owner, keeping its level, experience and ranks, for its hire price and time times 50% + 15% a level (level 1: 130 Grub, 32 Marrow, 26 s; level 10: 400 Grub, 100 Marrow, 80 s), the time scaled by the match's tempo like training. It uses no supply while dead. It comes out at the building like a trained regiment, at full hit points.
-- **Champions:** a champion is a soldier of a regiment of two or more, so heroes are never picked in H1. In H3 a hero becomes its side's champion, and a hero who loses the duel is wounded rather than killed.
+- **Champions:** in Conquest a champion is a soldier of a regiment of two or more, so heroes are never picked there. In a Field Battle (H3) a side's general who is a hero is its champion, and a hero who loses the duel is wounded rather than killed.
 
 ## Stages
 
 - **H1, heroes in Conquest:** the hero table (baked from the rosters' `heroes`), hiring with the tier limit, levels and experience, per-level growth, leadership and the fall, revive; the hero panel fed with real data; computer players put up their hero building at tier 2 once they have an army, hire one hero as soon as they have it, the next at each tier, revive a fallen one when they can pay, and march it with the army; stress scenario `heroes`; Guide, Quick Start and building tips.
 - **H2, abilities (built 2026-11-22):** cut down by Mario to two abilities a hero, 24 in all, with no skill points; the engine, `Command::Cast`, the command grid's `A` and `S`, computer players casting by simple rules, the `abilities` stress scenario and the `conquest-heroes-1v1` golden. The details are in [44 · Hero abilities](44-hero-abilities.md).
-- **H3, heroes in Field Battles:** the army builder buys up to three heroes, with levels for points; a side's first hero takes the general's place (leadership, speech, the fall) instead of a soldier of the best regiment, and is its side's champion.
+- **H3, heroes in Field Battles (built 2026-11-29):** the army builder buys up to three heroes, with levels for points; a side's first hero takes the general's place (leadership, speech, the fall) instead of a soldier of the best regiment, and is its side's champion. The details are in [Heroes in Field Battles](#heroes-in-field-battles) below.
 
 Since H2, the heroes whose strength is in their abilities (the Maestro, the Magnate) earn their place through them: the Maestro's Crescendo and Symphony, the Magnate's Compound Interest and Market Crash.
 
@@ -37,3 +37,32 @@ Heroes are the smallest bodies on the field, so passages are never the problem; 
 - **Leadership and generals:** in Conquest there are no generals, so heroes are the only leaders. In Field Battles (H3) a side's first hero replaces the general, so the two never stack.
 - **Traffic at its building:** a revived or hired hero comes out at the building's front like a trained regiment and joins the rally point, so it queues with the rest.
 - **Computer players** count a hero as a fighting regiment and march it with the army. Keeping it a row behind the front and pulling it back when badly hurt is a follow-up, as is counting its levels in the AI's fight estimates.
+
+## Heroes in Field Battles
+
+Stage H3, built 2026-11-29 for the heroes thread's plan ("Do number 2").
+
+- **Buying them.** The Army screen lists the faction's three heroes with its regiments. A hero is bought once: `+` adds him at level 1 and then raises his level, up to 10; `-` lowers it, and at level 1 sends him home. An army takes up to three heroes, at the head of its list. A hero costs 600 points at level 1, whatever his faction (every hero is hired for the same in Conquest), and each level past the first adds 15% of that, to the nearest 10: level 5 is 960, level 10 is 1,410 (`FIELD_HERO_POINTS`, `gc_data::army::LEVEL_PERCENT`). The host holds every army to its budget as before: a hero's points are his level's, each hero once, three at most. The lobby keeps an army entry's level in its top four bits (`gc_data::army`), so the lobby protocol carries it unchanged in form (protocol 53).
+- **On the field.** A hero takes the field as `Command::SpawnHero` at his level, with the experience that level took (`LEVELS`) and its hit points and damage: no level 1 hero who levels up during deployment. He levels on as the battle is fought, from the dead within 24 tiles of him, as in Conquest. Field Battles have no hero buildings, so a fallen hero stays dead.
+- **The general.** A side's first hero (the first in its list) is its general instead of a soldier of its best regiment: he leads within 20 tiles, gives the speech and his fall panics his side as a general's does ([37 · Commander](37-commander.md)), at his own hit points (a general's tripled hit points are a soldier's armour, not a hero's). His own fall as a hero (10 morale within 16 tiles) isn't counted on top. Other heroes lead within 16 tiles as in Conquest. A side without heroes has a soldier general as before.
+- **The champion.** When champions come out ([05 · Combat](05-combat.md#champions-before-battle)), a side's hero general within 25 tiles of its regiment nearest the enemy, not fighting, running or hiding, is its champion. A hero who loses the duel isn't killed: he loses half the hit points he has left (`HERO_WOUND_PERCENT`), and his side loses heart as usual.
+- **Abilities.** They work as in Conquest, except those that move Grub or raise the dead from the Tithe's graves, which a Field Battle has none of: the Maestro's Symphony, both of the Magnate's and both of the Undertaker's. Pressing one says "works only in Conquest". The Magnate and the Undertaker can still be bought, as fighters and leaders.
+- **Computer players** take the first of their faction's heroes whose abilities all work in a Field Battle (the Daimyo, the Queen-in-Waiting, the Refractor, the Usurer), at the highest level that costs at most a quarter of their budget (none at Skirmish's 2,000: a quarter buys no level-1 hero; level 5 at Battle, level 10 at Grand Battle), and spend the rest on regiments as before. Their heroes cast by the same simple rules as in Conquest (`gc_ai::casting`).
+- **Replays** of a Field Battle keep the hero table it was played with (replay format 62); `replays/field-heroes-1v1.gcr` is the golden.
+- **Measured** (with and without heroes, same seeds): see [the balance note](#field-battle-balance-with-heroes).
+
+### Field Battle balance with heroes
+
+Measured 2026-11-29 with the sandbox's roster table (`AI_BATTLES=24 cargo test -p gc_game --release roster_field_table -- --ignored --nocapture`; `AI_HEROES=0` plays it without heroes, `AI_NOHERO=<faction>` takes one faction's away), Veteran against Veteran at the Battle budget, 24 battles a pair, the first side's wins:
+
+| Pair | No heroes | Heroes | Concord without its hero | Clans without theirs |
+|---|---|---|---|---|
+| Clans v Brood | 62% | 71% | 71% | |
+| Clans v Choir | 62% | 67 to 79% | 67% | |
+| Clans v Concord | 67% | 8 to 21% | 71% | 29% |
+| Brood v Choir | 83% | 62 to 75% | 75% | |
+| Brood v Concord | 58% | 12% | 54% | |
+| Choir v Concord | 25% | 4 to 8% | 54% | |
+
+The Usurer swings the Concord's battles by about 40 points; the Daimyo moves the Clans' by about 4. It isn't his abilities (with the computer players' casting off the Clans still win 25% against him), nor the general's fall (without its panic the same 12 battles end the same way), nor the computer player sending its hero general into the front (holding him behind the line as a reserve made no difference, so it was not kept). Open: why his plain fighting outweighs the Daimyo's, with stats close to his; nothing is retuned without Mario's word.
+
