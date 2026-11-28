@@ -1194,12 +1194,11 @@ mod tests {
         let clips = Clips::new(&models);
         let by = |name| models.by_name(name).unwrap();
         // The Gravewardens keep their own mace kill beside the shield set's
-        // two, the Usurer plays the shield set's, the Bone Pikes have their
-        // thrust and the lift; on a man of any faction, made for what they
-        // hold, and a blow lands well before the man is down.
+        // two and the Bone Pikes their thrust beside the lift, on a man of
+        // any faction, made for what they hold; a blow lands well before the
+        // man is down.
         for (killer, weapon, n) in [
             ("Gravewardens", Weapon::SwordShield, 3),
-            ("The Usurer", Weapon::SwordShield, 2),
             ("Bone Pikes", Weapon::Polearm, 2),
         ] {
             for victim in ["Katana Samurai", "Tuner", "Grubfolk Militia", "Bone Pikes"] {
@@ -1262,11 +1261,10 @@ mod tests {
         let spear = &clips.by_model[by("Yari Ashigaru")].staggers;
         assert_eq!(spear.len(), 2);
         assert!(spear.iter().all(|c| c.weapon == Weapon::Spear));
-        // So do the sword-and-shield men and the Bone Pikes, with six
-        // blows and five, made for what they hold.
+        // So do the Gravewardens and the Bone Pikes, with six blows and
+        // five, made for what they hold.
         for (name, weapon, blows) in [
             ("Gravewardens", Weapon::SwordShield, 6),
-            ("The Usurer", Weapon::SwordShield, 6),
             ("Bone Pikes", Weapon::Polearm, 5),
         ] {
             let own = &clips.by_model[by(name)];

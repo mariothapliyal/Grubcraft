@@ -5,9 +5,9 @@
 manifest = 1
 baker = gc_artbake 2
 schema = 4
-config = 89d479900460cd4726a0db5cc8a797ac
-pack = 6f381b80133192065cd97ba1a173dfae
-pack_bytes = 87935248
+config = a9076e633714144965315dd1b6cde1eb
+pack = cbfe2f6856161cf0e318e61240ae649e
+pack_bytes = 87790848
 source shared:grubcraft/yari-ashigaru/yari-ashigaru.glb = d8befd1b9beb333573f281c475354bb0 not in the repo
 source shared:grubcraft/yari-ashigaru/albedo.png = 60d242c6e7215dde4b6a7cd7e83e74cf not in the repo
 source shared:grubcraft/yari-ashigaru/team.png = 444ffd60fc0d1f4f4bc6eac2d3b51011 not in the repo

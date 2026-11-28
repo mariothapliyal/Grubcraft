@@ -644,7 +644,7 @@
         (
             name: "Bone Pikes",
             source: "shared:grubcraft/concord/bone-pikes/bone-pikes.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Shield victims 1", "Pike victims 1", "Library hits", "Library deaths", "Bone Pikes pike 1"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Shield victims 1", "Pike victims 1", "Library deaths", "Bone Pikes pike 1"],
             // Its own kill of an Ember man (docs/33, stage 5), made in Blender on this rig.
             moves_from: Some("shared:grubcraft/fight-library/foes/bone-pikes-kills.glb"),
             moves: [
@@ -686,7 +686,7 @@
         (
             name: "Gravewardens",
             source: "shared:grubcraft/concord/gravewardens/gravewardens.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Shield victims 1", "Pike victims 1", "Library hits", "Library deaths", "Concord shield 1"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Shield victims 1", "Pike victims 1", "Library deaths", "Concord shield 1"],
             // Its own kill of an Ember man (docs/33, stage 5), made in Blender on this rig.
             moves_from: Some("shared:grubcraft/fight-library/foes/gravewardens-kills.glb"),
             moves: [
@@ -857,7 +857,7 @@
         (
             name: "The Usurer",
             source: "shared:grubcraft/concord/the-usurer/the-usurer.glb",
-            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Shield victims 1", "Pike victims 1", "Library hits", "Library deaths", "Concord shield 1"],
+            move_sets: ["Kill victims", "Kill victims 2", "Kill victims 3", "Kanabo victims", "Katana victims 3", "Spear victims 3", "Shield victims 1", "Pike victims 1", "Library hits", "Library deaths"],
             held_by: {"Weapon": "Wrist.R", "Shield": "Wrist.L"},
             height: 1.275,
             clips: {
@@ -871,7 +871,6 @@
                 orm: Some("shared:grubcraft/concord/the-usurer/orm.png"),
                 emissive: Some("shared:grubcraft/concord/the-usurer/emissive.png"),
             )),
-            weapon: Some("SwordShield"),
         ),
         // Brood roster (docs/24-brood-models.md): made for Grubcraft in Blender, real-insect creatures
         // on their own rigs with clips made in their scripts.
@@ -1345,7 +1344,8 @@
         // held as their own Idle holds them (`shield-1/NOTES.md`): a guard,
         // six blows, block, parry, two hits, two deaths and two kills of a
         // man (a shield bash then a mace blow; a thrust past the shield).
-        // The Usurer's rapier sits in the same hand and plays them too.
+        // The Usurer's rapier points too high in the same hand, so he keeps
+        // his own until a rapier pose is made.
         "Concord shield 1": (
             from: "shared:grubcraft/fight-library/ember-men/men-shield-1.glb",
             moves: [
