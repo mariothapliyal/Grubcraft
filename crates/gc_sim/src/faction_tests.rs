@@ -10,11 +10,12 @@ use gc_fixed::{Fx, FxVec2};
 use crate::conquest::ConquestUnit;
 use crate::nav::CELLS_PER_TILE;
 use crate::powers::{Meter, PowerEffect, PowerStats, PowerTarget};
-use crate::scenario::{DRILL_UNITS, NORTH};
+use crate::scenario::DRILL_UNITS;
 use crate::structures::{Armour, Refusal, Role, TITHE, Trap, WallTwist};
+use crate::test_util::{order, spawn};
 use crate::{
-    BuildingStats, Capacities, Command, ConquestSetup, MAX_PARTIES, MatchSetup, PlayerCommand,
-    RegimentHandle, TICKS_PER_SECOND, UnitStats, Waiting, World,
+    BuildingStats, Capacities, Command, ConquestSetup, MAX_PARTIES, MatchSetup, RegimentHandle,
+    TICKS_PER_SECOND, UnitStats, Waiting, World,
 };
 
 const MAP: u32 = 128;
@@ -183,12 +184,6 @@ fn world(grub: u32, meter: Meter) -> World {
     w
 }
 
-fn order(w: &mut World, player: u8, command: Command) -> bool {
-    w.tick(&[PlayerCommand { player, command }])
-        .commands_applied
-        == 1
-}
-
 fn put_up(w: &mut World, building: u16, tile: (i16, i16)) {
     let spawn = Command::SpawnStructure {
         building,
@@ -196,19 +191,6 @@ fn put_up(w: &mut World, building: u16, tile: (i16, i16)) {
         turn: 0,
     };
     assert!(order(w, 0, spawn));
-}
-
-fn spawn(w: &mut World, player: u8, unit: u16, x: i32, y: i32) -> RegimentHandle {
-    let before: Vec<_> = w.regiments.iter().map(|r| r.handle).collect();
-    let command = Command::SpawnRegiment {
-        unit,
-        position: FxVec2::from_ints(x, y),
-        facing: NORTH,
-    };
-    assert!(order(w, player, command));
-    (w.regiments.iter().map(|r| r.handle))
-        .find(|h| !before.contains(h))
-        .unwrap()
 }
 
 /// Regiment `h` loses `n` soldiers of 10 hit points.

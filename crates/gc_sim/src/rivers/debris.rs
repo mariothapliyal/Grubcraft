@@ -200,8 +200,12 @@ pub struct Debris {
 struct JamFire {
     /// The river tile of its pier.
     pier: u32,
-    /// The place of the piece burning down, and the seconds it has burned.
+    /// The place in the pool of the piece burning down and the tick it
+    /// went in (places are given out again, so a piece jammed into the
+    /// place of one burnt down or pulled out is told from it by that),
+    /// and the seconds it has burned.
     piece: u8,
+    born: u32,
     seconds: u8,
 }
 
@@ -349,6 +353,7 @@ impl Debris {
         for f in &self.fires {
             h.u32(f.pier);
             h.u8(f.piece);
+            h.u32(f.born);
             h.u8(f.seconds);
         }
     }

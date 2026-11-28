@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 use gc_fixed::{Angle, Fx, FxVec2};
 
 use crate::formation::{self, GROUP_GAP, GROUP_LINE_GAP, GROUP_LINE_MAX, GroupMember, GroupOrder};
-use crate::{Command, UnitStats};
+use crate::{Command, RegimentHandle, UnitStats};
 
 /// Space between the infantry and the cavalry on its flanks, in tiles.
 pub const FLANK_GAP: Fx = Fx::from_int(3);
@@ -284,12 +284,29 @@ pub fn arranged_move(
             true
         }
         Arrangement::Saved(shape) => {
-            saved(members, &frame, shape, &mut spots);
+            let mut held = alloc::vec![None; shape.slots.len()];
+            saved(members, &frame, shape, &mut held, false, &mut spots);
             false
         }
     };
     let pace = formation::pace_of(members);
-    for s in &spots {
+    emit(members, order, facing, &spots, reformed, pace, out);
+}
+
+/// One `MoveTo` for each of `spots`, placed about the order's target in
+/// the frame of `facing`; `reformed` orders each member's own (changed)
+/// frontage rather than the spot's.
+fn emit(
+    members: &[GroupMember],
+    order: GroupOrder,
+    facing: Angle,
+    spots: &[Spot],
+    reformed: bool,
+    pace: Fx,
+    out: &mut Vec<Command>,
+) {
+    let frame = Frame::new(order.target, facing);
+    for s in spots {
         out.push(Command::MoveTo {
             regiment: members[s.member].handle,
             target: order.target + frame.right * s.lateral - frame.ahead * s.back,
@@ -302,6 +319,146 @@ pub fn arranged_move(
             pace,
             brigade: order.brigade,
         });
+    }
+}
+
+/// An army a player locked (docs/42-armies-that-march.md, "Standing
+/// armies"): the shape it stood in, and the regiment holding each of the
+/// shape's slots (by the shape's order), so that one sent to join it can
+/// take a slot left by a regiment lost.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Army {
+    pub shape: Shape,
+    pub held: Vec<Option<RegimentHandle>>,
+}
+
+impl Army {
+    /// `members` as an army in the shape they stand in now, each holding
+    /// its own place. `None` for fewer than two regiments.
+    pub fn lock(members: &[GroupMember]) -> Option<Army> {
+        let shape = Shape::capture(members)?;
+        let held = (members.iter().take(shape.slots.len()))
+            .map(|m| Some(m.handle))
+            .collect();
+        Some(Army { shape, held })
+    }
+
+    /// The whole army (`members`) ordered as [`Arrangement::Saved`] in its
+    /// shape; each slot is then held by the regiment sent to it.
+    pub fn order(
+        &mut self,
+        members: &mut [GroupMember],
+        order: GroupOrder,
+        out: &mut Vec<Command>,
+    ) {
+        if members.len() < 2 {
+            formation::group_move(members, order, out);
+            return;
+        }
+        let centre = formation::centre_of(members);
+        let facing = formation::facing_of(order, centre, members[0].facing);
+        let mut spots = Vec::with_capacity(members.len());
+        saved(
+            members,
+            &Frame::new(centre, facing),
+            &self.shape,
+            &mut self.held,
+            false,
+            &mut spots,
+        );
+        emit(
+            members,
+            order,
+            facing,
+            &spots,
+            false,
+            formation::pace_of(members),
+            out,
+        );
+    }
+
+    /// Where the army stands now: the target and facing of the order that
+    /// would put each of `members` holding a slot just where it is (the
+    /// best fit over all of them). `None` when none of them holds one.
+    pub fn standing(&self, members: &[GroupMember]) -> Option<(FxVec2, Angle)> {
+        let holders = || {
+            (self.held.iter().zip(&self.shape.slots)).filter_map(|(h, slot)| {
+                let m = members.iter().find(|m| Some(m.handle) == *h)?;
+                Some((m, slot))
+            })
+        };
+        let (mut x, mut y, mut n) = (0i64, 0i64, 0i64);
+        for (m, slot) in holders() {
+            let v = Angle(m.facing.0.wrapping_sub(slot.turn.0)).to_vec();
+            x += i64::from(v.x.raw());
+            y += i64::from(v.y.raw());
+            n += 1;
+        }
+        if n == 0 {
+            return None;
+        }
+        let raw = |sum: i64| Fx::from_raw((sum / n) as i32);
+        let mean = FxVec2::new(raw(x), raw(y));
+        let facing = if mean == FxVec2::ZERO {
+            holders().next()?.0.facing
+        } else {
+            Angle::of_vec(mean)
+        };
+        let frame = Frame::new(FxVec2::ZERO, facing);
+        let (mut x, mut y) = (0i64, 0i64);
+        for (m, slot) in holders() {
+            let t = m.position - frame.right * slot.lateral + frame.ahead * slot.back;
+            x += i64::from(t.x.raw());
+            y += i64::from(t.y.raw());
+        }
+        Some((FxVec2::new(raw(x), raw(y)), facing))
+    }
+
+    /// Send those of `members` holding no slot (newcomers, or any of the
+    /// army standing behind) to join the army where it stands: each to a
+    /// free slot of its role, else any free slot, else a line behind. The
+    /// holders keep their slots and are not ordered. `false` when none of
+    /// `members` holds a slot (there is no army left to join).
+    pub fn join(
+        &mut self,
+        members: &mut [GroupMember],
+        brigade: u16,
+        out: &mut Vec<Command>,
+    ) -> bool {
+        let Some((target, facing)) = self.standing(members) else {
+            return false;
+        };
+        let holding: Vec<bool> = (members.iter())
+            .map(|m| self.held.contains(&Some(m.handle)))
+            .collect();
+        let mut spots = Vec::with_capacity(members.len());
+        let frame = Frame::new(formation::centre_of(members), facing);
+        saved(
+            members,
+            &frame,
+            &self.shape,
+            &mut self.held,
+            true,
+            &mut spots,
+        );
+        spots.retain(|s| !holding[s.member]);
+        let joining: Vec<GroupMember> = spots.iter().map(|s| members[s.member]).collect();
+        let order = GroupOrder {
+            target,
+            facing: Some(facing),
+            width: None,
+            brigade,
+        };
+        emit(
+            members,
+            order,
+            facing,
+            &spots,
+            false,
+            formation::pace_of(&joining),
+            out,
+        );
+        true
     }
 }
 
@@ -648,36 +805,63 @@ fn square(members: &[GroupMember], frame: &Frame, spots: &mut Vec<Spot>) {
 
 /// A saved shape: each regiment takes a slot of its own role, in left to
 /// right order, spread across the slots when there are more slots than
-/// regiments; then any slot left; then a line behind the rest.
-fn saved(members: &[GroupMember], frame: &Frame, shape: &Shape, spots: &mut Vec<Spot>) {
+/// regiments; then any slot left; then a line behind the rest. `held` (one
+/// for each slot) is left naming the member in each slot; with `keep`,
+/// members it already names keep their slots first.
+fn saved(
+    members: &[GroupMember],
+    frame: &Frame,
+    shape: &Shape,
+    held: &mut [Option<RegimentHandle>],
+    keep: bool,
+    spots: &mut Vec<Spot>,
+) {
     let mut slots: Vec<usize> = (0..shape.slots.len()).collect();
     slots.sort_unstable_by_key(|&k| (shape.slots[k].lateral, k));
     let mut used = alloc::vec![false; shape.slots.len()];
     let mut placed = alloc::vec![false; members.len()];
+    let kept: Vec<(usize, usize)> = (0..shape.slots.len())
+        .filter(|_| keep)
+        .filter_map(|k| Some((members.iter().position(|m| Some(m.handle) == held[k])?, k)))
+        .collect();
+    let mut take = |i: usize, k: usize, used: &mut [bool], placed: &mut [bool]| {
+        let slot = &shape.slots[k];
+        used[k] = true;
+        placed[i] = true;
+        held[k] = Some(members[i].handle);
+        spots.push(Spot {
+            member: i,
+            lateral: slot.lateral,
+            back: slot.back,
+            turn: slot.turn,
+            files: slot.files.clamp(1, members[i].models.max(1)),
+        });
+    };
+    for (i, k) in kept {
+        if !placed[i] {
+            take(i, k, &mut used, &mut placed);
+        }
+    }
     // `who` take the free slots (of `role`, or any), left to right.
-    let mut fill = |who: &[usize], role: Option<Role>, placed: &mut [bool]| {
+    let mut fill = |who: &[usize], role: Option<Role>, used: &mut [bool], placed: &mut [bool]| {
         let free: Vec<usize> = (slots.iter().copied())
             .filter(|&k| !used[k] && role.is_none_or(|r| shape.slots[k].role == r))
             .collect();
         for (i, k) in spread(who, &free) {
-            let slot = &shape.slots[k];
-            used[k] = true;
-            placed[i] = true;
-            spots.push(Spot {
-                member: i,
-                lateral: slot.lateral,
-                back: slot.back,
-                turn: slot.turn,
-                files: slot.files.clamp(1, members[i].models.max(1)),
-            });
+            take(i, k, used, placed);
         }
     };
     for role in Role::ALL {
-        fill(&of_role(members, frame, role), Some(role), &mut placed);
+        let mut who = of_role(members, frame, role);
+        who.retain(|&i| !placed[i]);
+        fill(&who, Some(role), &mut used, &mut placed);
     }
     let mut rest: Vec<usize> = (0..members.len()).filter(|&i| !placed[i]).collect();
     sort_by(&mut rest, members, |m| frame.lateral(m.position));
-    fill(&rest, None, &mut placed);
+    fill(&rest, None, &mut used, &mut placed);
+    for (h, _) in held.iter_mut().zip(&used).filter(|(_, u)| !**u) {
+        *h = None;
+    }
     rest.retain(|&i| !placed[i]);
     if !rest.is_empty() {
         let rear = spots
@@ -721,7 +905,6 @@ fn spread(who: &[usize], slots: &[usize]) -> Vec<(usize, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RegimentHandle;
 
     use crate::scenario::NORTH;
     const TARGET: FxVec2 = FxVec2::from_ints(100, 20);
@@ -1027,6 +1210,96 @@ mod tests {
             );
             assert!((p.back - f64::from(y - 54)).abs() < 0.01, "{p:?}");
         }
+    }
+
+    /// The `MoveTo`s in `out`, as (regiment index, target, facing).
+    fn moves(out: &[Command]) -> Vec<(u32, FxVec2, Angle)> {
+        (out.iter())
+            .map(|c| match *c {
+                Command::MoveTo {
+                    regiment,
+                    target,
+                    facing,
+                    ..
+                } => (regiment.index, target, facing.unwrap()),
+                _ => unreachable!(),
+            })
+            .collect()
+    }
+
+    fn near(a: FxVec2, b: FxVec2) -> bool {
+        let d = a - b;
+        d.x.abs() < Fx::from_ratio(1, 8) && d.y.abs() < Fx::from_ratio(1, 8)
+    }
+
+    #[test]
+    fn an_army_ordered_to_where_it_stands_in_its_own_shape_stays_put() {
+        // The order `Army::standing` gives back sends each where it is now
+        // (what a regiment joining an army is placed by).
+        let mut members = army(&[Melee, Melee, Ranged, Horse]);
+        let at = [(40, 60), (50, 61), (50, 68), (30, 54)];
+        for (m, (x, y)) in members.iter_mut().zip(at) {
+            m.position = FxVec2::from_ints(x, y);
+        }
+        members[3].facing = Angle(0x1000);
+        let mut army = Army::lock(&members).unwrap();
+        let (target, facing) = army.standing(&members).unwrap();
+        let mut out = Vec::new();
+        let order = GroupOrder {
+            target,
+            facing: Some(facing),
+            width: None,
+            brigade: 0,
+        };
+        army.order(&mut members.clone(), order, &mut out);
+        assert_eq!(out.len(), 4);
+        for (index, target, facing) in moves(&out) {
+            let m = members[index as usize];
+            assert!(near(target, m.position), "{index}: {target:?}");
+            assert!((facing.0.wrapping_sub(m.facing.0) as i16).unsigned_abs() < 64);
+        }
+    }
+
+    #[test]
+    fn one_joining_an_army_takes_the_place_of_a_regiment_lost() {
+        // Four in line; the second from the left is lost, and the army
+        // has since moved 30 tiles north. A newcomer far off to the right
+        // takes the lost one's place, not the right end, and the rest are
+        // not ordered.
+        let members = army(&[Melee, Melee, Melee, Melee]);
+        let mut army = Army::lock(&members).unwrap();
+        let mut now: Vec<GroupMember> = (members.iter())
+            .filter(|m| m.handle.index != 1)
+            .map(|&m| GroupMember {
+                position: m.position - FxVec2::from_ints(0, 30),
+                ..m
+            })
+            .collect();
+        let mut newcomer = member(9, Melee, 120);
+        newcomer.position = FxVec2::from_ints(120, 80);
+        now.push(newcomer);
+        let mut out = Vec::new();
+        assert!(army.join(&mut now, 5, &mut out));
+        let moved = moves(&out);
+        assert_eq!(moved.len(), 1, "{moved:?}");
+        let (index, target, facing) = moved[0];
+        assert_eq!(index, 9);
+        assert!(
+            near(target, members[1].position - FxVec2::from_ints(0, 30)),
+            "{target:?}"
+        );
+        assert_eq!(facing, NORTH);
+        assert!(matches!(out[0], Command::MoveTo { brigade: 5, .. }));
+        assert_eq!(army.held[1].map(|h| h.index), Some(9));
+        // With no place left of its kind, the next stands behind.
+        let mut late = member(10, Melee, 60);
+        late.position = FxVec2::from_ints(60, 90);
+        now.push(late);
+        out.clear();
+        assert!(army.join(&mut now, 0, &mut out));
+        let moved = moves(&out);
+        assert_eq!(moved.len(), 1);
+        assert!(moved[0].1.y > FxVec2::from_ints(0, 31).y, "{moved:?}");
     }
 
     #[test]

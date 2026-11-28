@@ -192,6 +192,14 @@ impl Terrain {
         self
     }
 
+    /// Count the fords on `tiles` (x, y) shut, as rising water would (see
+    /// [`Terrain::ford_shut_near`]).
+    #[cfg(test)]
+    pub(crate) fn with_shut(mut self, tiles: Vec<(i32, i32)>) -> Terrain {
+        self.shut = tiles;
+        self
+    }
+
     /// Add the water's own level on each tile, in tiles, row by row (see
     /// `gc_sim::Ground::water_levels`): ground below a tile's level is
     /// water. Ignored if there isn't one per tile.

@@ -126,6 +126,21 @@ pub struct MindConfig {
     pub seed: u64,
 }
 
+/// Where a mind stands with smoking out an enemy hidden in woods (see
+/// [`Mind::smoke_out`]).
+#[derive(Clone, Copy, Debug)]
+enum Smoke {
+    /// It may start on one.
+    Ready,
+    /// It is smoking out `quarry`, until `until` at the latest.
+    Smoking {
+        quarry: gc_sim::RegimentHandle,
+        until: u32,
+    },
+    /// A smoking out has ended: it starts on no other before `until`.
+    Cooling { until: u32 },
+}
+
 /// One computer player.
 pub struct Mind {
     /// How it was set up.
@@ -161,10 +176,8 @@ pub struct Mind {
     live: bool,
     /// When it next looks for woods to burn on an enemy (see [`firing`]).
     next_burn: u32,
-    /// The enemy hidden in woods it is smoking out, and until when; and
-    /// when it may start on another.
-    smoking: Option<(gc_sim::RegimentHandle, u32)>,
-    next_smoke: u32,
+    /// Where it stands with smoking out an enemy hidden in woods.
+    smoke: Smoke,
     /// Its economy and army, in Conquest.
     realm: Option<conquest::Realm>,
 }
@@ -228,8 +241,7 @@ impl Mind {
             readings: Vec::new(),
             live: false,
             next_burn: 0,
-            smoking: None,
-            next_smoke: 0,
+            smoke: Smoke::Ready,
             realm: None,
         }
     }
@@ -386,27 +398,37 @@ impl Mind {
         if !self.knobs.read_ground {
             return;
         }
-        let keep = (self.smoking).and_then(|(h, until)| (view.tick < until).then_some(h));
-        let on = (keep.is_some() || view.tick >= self.next_smoke)
-            .then(|| firing::quarry(view, world, self.party, keep))
-            .flatten();
-        // A smoking out that ends, however, isn't followed by another for
-        // as long.
-        if self.smoking.is_some() && (on.is_none() || on != keep) {
-            self.smoking = None;
-            self.next_smoke = view.tick + firing::SMOKE_TICKS;
-            return;
-        }
-        let Some(on) = on else {
-            return;
+        let on = match self.smoke {
+            Smoke::Smoking { quarry, until } => {
+                let on = (view.tick < until)
+                    .then(|| firing::quarry(view, world, self.party, Some(quarry)))
+                    .flatten();
+                // A smoking out that ends, however, isn't followed by
+                // another for as long.
+                if on != Some(quarry) {
+                    self.smoke = Smoke::Cooling {
+                        until: view.tick + firing::SMOKE_TICKS,
+                    };
+                    return;
+                }
+                quarry
+            }
+            Smoke::Cooling { until } if view.tick < until => return,
+            Smoke::Ready | Smoke::Cooling { .. } => {
+                let Some(on) = firing::quarry(view, world, self.party, None) else {
+                    return;
+                };
+                self.smoke = Smoke::Smoking {
+                    quarry: on,
+                    until: view.tick + firing::SMOKE_TICKS,
+                };
+                self.journal.note(
+                    view.tick,
+                    "Smokes out an enemy hidden in the woods".to_string(),
+                );
+                on
+            }
         };
-        if self.smoking.is_none() {
-            self.smoking = Some((on, view.tick + firing::SMOKE_TICKS));
-            self.journal.note(
-                view.tick,
-                "Smokes out an enemy hidden in the woods".to_string(),
-            );
-        }
         firing::smoke_out(view, world, self.party, on, &mut self.wants);
     }
 

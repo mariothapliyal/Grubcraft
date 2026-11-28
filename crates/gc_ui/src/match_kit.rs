@@ -203,56 +203,69 @@ pub enum ChatAction {
 /// The chat box: closed, or open with a line being typed.
 #[derive(Clone, Debug, Default)]
 pub struct ChatBox {
-    open: bool,
-    team: bool,
-    text: String,
+    state: ChatState,
+}
+
+/// What the chat box is doing. The line and who it is for exist only while
+/// it is open.
+#[derive(Clone, Debug, Default)]
+enum ChatState {
+    #[default]
+    Closed,
+    Open {
+        team: bool,
+        text: String,
+    },
 }
 
 impl ChatBox {
     /// Open an empty box, for the team or for everyone.
     pub fn open(&mut self, team: bool) {
-        self.open = true;
-        self.team = team;
-        self.text.clear();
+        self.state = ChatState::Open {
+            team,
+            text: String::new(),
+        };
     }
 
     pub fn close(&mut self) {
-        self.open = false;
-        self.text.clear();
+        self.state = ChatState::Closed;
     }
 
     pub fn is_open(&self) -> bool {
-        self.open
+        matches!(self.state, ChatState::Open { .. })
     }
 
     /// Whether the line goes to the team (else to everyone).
     pub fn team(&self) -> bool {
-        self.team
+        matches!(self.state, ChatState::Open { team: true, .. })
     }
 
     pub fn text(&self) -> &str {
-        &self.text
+        match &self.state {
+            ChatState::Open { text, .. } => text,
+            ChatState::Closed => "",
+        }
     }
 
     /// One key while the box is open. Every key goes here while it is, so
     /// no hotkey fires.
     pub fn key(&mut self, key: ChatKey) -> ChatAction {
-        if !self.open {
+        let ChatState::Open { team, text } = &mut self.state else {
             return ChatAction::None;
-        }
+        };
         match key {
             ChatKey::Char(c) => {
-                if (' '..='~').contains(&c) && self.text.chars().count() < MAX_CHAT {
-                    self.text.push(c);
+                if (' '..='~').contains(&c) && text.chars().count() < MAX_CHAT {
+                    text.push(c);
                 }
                 ChatAction::None
             }
             ChatKey::Backspace => {
-                self.text.pop();
+                text.pop();
                 ChatAction::None
             }
             ChatKey::Tab => {
-                self.team = !self.team;
+                *team = !*team;
                 ChatAction::None
             }
             ChatKey::Escape => {
@@ -260,13 +273,13 @@ impl ChatBox {
                 ChatAction::Closed
             }
             ChatKey::Enter => {
-                let text = self.text.trim().to_string();
-                let team = self.team;
+                let line = text.trim().to_string();
+                let team = *team;
                 self.close();
-                if text.is_empty() {
+                if line.is_empty() {
                     ChatAction::Closed
                 } else {
-                    ChatAction::Send { team, text }
+                    ChatAction::Send { team, text: line }
                 }
             }
         }

@@ -112,6 +112,7 @@ Performance work is continuous, measured and recorded.
 
 ### Instruments
 - **Dev overlay (`` ` `` or `F11`):** frame time, sim tick time, memory per tag, GPU memory, draw calls, instance counts. Network RTT, jitter and delay are a target.
+- **GPU timings (2026-11-26):** `--gpu-times` (with `--frames N`) prints each pass's average GPU time at exit, from frame 20 on; the dev overlay shows the same live with the world's resolution. Timestamp queries round each pass (skin, shadow, world, glow, screen) and, where the GPU can write them inside a pass (Vulkan and Direct 3D 12, not Metal), splits of the world pass (scenery, soldiers, terrain, boxes and sky, particles). Read a few frames late from a ring of four buffers, so the game never waits for them (`gc_render/src/timing.rs`). On lavapipe the splits inside a pass mislead (it bins a whole pass before it draws it); trust only whole passes there. Two dev knobs make runs comparable: `GC_PLAY_FROM=S` plays a live match's first S seconds as fast as it can, then turns on the director camera (with `GC_HOLD_CAMERA=1` the camera stays where it is, to time a still view of a busy match); `GC_STILL_AT=N` holds frame N on screen for 8 s (for a screenshot) and runs the picture's clock by frames, so two runs draw the same frame.
 - **Tracy** profiling in instrumented builds.
 - **Tagged allocator** for exact memory attribution on the CPU side. GPU memory is a sum the renderer keeps by hand (see the memory budget above); a real GPU allocation wrapper is a target for the renderer's next pass.
 - **Allocation-in-tick tripwire:** a test and the `gc_bench` gate fail if the sim allocates during a tick.
@@ -155,6 +156,45 @@ Sim memory and speed pass (2026-11-20), 60 minutes, cloud build container (ms a 
 | 6 | 38.87 | 6.48 | 85.4 | 16.6 | 885 | 0 | 73.4 | 26.5 |
 
 Before, the six-player match was over the big-map 48 MB heap budget and spent 885 ticks over a frame's 16.7 ms; the sim heap now grows by about 1.2 MB for each side after the first two, where it grew by about 10 MB. The AI minds (about 0.9 ms p99, with rare ticks of 100 ms or more when a General plans) are unchanged and are the next thing to look at for six-player speed.
+
+### GPU work
+
+Asked 2026-11-26: halve the GPU's work for integrated graphics without a visible loss. Measured in a six-player General battle (seed 3) 200 s in, with `--gpu-times`, `GC_PLAY_FROM=200` and `GC_STILL_AT`, on lavapipe in the cloud container (a software GPU: its vertex work is costly and its MSAA about three times dearer than a real GPU's, so pixel savings show smaller on it than they will on a real one):
+
+| Change | GPU time a frame | Picture |
+|---|---|---|
+| Frame cap and V-sync now honoured | half on a 120 Hz screen at the default 60 cap (a light scene: 111 fps uncapped, 60 capped) | the same |
+| The world under the opaque bottom bar left undrawn (scissor, and culling and the sun's shadow square fitted to what shows, with 3% to spare for the shake and the blurs) | about 7% less | the same; shadows a touch finer, as the shadow square covers less ground |
+| Terrain slopes worked out once at load (an `Rg16Float` texture read with the heights' filter) instead of four height reads a pixel | about 6.5% less | the same (80 dB against the old) |
+| Terrain drawn after scenery and soldiers, so its pixels behind them fail the depth test before they are shaded | not measurable on lavapipe; helps immediate-mode GPUs (Intel, AMD, NVIDIA), Apple's sort it out themselves | the same |
+| All of the above, 1280x760, no MSAA, three runs each | 565 ms before, 512 after (9% less) | the same |
+| Balanced or Battery lowering the world's resolution (only while the GPU cannot keep up, on Balanced) | emulated Retina, 2560x1520 with MSAA: 3,159 ms full, 2,402 at 75% (24% less) | thin pike shafts a little softer; hard to see |
+
+So a GPU that keeps up loses nothing and spends less; one that cannot gets the world drawn up to 30% smaller (half the pixels) on Balanced, and a steady frame rate, instead of stuttering. Tried and not kept: one shadow-map tap instead of the soft filter (6% less, visibly harder shadow edges), cheaper ground noise (2%, visible). Not measured yet: a real integrated GPU and Mario's Mac; the dev overlay shows the numbers on any machine.
+
+Then on 2026-11-27, the same scene and also its first seconds, where the camera stands still (the scene above has the director camera moving all the time):
+
+| Change | GPU time a frame | Picture |
+|---|---|---|
+| The sun's view of what holds still (the ground, and scenery with no vertex in the wind) kept between frames; each frame copies it and draws the trees, soldiers and boxes over it | still camera: the sun's pass 110 → 69 ms; moving camera: the same as before (it is used only once the camera has held still for a frame) | identical, pixel for pixel |
+| Scenery outside the view that only casts a shadow onto it (the sun sees more than the camera) left out of the world pass, which was clipping it vertex by vertex, and drawn into the shadow map, the far ones at their coarsest level | still camera: scenery triangles in the world pass 642k → 259k; the sun's pass 69 → 45 ms | identical, pixel for pixel, at noon, golden hour and dusk |
+| Both, still camera, three runs each | 467 ms on main (482, 456, 464), 391 after (394, 389, 389): 16% less; the sun's pass 105 → 46 ms | identical |
+| Both, moving camera, three runs each | 530 ms on main (534, 529, 527), 516 after (520, 514, 515): 3% less | the same up to run-to-run noise |
+| Fullscreen (Settings, or `Alt+Enter`; `Ctrl+Cmd+F` on a Mac) | not measurable here: the saving is the system's compositing, which lavapipe under Xvfb does not do | the same |
+
+Measured and not built: flat cut-outs for distant trees would save at most about 1% now (drawing no tree past level 1 saved 0 to 6 ms of 386), too little for the risk to the trees' look; working out the ground height once per tree instead of once per vertex at most 2%. Coarser soldier models sooner (the tiny triangles idea) saved about 5% but thinned pike shafts on a Retina screen, held back until the coarse models are re-baked. The ground is now the biggest cost: 36% of a still-camera frame, most of it the grass and soil detail (about 20%) rather than its lighting (7%).
+
+Then the kept ground ([10](10-architecture.md), "The kept ground"): what the ground is at each pixel is stored the frame after the camera, the land and the weather settle, and read back after, so only its lighting is worked out again. Three runs each against main (after the two changes above), with and without anti-aliasing (MSAA, the default, is about three times dearer on lavapipe than on a real GPU, which hides pixel savings):
+
+| | main | kept ground | Picture |
+|---|---|---|---|
+| Still camera, battle start, anti-aliasing on | 965 ms (944, 977, 978, 961) | 804 (802, 791, 818): 17% less | 0.6% of pixels a step or two of 255 apart (at most 5), on the edges between the ground's triangles |
+| Still camera, battle start, anti-aliasing off | 380 ms (375, 383, 382, 379) | 284 (286, 283, 283): 25% less | 0.1% of pixels, at most 3 steps |
+| Still camera 200 s in, regiments marching and fighting, anti-aliasing off (`GC_HOLD_CAMERA`; against `--no-kept-ground`, which draws main's picture) | 381 ms (382, 384, 376) | 284 (282, 287): 25% less | 0.1% of pixels, at most 3 steps |
+| Moving camera, anti-aliasing off, 100 frames (first version) | 588 ms (565, 571, 609, 606) | 604 (593, 595, 612, 615) | the same |
+| Rain and snow (one still run each) | | the same as main, pixel for pixel, while the rain soaks in; kept again once it has | |
+
+A moving camera never stores the ground and draws it with the same shader and draw calls as main. Its runs averaged 1 to 3% higher in each of three sets, inside main's own spread between runs (up to 8%), but always that way round, so it is the first thing to check on a real GPU. The moving runs were made before the clean-up that stores the drawn height and shares the keep rule with the shadow map; a moving frame's path did not change in it. 32 bytes a pixel of the world's image: 31 MB at 1280x760, 131 MB for a 2560x1600 world.
 
 ### Gates in CI
 - Every pull request runs the headless benchmarks on CI machines and compares them against a stored baseline: **> 5% regression in any tracked metric fails**, unless the PR updates the baseline with a written reason (PRF-7). The tracked metric is the number of instructions each scenario executes under valgrind's callgrind (`scripts/bench-gate.py`, on the Linux runner, against `tools/gc_bench/baseline.json`). Instruction counts do not move with how busy a shared machine is: repeat runs agree to better than 0.001%, where wall-clock times on a CI runner vary far more than 5%. The fixed budgets above (p99 tick, heap, allocations) stay as an outer net. The scenarios are smaller than the timing runs so each takes about half a minute under callgrind: `drill` with 150 regiments a player for 1,200 ticks, `pathing-storm`, and the whole `field-8000pt-2v2` replay. A PR that changes how much work the simulation does on purpose runs `scripts/bench-gate.py bless` in the same PR and says why; the gate prints a note when a PR is more than 5% faster, so the gain can be locked in the same way. The counts also go up as the `bench-instructions` artifact of each run. *(Not covered yet: the computer players' cost. `gc_bench` does not depend on `gc_ai`, and the Warlord's rehearsals are known to run over their budget, see [18 · AI](18-ai.md).)*

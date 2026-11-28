@@ -40,7 +40,7 @@ Mirroring is how every map is fair today, and it is also what makes a map look m
 - A search on a coarse grid places the starts so the walk to the nearest enemy (least-cost routes round cliffs, lakes and thicket) is as equal as possible.
 - Each player's own resource fields stand the same walk away from their start (the prototype used 30, 55 and 85 tiles), in whatever direction the land allows.
 - Every start gets the same flattened clearing, so building room is equal by construction. The prototype only roughed this in, which is why its room spreads on six players are high.
-- Team games balance teams, not only players.
+- Team games balance teams, not only players. (built 2026-11-22: allies' walks, see [Team fairness](#team-fairness))
 - `gc_mapcheck` reports the numbers and rerolls a map outside the limits. Today it holds Conquest maps to 3% on walking distances. Two-player maps already meet that. Four to six players need the Rust search to do better than the prototype, or per-team limits.
 
 ## Biome depth
@@ -177,9 +177,9 @@ Each stage is playable on its own.
 
 - ~~A finer search, or seeds rerolled against fairness limits, to bring four to six players under about 5%.~~ Done 2026-10-31: a search on the finished land's true walks, and a reroll past 10% ([41](41-finish-living-land.md#step-2-as-built)). Most maps come out under 5%, all under 10%.
 - ~~Then make Measured the default.~~ Done 2026-10-31 for Field Battles; Conquest stays mirrored (its shares are placed on the north and turned for the south).
-- Count cuttable woods near starts (idea 22).
-- Team-aware limits.
-- Store the generator version with the map choice in replays.
+- ~~Count cuttable woods near starts (idea 22).~~ Done 2026-11-22: every start gets the same open ground within 48 tiles ([Room round each start](#room-round-each-start)).
+- ~~Team-aware limits.~~ Done 2026-11-22: allies' walks are scored too ([Team fairness](#team-fairness)).
+- ~~Store the generator version with the map choice in replays.~~ Done: `gc_map::MAP_MAKER` in the replay header (format 58).
 - ~~Move Conquest big maps onto grown land.~~ Done 2026-10-30 ([41](41-finish-living-land.md#step-1-as-built)).
 
 ## Stage 4 as built
@@ -212,7 +212,7 @@ High water comes in **bodies**, each flat at one level: a highland lake, or a **
 2. **Falls and rapids.** Where one reach is lower than the next one up, the water steps down: a fall, drawn as white water. Where the bed drops more than an eighth of a tile a run, the current there is fast (`Flow` speed 3). Nothing is added for them: they come from the land.
 3. **Highland lakes.** A basin the flood filled is a lake at its own level: a tile under the height where the basin spills (its brim), and no higher than its highest ground. A lake less than half a tile over the line, or smaller than 300 tiles, stays as it was.
 4. **Valleys and banks** ease down to a gentle bank a little above the water's own level, not the map's line, so a high river runs in a shallow valley of its own. The low water's valleys never cut the rims of high water (a guard two tiles round it). Channel beds and lake floors are cut below their own level, fords are raised to just under it (never where the level changes within six tiles, so never at a fall), and the ways (ramps and passes, stage 2) treat each tile's own level as the water.
-5. **Kept in its banks.** After the ways have cut their ramps, every body is checked: no dry tile at the map's line next to its water may lie lower than its level. A body that would spill is lowered to a sixteenth of a tile under its lowest rim, its bed sinks with it, and the reaches below it are lowered to stay at or under it; this repeats until nothing spills (at most 64 rounds; a body still spilling then falls to the line).
+5. **Kept in its banks.** After the ways have cut their ramps, every body is checked: no dry tile next to its water may lie lower than its level, whether the tile is at the map's line or belongs to another body (a neighbouring lake's or another river's dry bank: built 2026-11-22, `SIM_VERSION` 99, before which only tiles at the line counted, so a lake could stand over another body's lower bank). A river's own lower reaches are not banks: its water falls into them. A body that would spill is lowered to a sixteenth of a tile under its lowest rim, its bed sinks with it, and the reaches below it are lowered to stay at or under it; this repeats until nothing spills (at most 64 rounds; a body still spilling then falls to the line).
 6. **The shore.** Dry tiles within six tiles of high water whose ground stands at or over its level, with nothing lower round them but that water, take that level too (the nearest water's). They stay dry; it keeps the water's surface flat out to the bank for drawing. The last tile before the land falls away (or before lower water) keeps the line, so the drawn surface never climbs over lower ground and no dry slope reads as wading. A moved start's clearing never takes a shore's level.
 7. **Both halves.** The water is laid out on one half and turned onto the other, as before, so mirrored levels are each other's turned copies. Measured land, Conquest's grown land and the fairness walks read the levels with the heights.
 
@@ -224,7 +224,7 @@ High water comes in **bodies**, each flat at one level: a highland lake, or a **
 
 ### Drawing
 
-The renderer's river texture is now the water's height over the map's line on every tile, in tiles (a 16-bit float, not a byte): the tile's own level (`Terrain::water_levels`) plus any river rise (`set_river_water`). The water, the riverbed, wading soldiers and everything standing on water read that one surface, eased between tile centres, as they read the river's rise before. Where the water's own level falls steeply with water on both sides (a fall) it is drawn white, with churned streaks that run with the time; the texture keeps the level alone beside the level with the rise (two half floats a tile), so a swollen river's sloping rise never froths. The game's own "ground or water" heights (`Map::water_at`, `Map::surface_at`) replace the map's single line wherever things are stood on water or kept out of it: scenery, villages, carts, walkers, animals, insects, the wall and clearing tools, river debris, mist, the minimap and the ground readout.
+The renderer's river texture is now the water's height over the map's line on every tile, in tiles (a 16-bit float, not a byte): the tile's own level (`Terrain::water_levels`) plus any river rise (`set_river_water`). The water, the riverbed, wading soldiers, floating debris and everything standing on water read that one surface, eased between tile centres, as they read the river's rise before (a log riding over a fall slides down it with the water rather than dropping a step at the tile edge; 2026-11-22). Where the water's own level falls steeply with water on both sides (a fall) it is drawn white, with churned streaks that run with the time; the texture keeps the level alone beside the level with the rise (two half floats a tile), so a swollen river's sloping rise never froths. The game's own "ground or water" heights (`Map::water_at`, `Map::surface_at`) replace the map's single line wherever things are stood on water or kept out of it: scenery, villages, carts, walkers, animals, insects, the wall and clearing tools, river debris, mist, the minimap and the ground readout.
 
 ### Real use
 
@@ -245,9 +245,52 @@ The renderer's river texture is now the water's height over the map's line on ev
 - Renderer: the half floats match the standard; a map without high water uploads nothing more.
 - Map check sweeps (`gc_mapcheck`, a quarter of the grown and lobby maps per PR, all of them in the batch) keep every start joined and Measured fair.
 
+## Finishing touches (2026-11-22)
+
+Three items left open in stage 3 and its fairness notes were built on the same day. Each changes Measured Field Battle maps, and the first also changes the grown land of Conquest and the mirrored Land maps. Nothing else in the lobby changes.
+
+### Room round each start
+
+**What it does.** Every start already had the same flattened clearing, but the land past it differed. Within 48 tiles of a start (48 on a 512 map, scaled to the map), one start could have 55% less open ground than another on Measured land, and 35% less on a Conquest map, corner against corner. Now the last step of growing land counts the open standable ground within 48 tiles of each start in play. Open means standable: not woods, scrub or thicket.
+
+- A start below the middle gets its nearest woods and scrub cleared, in a ragged order. Felled woods become Glade and cut scrub becomes Grassland.
+- A start above the middle gets scrub (ScrubEdge, tall grass) grown on meadow at the far edge of its open ground, never within 24 tiles of the start.
+- Each start is brought within 4% of the middle. The middle is held to what every start can reach.
+- Thicket, cliffs and water are never changed. Thicket is a wall that the walks count.
+- On mirrored land every change is made to a tile and its turned copy.
+- Conquest maps under 512 tiles count only the four corners.
+
+**The numbers.** Seeds 1 to 3 of each wildness, at 512 Measured and at 448 and 640 Conquest: the open room is within 0.3 to 9.2% of each other. Before, it was up to 55% apart.
+
+**Test:** `room::tests::every_start_has_the_same_room_to_build`.
+
+**Real use.** A Conquest base and its expansion grow into equal open ground. No player spends minutes felling old woods while another builds at once. Scrub grown on the rich start is quick to clear (3 seconds a tile, against 8 for woods). Woods cleared near a poor start take away some of its hiding places.
+
+### Team fairness
+
+**What it does.** The Measured start search now scores teams as well as players. For each way the lobby hands starts out to teams of the same size (two against two on the corners, three against three, and two against two against two in columns), it takes the longest walk between two allies on each team. That walk counts at half weight. Allies' walks may be up to 20% apart before they count as much as the 10% gap for enemies. So help is about as far away on every team.
+
+**The numbers.** On 512 Measured maps, every handout stays 0.2 to 8% unequal (4 seeds of each wildness).
+
+### Three and five players
+
+**What it does.** Before, three or five players used the six slots with gaps. Three stood on the corners with one empty, so someone was squeezed between two neighbours. Five stood on six slots. Now a Measured Field Battle map made for three or five players puts that many starts evenly round a ring around the middle. The ring's radius is as far out as the six slots' rows: half the map's side, less the inset (a sixth of the side from 512 tiles, a quarter under). The seed turns the ring, and the first start is the furthest south.
+
+The lobby's picture shows the ring as orange dots, and the map changes when a player joins or leaves. Allies sit side by side round the ring: you take the southern start, your allies the next ones round, then each other team in turn. The search scores everyone for themselves on a ring. Two teams on a ring are neighbours, so the middle player of a team of three is further from the enemy than its ends. That is the shape of a ring, not unfairness.
+
+Land (mirrored), Classic and Random maps, and Conquest keep the six slots. A turned copy cannot hold three or five players fairly, and Conquest's shares are placed on the north and turned.
+
+**The numbers.** Measured, 3 or 4 seeds of each wildness: three players at 640 tiles are 0 to 4% unequal in walks to the nearest enemy, and five players at 768 tiles are 0 to 5% unequal. A map builds in about 2 to 4.5 seconds. `gc_mapcheck gen Measured-Wild:3 640 SEED OUT.ron` writes one.
+
+**Protocol.** `PROTOCOL` 49. The same map choice now makes different land, so the two builds must not play together.
+
+**Real use.** In a three-way free-for-all no one is caught between two neighbours: each start has both foes at the same walk. In a five-way game every start has two neighbours at the same walk and two further off. Armies leave each base toward either neighbour, so no base is the only way through. In two against three, the team of three's middle player is shielded by its allies. Computer players need no change, because they read starts and routes from the map. `gc_match`'s `ring_battles_meet` (run by hand) plays Veterans only, three for themselves on 256 tiles and two against three on 320, two seeds each: the armies met 47 to 130 seconds in, and each battle was decided in 4:36 to 6:00.
+
+**Tests:** `starts::tests::a_ring_stands_evenly_round_the_middle`, `rings_of_starts_are_within_the_limit` (three and five at every wildness), `battle::tests::a_ring_seats_allies_side_by_side`, `rings_are_for_three_or_five_on_measured_land`, and pinned ring fingerprints. `--battle veteran --players 3` starts a three-way free-for-all against the computer.
+
 ## Costs and risks
 
 - **Load time.** The Python prototype takes 20 to 40 seconds a map. The game runs erosion, drainage and the start search on coarse grids. Estimated 1 to 3 seconds for a 768 map; measured in stage 1 at about 2 seconds.
 - **Same map everywhere.** Online play needs identical maps on every machine. Erosion and river tracing are the new parts to pin with hash tests, the way `Map::generate` is pinned today.
 - **The computer players.** The battle and Conquest minds read chokes and routes from the map, and organic maps have more varied chokes. Their route reading gets a check in stage 2.
-- **Replays and seeds.** Maps are rebuilt from their seed, so the generator's version is saved with the map choice. Old replays keep playing on Classic.
+- **Replays and seeds.** Maps are rebuilt from their seed, so the map maker's version is saved with the map choice: `gc_map::MAP_MAKER`, bumped whenever the same choice, size and seed make different land, and stamped in each replay's header (replay format 58). A replay whose stored ground isn't what this build makes from its choice is drawn from the ground it stored, `Map::from_ground`, so the soldiers walk on the ground you see; that ground has no land colours, and the viewer says so, naming an older map maker when the stamp (or no stamp, before format 58) says that is why. A replay from another map maker whose land came out the same is drawn as usual. Old replays keep playing on Classic.

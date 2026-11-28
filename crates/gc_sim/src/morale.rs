@@ -496,11 +496,20 @@ fn rout(
     regs.attack_target[i] = None;
     regs.target_facing[i] = None;
     regs.charge[i] = 0;
-    // Running men keep no ranks, stand fast for nobody and step back for
-    // nobody; on rallying they form up as wide as when raised.
+    // Running men keep no ranks, set no points against a charge, stand
+    // fast for nobody and step back for nobody; on rallying they form up
+    // as wide as when raised. Their spears are down from this tick, so a
+    // charge arriving next tick runs them down rather than onto braced
+    // points (`Combat::before_move` only clears it when it reaches them).
     regs.break_formation(i, files);
+    regs.braced[i] = false;
     regs.hold[i] = false;
     regs.backing[i] = 0;
+    // Nor do they keep the place they stood aside from for marching
+    // friends (see `Combat::make_way`): rallied, they would walk back
+    // to it unbidden, often towards the fight that broke them.
+    regs.home[i] = None;
+    regs.way_wait[i] = 0;
     regs.pace[i] = Fx::from_raw(regs.speed[i].raw() * ROUT_PACE_PERCENT / 100);
     // A march is for regiments that take orders.
     regs.march_left[i] = 0;
@@ -614,4 +623,48 @@ fn flee(
     }
     regs.target[i] = (target != p).then_some(target);
     regs.target_facing[i] = None;
+}
+
+#[cfg(test)]
+mod tests {
+    use gc_fixed::FxVec2;
+
+    use super::rout;
+    use crate::scenario::DRILL_UNITS;
+    use crate::test_util::{spawn, world};
+
+    /// Men who break set no points and keep no place they stood aside
+    /// from: a charge arriving the next tick (before `before_move` gets to
+    /// them) must not stop on braced spears, and once rallied they must
+    /// not walk back to where they made way from.
+    #[test]
+    fn a_rout_lowers_the_spears_and_forgets_the_place_made_way_from() {
+        let mut w = world(&DRILL_UNITS);
+        let h = spawn(&mut w, 0, 0, 60, 60);
+        let i = w.regiments.resolve(h).unwrap();
+        w.regiments.braced[i] = true;
+        w.regiments.home[i] = Some(FxVec2::from_ints(64, 60));
+        w.regiments.way_wait[i] = 7;
+        let files = w.regiments.files[i];
+        rout(
+            &mut w.regiments,
+            &w.combat,
+            &w.stances,
+            &w.vision,
+            i,
+            w.tick,
+            w.map_tiles,
+            files,
+        );
+        assert!(w.regiments.morale_state[i].broken());
+        assert!(!w.regiments.braced[i], "still braced while running");
+        assert_eq!(
+            w.regiments.home[i], None,
+            "still keeps a place to go back to"
+        );
+        assert_eq!(w.regiments.way_wait[i], 0);
+        let view = w.regiments.get(h).unwrap();
+        assert!(!view.braced);
+        assert_eq!(view.made_way, None);
+    }
 }

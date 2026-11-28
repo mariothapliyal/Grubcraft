@@ -78,36 +78,41 @@ impl Spot {
 }
 
 /// Where the party is in its raid.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Phase {
-    /// No party out.
-    #[default]
-    Idle,
-    /// Going for workers, or at them.
-    Out,
+    /// No party out, and no new one is taken before `next_party`.
+    Idle { next_party: u32 },
+    /// Going for workers at `target`, or at them. The way there is given up
+    /// on at `trip_ends`; `started_with` is the soldiers it set out with,
+    /// and `watching` the worker regiments seen near the party and not yet
+    /// counted as gone.
+    Out {
+        target: Spot,
+        trip_ends: u32,
+        started_with: u32,
+        watching: Vec<RegimentHandle>,
+    },
     /// Running home, until the tick given at the latest.
     Falling(u32),
     /// Resting at the rally point until the tick given.
     Resting(u32),
 }
 
+impl Default for Phase {
+    fn default() -> Self {
+        Phase::Idle { next_party: 0 }
+    }
+}
+
 #[derive(Default)]
 pub struct Raider {
     regiments: Vec<RegimentHandle>,
     phase: Phase,
-    /// Soldiers at the first taking, and at the last setting out.
+    /// Soldiers at the first taking (kept through its rests).
     original: u32,
-    started_with: u32,
-    target: Option<Spot>,
-    /// The way to its target is given up on at this tick.
-    trip_ends: u32,
     /// Places left alone for a while.
     avoid: Vec<(Vec2, u32)>,
-    /// No new party is taken before this tick.
-    next_party: u32,
     rally: Option<Vec2>,
-    /// Worker regiments seen near the party and not yet counted as gone.
-    watching: Vec<RegimentHandle>,
     /// The workers in sight it goes for, as of its last update.
     prey: Vec<RegimentHandle>,
     /// Raids set out so far, and worker regiments seen go while a party
@@ -156,7 +161,7 @@ impl Raider {
         self.count_kills(s);
         self.regiments.retain(|h| s.view.get(*h).is_some());
         if self.regiments.is_empty() {
-            if self.phase != Phase::Idle {
+            if !matches!(self.phase, Phase::Idle { .. }) {
                 notes.push("The raiding party is lost".to_string());
                 self.end(s.now);
             }
@@ -165,8 +170,15 @@ impl Raider {
             self.end(s.now);
         }
         match self.phase {
-            Phase::Idle => self.take(s, army, waiting, recall, &name, &mut notes),
-            Phase::Out => self.out(s, &name, &mut notes),
+            Phase::Idle { next_party } => {
+                self.take(s, next_party, army, waiting, recall, &name, &mut notes);
+            }
+            Phase::Out {
+                target,
+                trip_ends,
+                started_with,
+                ..
+            } => self.out(s, target, trip_ends, started_with, &name, &mut notes),
             Phase::Falling(limit) => self.fall_back(s, limit, &mut notes),
             Phase::Resting(until) => self.rest(s, until, &name, &mut notes),
         }
@@ -177,25 +189,26 @@ impl Raider {
     /// party is taken for a while.
     fn end(&mut self, now: u32) {
         self.regiments.clear();
-        self.phase = Phase::Idle;
-        self.target = None;
-        self.watching.clear();
-        self.next_party = now + COOLDOWN;
+        self.phase = Phase::Idle {
+            next_party: now + COOLDOWN,
+        };
     }
 
     /// Take the fastest regiments waiting at the rally point, if there is
-    /// an army to spare them from, it is time, and there is somewhere to
-    /// go.
+    /// an army to spare them from, it is time (`next_party` has come), and
+    /// there is somewhere to go.
+    #[allow(clippy::too_many_arguments)]
     fn take(
         &mut self,
         s: &Sense,
+        next_party: u32,
         army: usize,
         waiting: &[&Seen],
         recall: bool,
         name: &impl Fn(u8) -> String,
         notes: &mut Vec<String>,
     ) {
-        if recall || s.now < FIRST_RAID || s.now < self.next_party {
+        if recall || s.now < FIRST_RAID || s.now < next_party {
             return;
         }
         if waiting.len() < PARTY || army < MIN_ARMY {
@@ -221,10 +234,13 @@ impl Raider {
         name: &impl Fn(u8) -> String,
         notes: &mut Vec<String>,
     ) {
-        self.phase = Phase::Out;
+        self.phase = Phase::Out {
+            target,
+            trip_ends: self.trip_ends(s, target),
+            started_with: self.soldiers(s),
+            watching: Vec::new(),
+        };
         self.raids += 1;
-        self.started_with = self.soldiers(s);
-        self.go_to(s, target);
         notes.push(format!(
             "Raiding {} {} with {} regiment{}",
             name(target.owner),
@@ -234,25 +250,32 @@ impl Raider {
         ));
     }
 
-    /// Head for `target`, giving up on the way there after a while.
-    fn go_to(&mut self, s: &Sense, target: Spot) {
+    /// The tick its way to `target` is given up on, if it heads there now.
+    fn trip_ends(&self, s: &Sense, target: Spot) -> u32 {
         let mid = self.middle(s).unwrap_or(target.at);
         let pace = self
             .members(s)
             .map(|r| s.view.pace(r))
             .fold(f32::MAX, f32::min)
             .clamp(0.5, 50.0);
-        self.target = Some(target);
-        self.trip_ends =
-            s.now + ((mid.distance(target.at) / pace) * 2.0 + 30.0) as u32 * TICKS_PER_SECOND;
+        s.now + ((mid.distance(target.at) / pace) * 2.0 + 30.0) as u32 * TICKS_PER_SECOND
     }
 
-    /// Going for workers: keep on while there are some, choose where next
-    /// when there are none, and fall back when it must.
-    fn out(&mut self, s: &Sense, name: &impl Fn(u8) -> String, notes: &mut Vec<String>) {
+    /// Going for workers at `target`, given up on at `trip_ends`, having
+    /// set out with `started_with` soldiers: keep on while there are some,
+    /// choose where next when there are none, and fall back when it must.
+    fn out(
+        &mut self,
+        s: &Sense,
+        target: Spot,
+        trip_ends: u32,
+        started_with: u32,
+        name: &impl Fn(u8) -> String,
+        notes: &mut Vec<String>,
+    ) {
         let Some(mid) = self.middle(s) else { return };
         // Soldiers lost, or enemy fighters about: run home.
-        if (self.soldiers(s) as f32) <= LOST_SHARE * self.started_with as f32 {
+        if (self.soldiers(s) as f32) <= LOST_SHARE * started_with as f32 {
             notes.push("The raid has cost too much: raiders falling back".to_string());
             self.fall_back_now(s, true);
             return;
@@ -263,24 +286,22 @@ impl Raider {
             return;
         }
         let prey = self.prey_in_sight(s, mid);
-        for r in &prey {
-            if !self.watching.contains(&r.handle) && self.watching.len() < 32 {
-                self.watching.push(r.handle);
+        if let Phase::Out { watching, .. } = &mut self.phase {
+            for r in &prey {
+                if !watching.contains(&r.handle) && watching.len() < 32 {
+                    watching.push(r.handle);
+                }
             }
         }
         self.prey = prey.iter().map(|r| r.handle).collect();
         // Where it was going: reached with no workers about, or given up
         // on. Workers in sight are taken wherever they are.
-        if let Some(t) = self.target
-            && prey.is_empty()
-        {
-            let reached = self.members(s).any(|r| r.pos.distance(t.at) <= LOOKED);
-            if reached || s.now >= self.trip_ends {
-                self.avoid.push((t.at, s.now + AVOID / 2));
-                self.target = None;
-            }
+        if !prey.is_empty() {
+            return;
         }
-        if self.target.is_none() && prey.is_empty() {
+        let reached = self.members(s).any(|r| r.pos.distance(target.at) <= LOOKED);
+        if reached || s.now >= trip_ends {
+            self.avoid.push((target.at, s.now + AVOID / 2));
             match self.choose(s, mid) {
                 Some(t) => {
                     notes.push(format!(
@@ -288,7 +309,13 @@ impl Raider {
                         name(t.owner),
                         t.what()
                     ));
-                    self.go_to(s, t);
+                    let ends = self.trip_ends(s, t);
+                    if let Phase::Out {
+                        target, trip_ends, ..
+                    } = &mut self.phase
+                    {
+                        (*target, *trip_ends) = (t, ends);
+                    }
                 }
                 None => {
                     notes.push("No workers left to raid: raiders falling back".to_string());
@@ -301,15 +328,14 @@ impl Raider {
     /// Start the run home; if the enemy drove them off the place they
     /// were going to, it is left alone for a while.
     fn fall_back_now(&mut self, s: &Sense, driven_off: bool) {
-        if driven_off && let Some(t) = self.target {
-            self.avoid.push((t.at, s.now + AVOID));
+        if driven_off && let Phase::Out { target, .. } = self.phase {
+            self.avoid.push((target.at, s.now + AVOID));
         }
         if driven_off && let Some(mid) = self.middle(s) {
             self.avoid.push((mid, s.now + AVOID));
         }
-        self.target = None;
-        // Workers that go from now on were not its doing.
-        self.watching.clear();
+        // Workers that go from now on were not its doing: what it was
+        // watching goes with the rest of its raid.
         self.phase = Phase::Falling(s.now + HOME_LIMIT);
     }
 
@@ -407,8 +433,11 @@ impl Raider {
     /// Count the worker regiments it has seen near the party that are
     /// gone from the field now.
     fn count_kills(&mut self, s: &Sense) {
+        let Phase::Out { watching, .. } = &mut self.phase else {
+            return;
+        };
         let mut gone = 0;
-        self.watching.retain(|h| {
+        watching.retain(|h| {
             let there = s.view.seen_at(*h).is_some();
             gone += u32::from(!there);
             there
@@ -465,7 +494,7 @@ impl Raider {
             );
         };
         match self.phase {
-            Phase::Idle => {}
+            Phase::Idle { .. } => {}
             Phase::Falling(_) | Phase::Resting(_) => {
                 // Running home comes before anything else it was told.
                 let priority = ROUTINE + u8::from(matches!(self.phase, Phase::Falling(_)));
@@ -473,7 +502,7 @@ impl Raider {
                     walk(wants, rally, priority);
                 }
             }
-            Phase::Out if !self.prey.is_empty() => {
+            Phase::Out { .. } if !self.prey.is_empty() => {
                 // Each goes for the worker nearest it.
                 for me in self.members(s) {
                     let nearest = self
@@ -491,11 +520,7 @@ impl Raider {
                     }
                 }
             }
-            Phase::Out => {
-                if let Some(t) = self.target {
-                    walk(wants, t.at, ROUTINE);
-                }
-            }
+            Phase::Out { target, .. } => walk(wants, target.at, ROUTINE),
         }
     }
 
@@ -505,8 +530,8 @@ impl Raider {
         let n = self.regiments.len();
         let regiments = format!("{n} regiment{}", if n == 1 { "" } else { "s" });
         let seconds = |t: u32| t.saturating_sub(now).div_ceil(TICKS_PER_SECOND);
-        match (self.phase, self.target) {
-            (Phase::Out, Some(t)) => format!(
+        match self.phase {
+            Phase::Out { target: t, .. } => format!(
                 "{regiments} {} {} {} at ({:.0}, {:.0})",
                 if t.workers {
                     "raiding"
@@ -518,15 +543,14 @@ impl Raider {
                 t.at.x,
                 t.at.y
             ),
-            (Phase::Out, None) => format!("{regiments} raiding, choosing where next"),
-            (Phase::Falling(_), _) => format!("{regiments} falling back to the rally point"),
-            (Phase::Resting(until), _) => {
+            Phase::Falling(_) => format!("{regiments} falling back to the rally point"),
+            Phase::Resting(until) => {
                 format!("{regiments} resting at the rally, {}s more", seconds(until))
             }
-            (Phase::Idle, _) if now < self.next_party => {
-                format!("none out, sends another in {}s", seconds(self.next_party))
+            Phase::Idle { next_party } if now < next_party => {
+                format!("none out, sends another in {}s", seconds(next_party))
             }
-            (Phase::Idle, _) => "none out".to_string(),
+            Phase::Idle { .. } => "none out".to_string(),
         }
     }
 }

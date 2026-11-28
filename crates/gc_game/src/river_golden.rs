@@ -110,6 +110,7 @@ pub fn record() -> Replay {
     }
     let mut replay = rec.finish();
     replay.header.map = Some(GROWN as u8);
+    replay.header.map_maker = Some(gc_map::MAP_MAKER);
     replay.note = format!(
         "{NAME}: Conquest recorded from gc_game's river_golden.rs, seed {SEED}, grown land; Clans v Clans felling and dumping into the river, scripted, \
          {MINUTES} minutes"

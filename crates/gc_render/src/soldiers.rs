@@ -1033,13 +1033,18 @@ impl SoldiersGpu {
     /// Build the planned soldiers' bone matrices, then pose their vertices
     /// with them. `world` is the camera's bind group, which holds the
     /// terrain the soldiers stand on.
-    pub fn skin(&self, encoder: &mut wgpu::CommandEncoder, world: &wgpu::BindGroup) {
+    pub fn skin(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        world: &wgpu::BindGroup,
+        timer: Option<&mut crate::timing::GpuTimer>,
+    ) {
         let Some(models) = self.models.as_ref().filter(|_| self.threads > 0) else {
             return;
         };
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("skin soldiers"),
-            timestamp_writes: None,
+            timestamp_writes: timer.and_then(|t| t.compute_pass("skin")),
         });
         pass.set_bind_group(0, world, &[]);
         pass.set_bind_group(1, &models.skin_group, &[]);

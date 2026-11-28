@@ -162,7 +162,7 @@ pub fn set_out(
     units: &[UnitStats],
     factions: &[Faction],
     points: &[u32],
-    plateaus: [Vec2; START_PLATEAUS],
+    plateaus: &[Vec2],
     roll: u64,
     deploy: bool,
     minds: &mut Minds,
@@ -175,7 +175,7 @@ pub fn set_out(
     let starts = battle_starts(&teams, perspective, plateaus);
     // Where each zone goes: the start, or where its army ended up.
     let mut zones = starts.clone();
-    let middle = plateaus.iter().copied().sum::<Vec2>() / START_PLATEAUS as f32;
+    let middle = plateaus.iter().copied().sum::<Vec2>() / plateaus.len().max(1) as f32;
     // People get a deployment phase; computer players alone don't need one.
     let deployment = players.iter().any(|s| s.kind == SlotKind::Human);
     let mut set = SetOut {
@@ -339,7 +339,31 @@ fn zone_radius(placed: &[army::Placement], starts: &[Vec2], who: usize) -> i32 {
 /// south-east, north, south). The camera looks north, so this machine's
 /// player and its allies take the south and everyone else the north, then
 /// what is left. The lobby has six slots, so there is a plateau for everyone.
-pub fn battle_starts(teams: &[u8], me: usize, plateaus: [Vec2; START_PLATEAUS]) -> Vec<Vec2> {
+///
+/// Measured land made for three or five players has that many starts
+/// round a ring instead, the first the furthest south (docs/27, 3 and 5
+/// players): this machine's player takes it, then its allies the next
+/// round the ring, then each other team in turn, so allies stand side by
+/// side.
+pub fn battle_starts(teams: &[u8], me: usize, plateaus: &[Vec2]) -> Vec<Vec2> {
+    if plateaus.len() != START_PLATEAUS {
+        // A ring is made for as many players as there are.
+        debug_assert!(
+            teams.len() <= plateaus.len(),
+            "{} on a ring of {}",
+            teams.len(),
+            plateaus.len()
+        );
+        let mine = teams.get(me).copied();
+        let first_of = |t: u8| teams.iter().position(|&x| x == t);
+        let mut order: Vec<usize> = (0..teams.len()).collect();
+        order.sort_by_key(|&p| (p != me, Some(teams[p]) != mine, first_of(teams[p]), p));
+        let mut starts = vec![Vec2::ZERO; teams.len()];
+        for (slot, p) in order.into_iter().enumerate() {
+            starts[p] = plateaus[slot % plateaus.len().max(1)];
+        }
+        return starts;
+    }
     // Four or fewer keep to the corners; the middles are for five or six.
     let crowd = teams.len() > 4;
     let mut south = vec![plateaus[2], plateaus[3]];
@@ -668,27 +692,32 @@ fn champion_news(
     }
 }
 
-/// `--battle`: you against one AI of `level`, as the lobby would set it up.
-/// The AI plays your faction, on the map a new lobby starts on, made from
+/// `--battle`: you against one AI of `level` (or, with `--players N`, each
+/// of `players - 1` for themselves), as the lobby would set it up. The AIs
+/// play your faction, on the map a new lobby starts on, made from
 /// `map_seed`.
-pub fn quick_battle(level: u8, settings: &Settings, map_seed: u64) -> MatchStart {
+pub fn quick_battle(level: u8, settings: &Settings, map_seed: u64, players: usize) -> MatchStart {
     let mut me = Slot::open(0);
     me.kind = SlotKind::Human;
     me.name.clone_from(&settings.player_name);
     me.faction = settings.faction;
     me.color = settings.player_color % COLORS;
-    let mut ai = Slot::open(1);
-    ai.kind = SlotKind::Ai;
-    ai.name = "AI 2".into();
-    ai.faction = me.faction;
-    ai.color = (me.color + 1) % COLORS;
-    ai.ai_level = level;
+    let mut slots = vec![me];
+    for k in 1..players.clamp(2, 6) {
+        let mut ai = Slot::open(k);
+        ai.kind = SlotKind::Ai;
+        ai.name = format!("AI {}", k + 1);
+        ai.faction = slots[0].faction;
+        ai.color = (slots[0].color + k as u8) % COLORS;
+        ai.ai_level = level;
+        slots.push(ai);
+    }
     MatchStart {
         settings: LobbySettings {
             map_seed,
             ..LobbySettings::default()
         },
-        players: vec![me, ai],
+        players: slots,
         local_player: 0,
         seed: None,
     }
@@ -708,13 +737,13 @@ pub(crate) mod tests {
         let p = plateau_positions(MAP);
         let (nw, ne, sw, se, n, s) = (p[0], p[1], p[2], p[3], p[4], p[5]);
         // One against one.
-        assert_eq!(battle_starts(&[0, 1], 0, p), vec![sw, nw]);
+        assert_eq!(battle_starts(&[0, 1], 0, &p), vec![sw, nw]);
         // You in the second slot.
-        assert_eq!(battle_starts(&[0, 1], 1, p), vec![nw, sw]);
+        assert_eq!(battle_starts(&[0, 1], 1, &p), vec![nw, sw]);
         // Two against two, allies in slots 0 and 2.
-        assert_eq!(battle_starts(&[0, 1, 0, 1], 0, p), vec![sw, nw, se, ne]);
+        assert_eq!(battle_starts(&[0, 1, 0, 1], 0, &p), vec![sw, nw, se, ne]);
         // Everyone for themselves: four different plateaus.
-        let ffa = battle_starts(&[0, 1, 2, 3], 2, p);
+        let ffa = battle_starts(&[0, 1, 2, 3], 2, &p);
         assert_eq!(ffa[2], sw);
         for (i, a) in ffa.iter().enumerate() {
             for b in &ffa[i + 1..] {
@@ -724,20 +753,20 @@ pub(crate) mod tests {
         // Three against three: you and your allies fill the south (you
         // first), the others the north.
         let teams = [0, 1, 0, 1, 0, 1];
-        let trio = battle_starts(&teams, 0, p);
+        let trio = battle_starts(&teams, 0, &p);
         assert_eq!(trio, vec![sw, nw, se, ne, s, n]);
         // The same, seen from the other side's first slot.
-        assert_eq!(battle_starts(&teams, 1, p), vec![nw, sw, ne, se, n, s]);
+        assert_eq!(battle_starts(&teams, 1, &p), vec![nw, sw, ne, se, n, s]);
         // Three pairs: each pair holds a column, yours the west.
-        let pairs = battle_starts(&[0, 1, 2, 0, 1, 2], 0, p);
+        let pairs = battle_starts(&[0, 1, 2, 0, 1, 2], 0, &p);
         assert_eq!(pairs, vec![sw, se, s, nw, ne, n]);
         // Three alone still face each other across the map, and four or
         // fewer keep to the corners whatever their teams.
-        assert_eq!(battle_starts(&[0, 1, 2], 0, p), vec![sw, nw, ne]);
-        assert_eq!(battle_starts(&[0, 1, 2, 3], 0, p), vec![sw, nw, ne, se]);
-        assert_eq!(battle_starts(&[0, 1, 2, 0], 0, p), vec![sw, nw, ne, se]);
+        assert_eq!(battle_starts(&[0, 1, 2], 0, &p), vec![sw, nw, ne]);
+        assert_eq!(battle_starts(&[0, 1, 2, 3], 0, &p), vec![sw, nw, ne, se]);
+        assert_eq!(battle_starts(&[0, 1, 2, 0], 0, &p), vec![sw, nw, ne, se]);
         // Six for themselves: six different plateaus.
-        let ffa = battle_starts(&[0, 1, 2, 3, 4, 5], 3, p);
+        let ffa = battle_starts(&[0, 1, 2, 3, 4, 5], 3, &p);
         assert_eq!(ffa[3], sw);
         for (i, a) in ffa.iter().enumerate() {
             assert!(p.contains(a));
@@ -745,6 +774,21 @@ pub(crate) mod tests {
                 assert_ne!(a, b);
             }
         }
+    }
+
+    /// On a ring of three or five starts (Measured land for that many),
+    /// you take the first (furthest south), your allies the next ones
+    /// round, then each other team in turn.
+    #[test]
+    fn a_ring_seats_allies_side_by_side() {
+        let ring: Vec<Vec2> = (0..5).map(|i| Vec2::new(i as f32, 0.0)).collect();
+        // Two against three, you in the trio's second slot.
+        let starts = battle_starts(&[0, 1, 0, 1, 1], 1, &ring);
+        assert_eq!(starts, vec![ring[3], ring[0], ring[4], ring[1], ring[2]]);
+        // Everyone for themselves: each a start of their own, you first.
+        let three = &ring[..3];
+        let ffa = battle_starts(&[0, 1, 2], 2, three);
+        assert_eq!(ffa, vec![ring[1], ring[2], ring[0]]);
     }
 
     /// The AI level called `name`, or the Veteran for no name.
@@ -832,7 +876,7 @@ pub(crate) mod tests {
         let mut armies = 0;
         for map in &maps {
             let nav = map.sim_nav_costs();
-            let starts = crate::terrain_view::field_starts(map);
+            let starts = crate::terrain_view::field_starts(map, START_PLATEAUS);
             for (who, teams) in [
                 (vec![None, Some(Difficulty::Veteran)], vec![0, 1]),
                 (vec![None; 4], vec![0, 1, 0, 1]),
@@ -846,7 +890,7 @@ pub(crate) mod tests {
                 let mut minds = Minds::new(ai_terrain(map, &nav));
                 let mut out = Vec::new();
                 set_out(
-                    &setup, &units, &factions, &points, starts, 1, true, &mut minds, &mut out,
+                    &setup, &units, &factions, &points, &starts, 1, true, &mut minds, &mut out,
                 );
                 let ground = minds.terrain();
                 let spawns: Vec<_> = out
@@ -905,7 +949,7 @@ pub(crate) mod tests {
                 &units,
                 &factions,
                 &points,
-                plateau_positions(MAP),
+                &plateau_positions(MAP),
                 1,
                 true,
                 &mut minds,
@@ -975,7 +1019,7 @@ pub(crate) mod tests {
                 &units,
                 &factions,
                 &points,
-                plateau_positions(MAP),
+                &plateau_positions(MAP),
                 3,
                 true,
                 &mut minds,
@@ -1076,7 +1120,7 @@ pub(crate) mod tests {
                 &units,
                 &factions,
                 &points,
-                plateau_positions(MAP),
+                &plateau_positions(MAP),
                 3,
                 true,
                 &mut minds,
@@ -1427,6 +1471,7 @@ pub(crate) mod tests {
                     choice: gc_map::GROWN + k,
                     tiles: 256,
                     seed,
+                    ring: 0,
                 }
                 .make();
                 let setup = lobby(
@@ -1444,6 +1489,39 @@ pub(crate) mod tests {
                 assert!(
                     met.is_some_and(|s| s < 600),
                     "{k} seed {seed}: the armies never met"
+                );
+            }
+        }
+    }
+
+    /// Three and five computer players round a ring of starts (Measured
+    /// land made for that many, docs/27) find each other and fight it
+    /// out: three for themselves on 256 tiles, two against three on 320
+    /// (the Small sizes the lobby makes for them).
+    #[test]
+    #[ignore = "slow: plays battles on ring maps, run by hand in release"]
+    fn ring_battles_meet() {
+        let n: u64 = std::env::var("AI_BATTLES").map_or(2, |v| v.parse().unwrap());
+        let vet = Some(Difficulty::Veteran);
+        let games: [(&[u8], u32); 2] = [(&[0, 1, 2], 256), (&[0, 1, 0, 1, 1], 320)];
+        for (teams, tiles) in games {
+            let slots = vec![vet; teams.len()];
+            for seed in 1..=n {
+                let map = gc_map::FieldMap::new(gc_map::MEASURED, tiles, seed, teams.len()).make();
+                assert_eq!(map.starts().len(), teams.len());
+                let setup = lobby(&slots, teams);
+                let played = play_on(&setup, seed, 20, map, |_| {});
+                let met = played.first_contact.map(|t| t / gc_sim::TICKS_PER_SECOND);
+                println!(
+                    "{} players seed {seed}: met at {met:?} s, {:?} after {} s",
+                    teams.len(),
+                    played.battle.outcome,
+                    played.ticks / gc_sim::TICKS_PER_SECOND
+                );
+                assert!(
+                    met.is_some_and(|s| s < 600),
+                    "{} players seed {seed}: the armies never met",
+                    teams.len()
                 );
             }
         }

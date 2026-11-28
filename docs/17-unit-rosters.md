@@ -180,9 +180,9 @@ A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Gnawer | 1 | Worker | 50 / 0 | 1 | 12 | Hive | 1 × 18 | 1 | 3.25 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | — | |
-| Skitterlings | 1 | Light | 65 / 0 | 2 | 13 | Hive | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 46 / 22 / 3 | 40 | 60 | |
-| Chitin Guard | 1 | Heavy | 90 / 0 | 4 | 22 | Hive | 12 × 12 | 6 | 2.75 | 70 | 0.9 / 1.0 | 24 / 45 / 4 | 15 | 60 | |
-| Reclaimer | 1 | Support | 75 / 0 | 2 | 18 | Hive | 1 × 60 | 1 | 2.5 | 120 | 1.5 / 1.5 | 10 / 20 / 3 | 0 | 40 | |
+| Skitterlings | 1 | Light | 90 / 0 | 3 | 13 | Hatchery Pit | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 46 / 22 / 3 | 40 | 60 | |
+| Chitin Guard | 1 | Heavy | 90 / 0 | 4 | 22 | Hatchery Pit | 12 × 12 | 6 | 2.75 | 70 | 0.9 / 1.0 | 24 / 45 / 4 | 15 | 60 | |
+| Reclaimer | 1 | Support | 75 / 0 | 2 | 18 | Hatchery Pit | 1 × 60 | 1 | 2.5 | 120 | 1.5 / 1.5 | 10 / 20 / 3 | 0 | 40 | |
 | Spitters | 2 | Ranged | 50 / 15 | 3 | 15 | Skitterlings | 16 × 5 | 8 | 3.5 | 100 | 0.8 / 0.9 | 17 / 15 / 2 | 5 | 45 | 22, 3, 3.0 s, 35% |
 | Burrowers | 2 | Light | 60 / 15 | 3 | 15 | Skitterlings | 16 × 7 | 8 | 4.0 | 110 | 0.8 / 0.8 | 38 / 25 / 3 | 50 | 50 | |
 | Mantid Reapers | 2 | Spear | 70 / 25 | 4 | 15 | Chitin Guard | 12 × 11 | 6 | 3.25 | 90 | 1.0 / 1.1 | 47 / 35 / 6 | 25 | 65 | |
@@ -191,7 +191,7 @@ A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (
 | Broodmother Bulk | 2 | Artillery | 160 / 60 | 4 | 35 | Gorge | 1 × 380 | 1 | 1.75 | 45 | 3.0 / 3.0 | 15 / 25 / 8 | 0 | 55 | 45, 10, 12.0 s, 30% |
 | Colossus Maw | 3 | Monster | 260 / 140 | 6 | 55 | Gorge | 1 × 600 | 1 | 2.5 | 70 | 3.5 / 3.5 | 55 / 35 / 28 | 50 | 95 | |
 
-Brood regiments are hatched from larvae at a Hive or Hatchery Pit; "Hive" above means either.
+Every Brood regiment hatches from a larva, which can come from any Hive or Hatchery Pit. Gnawers hatch at a Hive and tier-1 fighters at a Hatchery Pit, so the Pit is the Brood's barracks (2026-11-27, Mario: 11 regiments by 5:00 was too many). With the Pit and a Recruit's 30 s between regiments ([18](18-ai.md)), the AI's Brood have about 7 fighting regiments at 5:00 on Recruit (down from 10 or 11) and 6 on Veteran (down from 9 or 10). Dearer Skitterlings were tried and dropped: at 90 Grub and 3 supply the Brood won 3 of 192 Conquest games at Veteran, and at 75 Grub 35 of 192; at 65 they win 73 of 192, as before the Pit (75).
 
 **Summoned**
 
@@ -574,6 +574,25 @@ Fights went from about 95-120 s to 105-140 s, whole battles from about 175 s to 
 <a id="shattered-leave"></a>**Shattered regiments leave the field (2026-11-01).** A shattered regiment used to stand on the map for the rest of a Conquest match, taking no orders but still using supply. In long games that filled half of a Clans or Brood army's supply with men who would never fight again, while the Concord's undead, who never rout, kept all of theirs: on main the Concord won all 16 four-AI test games (General, grown Medium land). Now a shattered regiment leaves the field once no enemy is near ([05](05-combat.md)), which takes away the Concord's hidden edge: one-on-one on Ribcage Pass it fell from 47 wins in 96 to 12. Bone Pikes 125 to 100 Grub and Crossbow Auditors 150 to 125 put it back: Clans 41, Brood 47, Choir 48, Concord 45 wins in 96 each (seeds 1 to 8 and 101 to 108; main read 47, 34, 55, 47). Tried and dropped: Bone Pikes at 2 supply instead of 3 (Concord 16 of 96; it was not short of supply, it was outnumbered by armies that no longer carried their dead).
 
 <a id="even-conquest"></a>**Even Conquest (2026-10-31, faction rebalance PR 4).** After the even early game, the Brood swarm cut and the holding-until-bloodied morale rules, the Conquest tournament (96 headless AI-vs-AI games for each faction, seeds 1 to 8 and 101 to 108) read Ember Clans 66%, Concord 65%, Choir 35% and Brood 28%: the Clans traded 1.27 worth killed for each worth lost and the Choir 0.78. The pass changes only Conquest numbers that Field Battles do not use: Bone Pikes 110 to 125 Grub, Crossbow Auditors 140 to 150, Shardlings 110 to 100, Prism Lancers 140 to 125, Skitterlings 70 to 65, Chitin Guard 100 to 90, Katana Samurai attack 55 to 50, Mounted Samurai attack 45 to 40, and Hands `gather_percent` 150 to 135 (docs/04). On the same seeds the table reads Clans 49%, Brood 50%, Choir 51% and Concord 43%, and on fresh seeds (201 to 208 and 301 to 308) Clans 49%, Brood 43%, Choir 52% and Concord 46%. Tried and dropped: Yari Ashigaru defence 45 to 40 evened Conquest as well, but the Yari also fight in Field Battles, where it put the Clans at 11% to 16% against everyone; dearer Yari and Katana (140 and 195 Grub) made the Clans stronger (84%), because the AI built other regiments; Hands at 140 or 150 with the rest of this pass left the Clans at 58% and 62%; a smaller Concord purse (300) and slower Hands alone barely moved the table. The knobs are steep and the AI's choices matter as much as the numbers, so re-run the tournament after any Conquest change.
+
+### Balance tournament
+
+<a id="balance-tournament"></a>Since 2026-11-22 (docs/29 items 3 and 4) one test plays the whole balance tournament and judges it: `balance_gate::balance_tournament` in `gc_game`.
+
+- **What it plays.** Every pair of the four factions plays Conquest one-on-one at Veteran on two maps: Ribcage Pass, and grown land at Medium size (the lobby's default Conquest map). Each pair plays on two seed sets, from seeds 1 and 101, with 8 seeds a set. Each seed is played from both starts, for up to 40 minutes. Every pair also plays Field Battles on the lobby's full rosters (the [roster table](#roster-field-table) above), 32 battles a pair on each of two seed sets, from seeds 1 and 1001. In all that is 384 Conquest games and 384 battles, about 15 minutes on 4 cores.
+- **What it reports.** `target/balance/tournament.md`, which is also shown on the CI run page, has:
+  - each pair's share of the decided games on each set and on both together, with undecided games, game length and worth killed;
+  - for each faction, when its first army is ready (fighters worth 450 Grub, counting Marrow twice) and in how many games it gets there;
+  - when its first attack lands (its fighters' first kill);
+  - its Grub and Marrow a minute by 5 and 10 minutes;
+  - which units decide its games: an estimated share of the kills, and the units in its armies at the end of the games it won.
+- **The gate.** A pair fails when both seed sets put it outside 40 to 60% on the same side, and the one-sided 95% interval over both sets lies outside the band too. With these game counts, an even pair fails by chance well under once in a hundred runs, while a pair at 75% or more is caught. A faction also fails when its first army is ready 60 s before every other faction's. The notes list pairs that are outside the band but within the noise, pairs where many games end undecided, and first armies more than 30 s apart (the even early game's target). A game where a faction's first army never came counts at that game's end in its average.
+- **Where it runs.**
+  - In the batch (`batch.yml`), in place of the old `conquest_balance` and `roster_field_table` steps.
+  - On every pull request that changes a file listed in `scripts/balance-paths` (unit stats, rosters, combat, morale, the economy, larvae and evolutions, start stores, roster baking, the tournament and its Conquest harness), or that carries the `balance` label (`balance-gate.yml`). A PR that means to move balance past the band says why and adds `balance-accepted`.
+  - In `scripts/pre-pr-check.sh` with `BALANCE=1`.
+- **Running it by hand.** `cargo test --release -p gc_game balance_tournament -- --ignored --nocapture`. `BALANCE_FACTION=Brood` (or `"Ember Clans"`) plays only that faction's pairs. `BALANCE_MAPS=ribcage` plays one map, and `BALANCE_FIELD=off` leaves out the Field Battles. `BALANCE_GAMES` and `BALANCE_BATTLES` change the counts, and `BALANCE_LEVEL` the level.
+- **Report only for now.** On 2026-11-22 main failed 8 pairs (5 after the Brood start fix), so the report says FAIL but the test fails only with `BALANCE_STRICT=1`, which the workflows don't set yet (`GATE` in `balance-gate.yml`, `BALANCE_STRICT` in `batch.yml`). The rebalance that brings main inside the band sets them.
 
 ### Weapon flags and mass
 

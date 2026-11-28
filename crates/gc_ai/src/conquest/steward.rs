@@ -147,6 +147,9 @@ pub struct Steward {
     /// see them in the world): the building, the unit if one is to be
     /// trained, and when.
     busy: Vec<(StructureHandle, Option<UnitId>, u32)>,
+    /// When it last ordered a regiment at each production building, for a
+    /// level that spaces its training out ([`Strategy::train_gap`]).
+    trained: Vec<(StructureHandle, u32)>,
     /// Nodes it found no spot to tune from.
     untunable: Vec<u16>,
     /// It is short of an army: it trains soldiers first, and puts off
@@ -1451,7 +1454,7 @@ impl Steward {
         let (save_grub, save_marrow) = self.ledger.saving;
         let mix = self.mix(s);
         for m in look.mine.iter().filter(|m| m.finished()) {
-            if self.queued(p, m.view.handle) >= QUEUE {
+            if self.queued(p, m.view.handle) >= QUEUE || self.spacing(s, m.view.handle) {
                 continue;
             }
             let options: Vec<&KitUnit> = s
@@ -1517,7 +1520,18 @@ impl Steward {
             bank.supply_used += u32::from(unit.unit.supply);
             count(unit.id, &mut by_class, &mut breakers);
             self.busy.push((m.view.handle, Some(unit.id), s.now));
+            if s.plan.train_gap > 0 {
+                self.trained.retain(|&(h, _)| h != m.view.handle);
+                self.trained.push((m.view.handle, s.now));
+            }
         }
+    }
+
+    /// Whether building `h` ordered a regiment too lately for its level
+    /// to order another ([`Strategy::train_gap`]).
+    fn spacing(&self, s: &Sense, h: StructureHandle) -> bool {
+        let gap = s.plan.train_gap;
+        gap > 0 && (self.trained.iter()).any(|&(b, at)| b == h && s.now < at.saturating_add(gap))
     }
 
     /// Whether it must build up its army before anything else: for a level

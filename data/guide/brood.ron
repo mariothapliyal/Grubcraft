@@ -4,8 +4,8 @@
     buildings: [
         (
             name: "Hive",
-            blurb: "Your starting base: holds 3 larvae, spawns one every 12 seconds and carries Grub from seeps. Hatches all regiments.",
-            summary: "Your starting base. It holds 3 larvae and spawns one every 12 seconds, and every regiment hatches from a larva, so larvae often limit your army before Grub does. Its root-veins carry Grub from your seeps. Upgrade to the Great Hive for flyers and artillery. Workers clear woods and scrub (S) to make room; cleared ground is open.",
+            blurb: "Your starting base: holds 3 larvae, spawns one every 12 s, carries Grub from seeps and hatches Gnawers.",
+            summary: "Your starting base. It holds 3 larvae and spawns one every 12 seconds, and every regiment hatches from a larva (fighters at a Hatchery Pit), so larvae often limit your army before Grub does. Its root-veins carry Grub from your seeps. Upgrade it for flyers and artillery. Workers clear woods and scrub (S) to make room; cleared ground is open.",
             notes: [
                 ("Great Hive", "The gate to the mid game: the Chrysalis Chamber, Drone-Moths, the Broodmother Bulk and a second hero. Upgrading uses no Gnawer, but it costs Marrow."),
             ],
@@ -52,8 +52,8 @@
         ),
         (
             name: "Hatchery Pit",
-            blurb: "Holds 3 more larvae and spawns its own. Build a few when Grub piles up and the Hive has no larvae left.",
-            summary: "Holds 3 more larvae and spawns its own every 12 seconds. Each pit raises how fast you can field regiments. Build a few when Grub piles up while the Hive has no larvae left.",
+            blurb: "Your barracks: Skitterlings, Chitin Guard and Reclaimers hatch here. Holds 3 more larvae and spawns its own.",
+            summary: "The Brood's barracks: your tier-1 fighters hatch here, from any larva, so build one early. It also holds 3 more larvae and spawns its own every 12 seconds, so each extra pit raises how fast you can field regiments. Build more when Grub piles up while the Hive has no larvae left.",
             notes: [],
             tips: [
                 (icon: Hammer, text: "Build a few rather than one; each pit adds 3 larvae and spawns its own every 12 s."),

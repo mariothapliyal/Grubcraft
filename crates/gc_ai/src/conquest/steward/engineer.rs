@@ -123,6 +123,24 @@ const CLEAR_RUN: usize = 6;
 /// A straight line of tiles, from one tile to another.
 type Line = ((i32, i32), (i32, i32));
 
+/// Where it stands with its bridge (see [`Steward::bridge`]).
+#[derive(Clone, Copy, Debug, Default)]
+enum Bridge {
+    /// It hasn't looked for a crossing yet.
+    #[default]
+    Unlooked,
+    /// The crossing it means to draw, and its tiles, not yet ordered.
+    Planned { path: DrawnPath, tiles: u32 },
+    /// Ordered last at `sent`, `tries` times in all: an order the sim
+    /// turned down (the Grub spent meanwhile, its worker taken, another
+    /// side's deck in the way) is sent again, over the crossing found by a
+    /// fresh look, [`BRIDGE_TRIES`] times at most.
+    Ordered { sent: u32, tries: u8 },
+    /// No bridge: it needs or can draw none, or has drawn it, or has run
+    /// out of tries. It looks no more.
+    Done,
+}
+
 /// The walls it has laid out round home (see [`ringwork`]).
 #[derive(Clone, Debug)]
 struct Works {
@@ -167,8 +185,13 @@ pub(super) struct Engineer {
     works: Option<Works>,
     /// Whether its ring has ever closed (so a gap in it now is a breach).
     closed: bool,
-    /// No ring could be laid out: look again from then.
+    /// No ring could be laid out (or a gate was given up): look again from
+    /// then.
     next_line: u32,
+    /// The last look found no ring to lay out at all, as against a gate
+    /// given up, whose ring is laid out again (with its gate elsewhere) at
+    /// `next_line`. Only the first lets the towers go up without a wall.
+    no_line: bool,
     /// Where it gave a gate up (troops never left its ground, or it was
     /// built on): the next is put somewhere else.
     no_gate: Vec<(i32, i32)>,
@@ -185,15 +208,8 @@ pub(super) struct Engineer {
     /// Regiments sent to plant stakes.
     staked: Vec<RegimentHandle>,
     traps: u8,
-    /// The bridge it means to draw: `None` until it has looked, then the
-    /// path over the crossing and its tiles, or none where it needs or can
-    /// draw none (or has drawn it).
-    bridge: Option<Option<(DrawnPath, u32)>>,
-    /// When it last ordered that bridge, and how often: an order the sim
-    /// turned down (the Grub spent meanwhile, its worker taken) is sent
-    /// again, [`BRIDGE_TRIES`] times at most.
-    bridge_sent: Option<u32>,
-    bridge_tries: u8,
+    /// The bridge it means to draw, and how far it has got with it.
+    bridge: Bridge,
     /// When it next looks for thicket in the way, and the worker it last
     /// sent to clear some (no other is sent while that one is at it).
     next_clear: u32,
@@ -204,11 +220,32 @@ impl Engineer {
     /// Whether its front wall is all drawn (its gate laid and every line
     /// drawn or given up), or it has given up looking for a line: towers
     /// come after the wall, so they don't take its Grub or its ground.
+    /// Waiting to lay the ring out again after giving a gate up is not
+    /// giving up: the new gate comes before the towers.
     pub(super) fn walled(&self, now: u32) -> bool {
         match &self.works {
             Some(w) => w.gate.is_none() && !w.pieces.iter().any(|p| p.round <= FRONT),
-            None => self.next_line > now && now >= TOWERS_ANYWAY,
+            None => self.no_line && self.next_line > now && now >= TOWERS_ANYWAY,
         }
+    }
+
+    /// No ring could be laid out: it looks again in a while, and towers may
+    /// go up meanwhile once it is late enough.
+    fn no_line_fits(&mut self, now: u32) {
+        self.next_line = now + LINE_RETRY;
+        self.no_line = true;
+    }
+
+    /// The gate at `mid` (the middle of its ground) is given up: the ring
+    /// is laid out again shortly, with its gate somewhere else.
+    fn give_up_gate(&mut self, now: u32, mid: (i32, i32)) {
+        if self.no_gate.len() >= NO_GATES {
+            self.no_gate.clear();
+        }
+        self.no_gate.push(mid);
+        self.works = None;
+        self.no_line = false;
+        self.next_line = now + BREACH_RETRY;
     }
 
     /// The ground its buildings keep off: the lines of wall still to
@@ -358,7 +395,7 @@ impl Steward {
         if again {
             let works = lay_works(s, look, home, &self.engineer.no_gate);
             if works.is_none() && self.engineer.works.is_none() {
-                self.engineer.next_line = s.now + LINE_RETRY;
+                self.engineer.no_line_fits(s.now);
             }
             // Raised stretches stay raised: only a new gate's are looked
             // at again.
@@ -400,13 +437,8 @@ impl Steward {
             // Its ground taken meanwhile, or troops that never leave it:
             // the ring is laid out again, with its gate somewhere else.
             if laid.is_err() {
-                if self.engineer.no_gate.len() >= NO_GATES {
-                    self.engineer.no_gate.clear();
-                }
                 let mid = (tile.0 + i32::from(turn == 1), tile.1 + i32::from(turn == 0));
-                self.engineer.no_gate.push(mid);
-                self.engineer.works = None;
-                self.engineer.next_line = s.now + BREACH_RETRY;
+                self.engineer.give_up_gate(s.now, mid);
                 return None;
             }
             let w = self.builder_at(s, look, tile)?;
@@ -693,36 +725,53 @@ impl Steward {
     /// crossing near the straight way to the nearest. It looks once.
     fn bridge(&mut self, s: &Sense, look: &Look, home: Vec2, spare: u32) -> Option<Order> {
         let b = s.kit.works(Role::Bridge)?;
-        if matches!(self.engineer.bridge, Some(None)) {
-            return None;
-        }
-        // Ordered: drawn once a deck of its own lies there, else the way is
-        // looked for again after a while, since another side's deck may now
-        // stand on the one it chose.
-        if let Some(sent) = self.engineer.bridge_sent {
-            let drawn = look.mine.iter().any(|m| m.stats.role == Role::Bridge);
-            if drawn || self.engineer.bridge_tries >= BRIDGE_TRIES {
-                self.engineer.bridge = Some(None);
-                return None;
-            }
-            if s.now < sent + BRIDGE_RETRY {
-                return None;
-            }
-            self.engineer.bridge = None;
-        }
-        let (path, tiles) = (*self.engineer.bridge.get_or_insert_with(|| {
+        let crossing = || {
             let target = super::super::nearest_other_start(s, home)?;
             if !s.terrain.cut_off(home, super::super::other_starts(s, home)) {
                 return None;
             }
             narrowest_crossing(s, b.id, home, target)
-        }))?;
+        };
+        let (path, tiles, tries) = match self.engineer.bridge {
+            Bridge::Done => return None,
+            Bridge::Planned { path, tiles } => (path, tiles, 0),
+            // Its first look: the crossing it finds is planned, and ordered
+            // below if it can be now.
+            Bridge::Unlooked => {
+                let Some((path, tiles)) = crossing() else {
+                    self.engineer.bridge = Bridge::Done;
+                    return None;
+                };
+                self.engineer.bridge = Bridge::Planned { path, tiles };
+                (path, tiles, 0)
+            }
+            // Ordered: drawn once a deck of its own lies there, else it looks
+            // for the way again after a while, since another side's deck may
+            // now stand where it meant to draw, and orders that.
+            Bridge::Ordered { sent, tries } => {
+                let drawn = look.mine.iter().any(|m| m.stats.role == Role::Bridge);
+                if drawn || tries >= BRIDGE_TRIES {
+                    self.engineer.bridge = Bridge::Done;
+                    return None;
+                }
+                if s.now < sent + BRIDGE_RETRY {
+                    return None;
+                }
+                let Some((path, tiles)) = crossing() else {
+                    self.engineer.bridge = Bridge::Done;
+                    return None;
+                };
+                (path, tiles, tries)
+            }
+        };
         if spare < u32::from(b.stats.cost_grub) * tiles {
             return None;
         }
         let w = self.builder_at(s, look, path.ends().0)?;
-        self.engineer.bridge_sent = Some(s.now);
-        self.engineer.bridge_tries += 1;
+        self.engineer.bridge = Bridge::Ordered {
+            sent: s.now,
+            tries: tries + 1,
+        };
         // Standard width, so its army crosses a few files abreast.
         let order = Command::DrawLine {
             regiment: Some(w),
@@ -1275,6 +1324,23 @@ mod tests {
             .then_some(1)
         };
         assert!(bent_bridge((20, 10), (20, 25), &wide).is_none());
+    }
+
+    #[test]
+    fn towers_wait_for_a_gate_given_up_to_be_laid_again() {
+        let late = TOWERS_ANYWAY + 1;
+        let mut e = Engineer::default();
+        // No ring fits at all, late in the game: the towers go up anyway.
+        e.no_line_fits(late);
+        assert!(e.walled(late + 1));
+        // A gate given up: the ring is laid out again in a moment, and its
+        // gate comes before the towers.
+        e.give_up_gate(late, (10, 10));
+        assert!(!e.walled(late + 1));
+        assert_eq!(e.no_gate, vec![(10, 10)]);
+        // And the next look finds no ring after all: towers again.
+        e.no_line_fits(late + BREACH_RETRY);
+        assert!(e.walled(late + BREACH_RETRY + 1));
     }
 
     #[test]

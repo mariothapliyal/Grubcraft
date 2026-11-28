@@ -8,7 +8,8 @@ use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
 use crate::nav::{self, Nav};
 use crate::orders::{NO_PLAN, Plan, PlanIndex, Plans, Queue, Step};
-use crate::state::State;
+use crate::reinforce::Refill;
+use crate::state::{State, packed_state};
 use crate::terrain::Terrain;
 use crate::{Formation, PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
 
@@ -113,8 +114,72 @@ const WAYPOINT_NEAR: Fx = Fx::ONE;
 /// have kept from getting on for this long marches through them for as
 /// long again, so no tangle of blocks at a gap holds anyone for good.
 const UNSTICK_TICKS: u8 = 2 * crate::TICKS_PER_SECOND as u8;
-/// `stuck` from here up counts down the ticks left marching through.
+/// The byte a [`Stuck::Through`] is written as, from here up: this plus
+/// its ticks left.
 const GHOST: u8 = 200;
+
+/// How far friends have kept a marching regiment from getting on (see
+/// [`UNSTICK_TICKS`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stuck {
+    /// Getting on, or not marching.
+    Free,
+    /// Kept back by friends for this many ticks running (1 up to one
+    /// short of `UNSTICK_TICKS`; a snapshot may hold up to `GHOST - 1`).
+    Kept(u8),
+    /// Marching on through its friends, for this many ticks after this
+    /// one: it starts at `UNSTICK_TICKS`, and still marches through at 0,
+    /// so it does for one tick more than it was kept back.
+    Through(u8),
+}
+
+impl Stuck {
+    /// Whether it marches on through its friends this tick.
+    fn through(self) -> bool {
+        matches!(self, Stuck::Through(_))
+    }
+
+    /// A tick marching through goes by: once its last one is done it is
+    /// free again.
+    fn step_through(&mut self) {
+        debug_assert!(self.through(), "not marching through");
+        *self = match *self {
+            Stuck::Through(left) if left > 0 => Stuck::Through(left - 1),
+            _ => Stuck::Free,
+        };
+    }
+
+    /// Another tick kept back by friends: once it has been for
+    /// `UNSTICK_TICKS`, it marches through them for as long.
+    fn kept_back(&mut self) {
+        debug_assert!(!self.through(), "marching through already");
+        let kept = match *self {
+            Stuck::Kept(ticks) => ticks + 1,
+            _ => 1,
+        };
+        *self = if kept >= UNSTICK_TICKS {
+            Stuck::Through(UNSTICK_TICKS)
+        } else {
+            Stuck::Kept(kept)
+        };
+    }
+
+    /// The one byte it is hashed and written as: 0 free, the ticks kept
+    /// back, or [`GHOST`] plus the ticks left marching through.
+    fn byte(self) -> u8 {
+        match self {
+            Stuck::Free => 0,
+            Stuck::Kept(ticks) => ticks,
+            Stuck::Through(left) => GHOST + left,
+        }
+    }
+}
+
+packed_state!(Stuck: u8, Stuck::byte, |byte| Some(match byte {
+    0 => Stuck::Free,
+    ticks @ 1..GHOST => Stuck::Kept(ticks),
+    byte => Stuck::Through(byte - GHOST),
+}));
 /// It looks for friends to keep its spacing from at most every this
 /// many ticks, keeping up its last step aside in between.
 const KEEP_EVERY: u8 = 4;
@@ -156,6 +221,71 @@ pub const RUN_TICKS: u8 = 8 * TICKS_PER_SECOND as u8;
 pub const WINDED_TICKS: u8 = 10 * TICKS_PER_SECOND as u8;
 pub const WINDED_PACE_PERCENT: i64 = 70;
 pub const WINDED_BLOW_PERCENT: u64 = 85;
+
+/// A regiment's breath (see [`Regiments::run`]): fresh, running, or
+/// winded after a run, with the ticks left of either.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stride {
+    /// Neither running nor winded.
+    Fresh,
+    /// Running, with this many ticks left (1 up to [`RUN_TICKS`]).
+    Running(u8),
+    /// Winded, with this many ticks left (1 up to [`WINDED_TICKS`]).
+    Winded(u8),
+}
+
+impl Stride {
+    pub(crate) fn running(self) -> bool {
+        matches!(self, Stride::Running(_))
+    }
+
+    pub(crate) fn winded(self) -> bool {
+        matches!(self, Stride::Winded(_))
+    }
+
+    /// A run starts: only a fresh regiment runs.
+    fn start(&mut self) {
+        debug_assert_eq!(*self, Stride::Fresh, "out of breath already");
+        *self = Stride::Running(RUN_TICKS);
+    }
+
+    /// The run ends, if it is running: it is winded from now.
+    fn end(&mut self) {
+        if self.running() {
+            *self = Stride::Winded(WINDED_TICKS);
+        }
+    }
+
+    /// A tick goes by. Winded, it gets its breath back a tick. Running, it
+    /// runs on a tick, or (on its last tick, or when `stop` says so) ends
+    /// the run and is winded for all of [`WINDED_TICKS`] from the next.
+    fn wear(&mut self, stop: impl FnOnce() -> bool) {
+        *self = match *self {
+            Stride::Fresh => Stride::Fresh,
+            Stride::Winded(left) if left > 1 => Stride::Winded(left - 1),
+            Stride::Winded(_) => Stride::Fresh,
+            Stride::Running(left) if left == 1 || stop() => Stride::Winded(WINDED_TICKS),
+            Stride::Running(left) => Stride::Running(left - 1),
+        };
+    }
+
+    /// The two bytes it is hashed and written as: the run's ticks left,
+    /// then the winding's.
+    fn bytes(self) -> [u8; 2] {
+        match self {
+            Stride::Fresh => [0, 0],
+            Stride::Running(left) => [left, 0],
+            Stride::Winded(left) => [0, left],
+        }
+    }
+}
+
+packed_state!(Stride: [u8; 2], Stride::bytes, |bytes| match bytes {
+    [0, 0] => Some(Stride::Fresh),
+    [run, 0] => Some(Stride::Running(run)),
+    [0, winded] => Some(Stride::Winded(winded)),
+    _ => None,
+});
 
 /// How near (tiles, along each axis) the next waypoint of a block's route
 /// is looked at for a narrows to narrow to fit beforehand (see `squeeze`).
@@ -399,10 +529,8 @@ regiment_fields! {
     /// How deep the block overlaps its friends, in tiles (see
     /// `Combat::crowding`).
     crowd: Fx = Fx::ZERO,
-    /// Ticks it has been kept from marching on by friends (see
-    /// [`UNSTICK_TICKS`]); from [`GHOST`] up, the ticks left (above
-    /// `GHOST`) it marches on through them.
-    stuck: u8 = 0,
+    /// How far friends have kept it from marching on (see [`Stuck`]).
+    stuck: Stuck = Stuck::Free,
     /// Keeping its spacing, packed in a byte to save sim memory:
     /// [`KEEP_APART`] the ticks before it looks again for friends to keep
     /// its spacing from ([`KEEP_EVERY`] apart, or longer with none near, see
@@ -464,9 +592,14 @@ regiment_fields! {
     /// Crowded out, under orders to attack: going round its foe to a less
     /// crowded side (see `combat::Round`).
     round: Option<core::num::NonZeroU8> = None,
-    /// Turns in a row it was locked in a fight with nobody able to strike
-    /// (no room on the foe's side, or only a corner touching); while going
-    /// round, ticks spent on the way.
+    /// Turns in a row it was locked in one fight with nobody able to strike
+    /// (no room on the foe's side, or only a corner touching) and free to
+    /// go round (see `combat::crowded_out`); while going round, ticks spent
+    /// on the way. Back to 0 in `Combat::before_move` when its fight is
+    /// over or one begins after none, and whenever its going round ends (see
+    /// [`Regiments::end_round`]), so no fight inherits the turns of
+    /// another; turning from one foe to the next in the same press keeps
+    /// them.
     crowded: u8 = 0,
     /// Spears or pikes set against a charge (see [`Regiments::brace`]):
     /// standing until given another order.
@@ -479,14 +612,14 @@ regiment_fields! {
     /// Ticks left of a skirmisher's step back (see
     /// [`crate::combat::Combat::skirmish`]); 0 when not stepping back.
     backing: u8 = 0,
-    /// Ticks left of a run (see [`Regiments::run`]), and of being winded
-    /// after one.
-    run_left: u8 = 0,
-    winded_left: u8 = 0,
+    /// Running, or winded after a run, and for how long (see
+    /// [`Regiments::run`]).
+    stride: Stride = Stride::Fresh,
     /// In a column or a wedge, the frontage it was asked for (the width it
     /// stood at going in, or a line drawn for it since): it forms up that
     /// wide again on leaving. 0 for none, when the width it was raised
-    /// with is used.
+    /// with is used. On a wall, whatever its shape, also a line drawn for
+    /// it up there, which it forms up at on coming down.
     width_kept: u16 = 0,
     /// Torches lit (see [`Regiments::light`]): they burn only in the dark.
     torches: bool = false,
@@ -520,11 +653,11 @@ regiment_fields! {
     /// Standing in its own side's walled town, as of the last survey
     /// (see [`crate::towns`]).
     in_town: bool = false,
-    /// Reinforcing (see [`crate::reinforce`]): the seconds it has stood
-    /// quiet within reach of its side's reinforcement points since its
-    /// last new soldier, or [`crate::reinforce::REFILL_SHORT`] while its
-    /// owner can't pay for the next one; 0 when it isn't reinforcing.
-    refill: u8 = 0,
+    /// Reinforcing (see [`crate::reinforce`]): counting the seconds it
+    /// has stood quiet within reach of its side's reinforcement points
+    /// since its last new soldier, or short while its owner can't pay for
+    /// the next one.
+    refill: Refill = Refill::Idle,
     /// Standing on a wall's walkway (see [`crate::manning`]): off the
     /// walking grid, out of reach of melee from the ground, and moved only
     /// by the wall.
@@ -682,7 +815,15 @@ impl Regiments {
         // A column or a wedge has a frontage of its own; leaving one, the
         // regiment forms up as wide as when raised.
         if was != formation && formation.own_frontage() {
-            self.set_frontage(i, self.frontage[i]);
+            // Out of the other shape with a frontage of its own (a column
+            // into a wedge, say), the width to widen out to is the one
+            // that shape kept, not its own narrowed frontage.
+            let asked = if was.own_frontage() {
+                self.kept_or(i, self.frontage[i])
+            } else {
+                self.frontage[i]
+            };
+            self.set_frontage(i, asked);
         } else if was != formation && was.own_frontage() {
             self.leave_own(i, units[self.unit[i] as usize].files);
         }
@@ -702,8 +843,17 @@ impl Regiments {
     /// Slot `i`, just out of a column or a wedge, forms up as wide as it
     /// kept (see `width_kept`), or else `files`.
     fn leave_own(&mut self, i: usize, files: u16) {
-        let kept = core::mem::take(&mut self.width_kept[i]);
-        self.set_frontage(i, if kept > 0 { kept } else { files });
+        let files = self.kept_or(i, files);
+        self.width_kept[i] = 0;
+        self.set_frontage(i, files);
+    }
+
+    /// The width slot `i` kept (see `width_kept`), or else `files`.
+    pub(crate) fn kept_or(&self, i: usize, files: u16) -> u16 {
+        match self.width_kept[i] {
+            0 => files,
+            kept => kept,
+        }
     }
 
     pub(crate) fn despawn(&mut self, h: RegimentHandle) -> bool {
@@ -936,6 +1086,13 @@ impl Regiments {
         // Growth owed on the last march (see `squeeze`) is not this one's.
         self.grow[i] = 0;
         if order.files != 0 {
+            // Up on a wall it stands in Line for the wall's sake, and
+            // takes back the shape it had when it comes down (see
+            // `Conquest::come_down`): the width drawn for it is kept for
+            // then, or it would be lost.
+            if self.on_wall[i] {
+                self.width_kept[i] = order.files;
+            }
             self.set_frontage(i, order.files);
         }
         self.pace[i] = self.pace_for(i, order.pace);
@@ -1342,6 +1499,24 @@ impl Regiments {
         self.leave_fight(i);
     }
 
+    /// Regiment `i` stops going round its foe (see `combat::Round`), if it
+    /// was: the ticks it spent on the way are not crowded turns of its next
+    /// fight.
+    pub(crate) fn end_round(&mut self, i: usize) {
+        self.round[i] = None;
+        self.crowded[i] = 0;
+    }
+
+    /// Slot `i` makes for `foe` as an attack does, no longer marching to a
+    /// spot it was sent to stand at (see [`KEEP_PLACE`]): only that part
+    /// of [`Regiments::attack`], which also ends going round and lifts
+    /// bracing, holding, backing and the rest, for a fight taken on in
+    /// the middle of one.
+    pub(crate) fn take_on(&mut self, i: usize, foe: RegimentHandle) {
+        self.attack_target[i] = Some(foe);
+        self.set_seeks_place(i, false);
+    }
+
     /// Order a regiment to attack an enemy regiment: melee regiments close
     /// in and fight, ranged ones move into range and shoot.
     pub(crate) fn attack(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {
@@ -1351,13 +1526,15 @@ impl Regiments {
         if self.owner[i] == self.owner[t] || self.morale_state[i].broken() {
             return false;
         }
-        if self.attack_target[i] != Some(target) {
+        if self.attack_target[i] != Some(target) && self.round[i].is_some() {
             // Going round only the foe it was going round (see
-            // `combat::Round`): an order repeated keeps it on its way.
-            self.round[i] = None;
+            // `combat::Round`): an order repeated keeps it on its way. Not
+            // going round, its crowded turns are those of the fight it is
+            // locked in, whatever it is ordered onto (`Combat::before_move`
+            // resets them when that fight is over).
+            self.end_round(i);
         }
-        self.set_seeks_place(i, false);
-        self.attack_target[i] = Some(target);
+        self.take_on(i, target);
         self.target_facing[i] = None;
         self.drill[i] = false;
         self.braced[i] = false;
@@ -1394,6 +1571,10 @@ impl Regiments {
         self.target[i] = Some(to);
         self.set_seeks_place(i, false);
         self.target_facing[i] = Some(self.facing[i]);
+        // Backing away is at half pace (see `step_movement`), not the
+        // drilled pace of a short move it may have been on: a drilled
+        // step sideways or off straight back would go faster.
+        self.drill[i] = false;
         self.attack_target[i] = None;
         self.braced[i] = false;
         self.hold[i] = false;
@@ -1549,23 +1730,19 @@ impl Regiments {
             || self.engaged[i].is_some()
             || self.falling_back[i] > 0
             || self.morale_state[i].broken()
-            || self.winded_left[i] > 0
-            || self.run_left[i] > 0
+            || self.stride[i] != Stride::Fresh
             || matches!(self.formation[i], Formation::ShieldWall | Formation::Column)
         {
             return false;
         }
-        self.run_left[i] = RUN_TICKS;
+        self.stride[i].start();
         self.hold[i] = false;
         true
     }
 
     /// Slot `i`'s run ends, if it is running: it is winded from now.
     pub(crate) fn end_run(&mut self, i: usize) {
-        if self.run_left[i] > 0 {
-            self.run_left[i] = 0;
-            self.winded_left[i] = WINDED_TICKS;
-        }
+        self.stride[i].end();
     }
 
     /// A tick of every run, winding and skirmisher's step back goes by: a
@@ -1576,18 +1753,11 @@ impl Regiments {
             if !self.alive[i] {
                 continue;
             }
-            self.winded_left[i] = self.winded_left[i].saturating_sub(1);
-            if self.run_left[i] > 0 {
-                if self.run_left[i] == 1
-                    || self.idle(i)
-                    || self.engaged[i].is_some()
-                    || self.morale_state[i].broken()
-                {
-                    self.end_run(i);
-                } else {
-                    self.run_left[i] -= 1;
-                }
-            }
+            let mut stride = self.stride[i];
+            stride.wear(|| {
+                self.idle(i) || self.engaged[i].is_some() || self.morale_state[i].broken()
+            });
+            self.stride[i] = stride;
             if self.backing[i] > 0 {
                 self.backing[i] -= 1;
                 if self.target[i].is_none() || self.engaged[i].is_some() {
@@ -1794,7 +1964,7 @@ impl Regiments {
         self.losses[i] = self.losses[i].saturating_add(lost);
         // Hurt: no new soldiers until it has stood quiet again.
         if bled > 0 || lost > 0 {
-            self.refill[i] = 0;
+            self.refill[i] = Refill::Idle;
         }
         self.deaths[i] = self.deaths[i].saturating_add(lost);
     }
@@ -1837,8 +2007,8 @@ impl Regiments {
             skirmish: self.skirmish[i],
             stepping_back: self.backing[i] > 0,
             made_way: self.home[i],
-            running: self.run_left[i] > 0,
-            winded: self.winded_left[i] > 0,
+            running: self.stride[i].running(),
+            winded: self.stride[i].winded(),
             torches: self.torches[i],
             falling_back: self.falling_back[i] > 0,
             on_wall: self.on_wall[i],
@@ -1865,6 +2035,13 @@ impl Regiments {
         })
     }
 
+    /// The enemy regiment `h` is fighting in melee, or failing that the
+    /// one it is ordered or has turned to attack.
+    pub fn foe_of(&self, h: RegimentHandle) -> Option<RegimentHandle> {
+        let i = self.resolve(h)?;
+        self.engaged[i].or(self.attack_target[i])
+    }
+
     /// What regiment `i` is doing, for the screen.
     fn doing(&self, i: usize) -> Doing {
         if self.morale_state[i].broken() {
@@ -1875,7 +2052,7 @@ impl Regiments {
             Doing::Skirmishing
         } else if self.engaged[i].is_some() {
             Doing::Fighting
-        } else if !self.idle(i) && self.run_left[i] > 0 {
+        } else if !self.idle(i) && self.stride[i].running() {
             Doing::AtTheRun
         } else if self.attack_target[i].is_some() {
             Doing::Attacking
@@ -1910,14 +2087,14 @@ impl Regiments {
             Some(Waiting::Reforming)
         } else if self.target[i].is_some() && self.narrowed(i) {
             Some(Waiting::FilingThrough)
-        } else if self.winded_left[i] > 0 {
+        } else if self.stride[i].winded() {
             Some(Waiting::Winded)
-        } else if self.refill[i] == crate::reinforce::REFILL_SHORT {
-            Some(Waiting::ShortToReinforce)
-        } else if self.refill[i] > 0 {
-            Some(Waiting::Reinforcing)
         } else {
-            None
+            match self.refill[i] {
+                Refill::Short => Some(Waiting::ShortToReinforce),
+                Refill::Counting(_) => Some(Waiting::Reinforcing),
+                Refill::Idle => None,
+            }
         }
     }
 
@@ -1966,7 +2143,7 @@ impl Regiments {
             if self.target[i].is_none() {
                 self.held[i] = 0;
                 self.clear[i] = 0;
-                self.stuck[i] = 0;
+                self.stuck[i] = Stuck::Free;
                 // Staggered, so a whole army ordered at once doesn't all
                 // look on the same ticks.
                 self.set_apart(i, i as u8 % KEEP_EVERY);
@@ -2103,7 +2280,7 @@ impl Regiments {
                     self.facing[i],
                     size,
                 ));
-                let ghost = self.stuck[i] >= GHOST;
+                let ghost = self.stuck[i].through();
                 let full = step;
                 let step = if ghost {
                     step
@@ -2280,22 +2457,16 @@ impl Regiments {
                 self.set_keep(i, KEEP_STEPPED, stepped > Fx::ZERO);
                 self.momentum[i] = ease_momentum(coasting, hundredths_per_second(stepped));
                 if ghost {
-                    self.stuck[i] -= 1;
-                    if self.stuck[i] < GHOST {
-                        self.stuck[i] = 0;
-                    }
+                    self.stuck[i].step_through();
                 } else if stepped * 4 < full
                     && (self.crowd[i] > Fx::ZERO || self.held[i] > 0 || aside != Fx::ZERO)
                 {
                     // Kept back by friends (not just by the ground): once
                     // for UNSTICK_TICKS, it marches through them for as
                     // long.
-                    self.stuck[i] += 1;
-                    if self.stuck[i] >= UNSTICK_TICKS {
-                        self.stuck[i] = GHOST + UNSTICK_TICKS;
-                    }
+                    self.stuck[i].kept_back();
                 } else {
-                    self.stuck[i] = 0;
+                    self.stuck[i] = Stuck::Free;
                 }
                 // A run-up is made on ground that bears a charge: wading or
                 // slogging through mud starts it again.
@@ -2548,6 +2719,7 @@ mod tests {
 
     use super::*;
     use crate::scenario::{DRILL_UNITS, Drill, ribs_map};
+    use crate::state::written;
     use crate::{Capacities, Ground, MatchSetup, World};
 
     /// A world mid-battle, blocks pushing in melee.
@@ -2575,6 +2747,111 @@ mod tests {
             world.tick(&commands);
         }
         (world, drill)
+    }
+
+    #[test]
+    fn a_stride_is_written_as_its_old_two_counts() {
+        let mut reachable = vec![(Stride::Fresh, [0, 0])];
+        reachable.extend((1..=RUN_TICKS).map(|n| (Stride::Running(n), [n, 0])));
+        reachable.extend((1..=WINDED_TICKS).map(|n| (Stride::Winded(n), [0, n])));
+        for (stride, old) in reachable {
+            assert_eq!(written(stride), old, "{stride:?}");
+        }
+        // Every pair of counts with no more than one running down reads
+        // back as itself. The old fields never held both.
+        for run in 0..=u8::MAX {
+            for winded in 0..=u8::MAX {
+                let read = Stride::read(&mut &[run, winded][..]);
+                if run > 0 && winded > 0 {
+                    assert_eq!(read, None, "{run} {winded}");
+                } else {
+                    assert_eq!(read.map(written), Some(vec![run, winded]));
+                }
+            }
+        }
+    }
+
+    /// A check that [`Stride`] counts as the old fields did.
+    #[test]
+    fn a_stride_wears_and_ends_as_the_old_counts_did() {
+        // The old `wear_orders` and `end_run`, on `run_left` and
+        // `winded_left`: winded counts down first, so a run that ends
+        // here is winded for all of WINDED_TICKS from the next tick.
+        fn wear(mut run: u8, mut winded: u8, stop: bool) -> [u8; 2] {
+            winded = winded.saturating_sub(1);
+            if run > 0 {
+                if run == 1 || stop {
+                    run = 0;
+                    winded = WINDED_TICKS;
+                } else {
+                    run -= 1;
+                }
+            }
+            [run, winded]
+        }
+        fn end(run: u8, winded: u8) -> [u8; 2] {
+            if run > 0 {
+                [0, WINDED_TICKS]
+            } else {
+                [run, winded]
+            }
+        }
+        let fresh = [(0, 0)];
+        let pairs = (fresh.into_iter())
+            .chain((1..=u8::MAX).map(|n| (n, 0)))
+            .chain((1..=u8::MAX).map(|n| (0, n)));
+        for (run, winded) in pairs {
+            let stride = Stride::read(&mut &[run, winded][..]).unwrap();
+            for stop in [false, true] {
+                let mut worn = stride;
+                worn.wear(|| stop);
+                assert_eq!(written(worn), wear(run, winded, stop), "{stride:?} {stop}");
+            }
+            let mut ended = stride;
+            ended.end();
+            assert_eq!(written(ended), end(run, winded), "{stride:?}");
+        }
+        let mut fresh = Stride::Fresh;
+        fresh.start();
+        assert_eq!(written(fresh), [RUN_TICKS, 0]);
+    }
+
+    #[test]
+    fn stuck_is_written_as_its_old_byte() {
+        let reachable = (core::iter::once((Stuck::Free, 0)))
+            .chain((1..UNSTICK_TICKS).map(|n| (Stuck::Kept(n), n)))
+            .chain((0..=UNSTICK_TICKS).map(|t| (Stuck::Through(t), GHOST + t)));
+        for (stuck, old) in reachable {
+            assert_eq!(written(stuck), [old], "{stuck:?}");
+        }
+        // And every byte reads back as itself.
+        for b in 0..=u8::MAX {
+            assert_eq!(Stuck::read(&mut &[b][..]).map(written), Some(vec![b]));
+        }
+    }
+
+    /// A check that [`Stuck`] counts as the old field did.
+    #[test]
+    fn stuck_counts_as_the_old_byte_did() {
+        for b in 0..=u8::MAX {
+            let stuck = Stuck::read(&mut &[b][..]).unwrap();
+            // The old byte marched through from GHOST up, GHOST itself
+            // too: a 41-tick march through after 40 kept back.
+            assert_eq!(stuck.through(), b >= GHOST, "{b}");
+            let mut next = stuck;
+            let old = if stuck.through() {
+                next.step_through();
+                if b - 1 < GHOST { 0 } else { b - 1 }
+            } else {
+                next.kept_back();
+                if b + 1 >= UNSTICK_TICKS {
+                    GHOST + UNSTICK_TICKS
+                } else {
+                    b + 1
+                }
+            };
+            assert_eq!(written(next), [old], "{b}");
+        }
     }
 
     fn hash(r: &Regiments) -> u64 {
@@ -2717,5 +2994,58 @@ mod tests {
                 .regiments
                 .spawn(0, 0, FxVec2::ZERO, Angle::ZERO, &stats)
         );
+    }
+
+    /// Falling back is at half pace, whatever the order before it: a block
+    /// still on a short drilled move must not back away at drilled pace
+    /// (full ahead, three quarters sideways).
+    #[test]
+    fn falling_back_ends_a_drilled_move() {
+        let mut regs = Regiments::with_capacity(4);
+        let stats = DRILL_UNITS[0].sanitized();
+        let h = (regs.spawn(0, 0, FxVec2::from_ints(50, 50), Angle::ZERO, &stats)).unwrap();
+        let i = regs.resolve(h).unwrap();
+        let order = Order {
+            target: FxVec2::from_ints(52, 50),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+        };
+        assert!(regs.order(h, order));
+        assert!(regs.drill[i], "a short move is drilled");
+        assert!(regs.fall_back(h, FxVec2::from_ints(50, 56)));
+        assert!(!regs.drill[i], "falls back at drilled pace");
+    }
+
+    /// An attack on another foe calls off going round the last one, and
+    /// its ticks on the way with it: they are not crowded turns. Not going
+    /// round, a block locked in a fight keeps the crowded turns of that
+    /// fight whatever it is ordered onto (the fight resets them when its
+    /// foe changes).
+    #[test]
+    fn a_new_attack_leaves_no_crowded_turns() {
+        let mut regs = Regiments::with_capacity(4);
+        let stats = DRILL_UNITS[0].sanitized();
+        let at = |x| FxVec2::from_ints(x, 50);
+        let me = (regs.spawn(0, 0, at(50), Angle::ZERO, &stats)).unwrap();
+        let old = (regs.spawn(1, 0, at(60), Angle::ZERO, &stats)).unwrap();
+        let new = (regs.spawn(1, 0, at(70), Angle::ZERO, &stats)).unwrap();
+        let i = regs.resolve(me).unwrap();
+        assert!(regs.attack(me, old));
+        regs.round[i] = core::num::NonZeroU8::new(1);
+        regs.crowded[i] = 30;
+        // The same order again keeps it on its way round.
+        assert!(regs.attack(me, old));
+        assert_eq!(regs.round[i], core::num::NonZeroU8::new(1));
+        assert_eq!(regs.crowded[i], 30);
+        assert!(regs.attack(me, new));
+        assert_eq!(regs.round[i], None);
+        assert_eq!(regs.crowded[i], 0);
+        // Locked with `old` and crowded, not going round: ordered onto
+        // `new`, its turns crowded against `old` stand.
+        assert!(regs.attack(me, old));
+        regs.crowded[i] = 12;
+        assert!(regs.attack(me, new));
+        assert_eq!(regs.crowded[i], 12);
     }
 }

@@ -91,11 +91,14 @@ pub enum SurrenderItem {
 pub enum MapPreviewKey {
     /// A Field Battle map: the choice (an index into
     /// [`MAPS`](crate::lobby::MAPS)), its size in tiles
-    /// ([`field_map_tiles`]) and the map seed.
+    /// ([`field_map_tiles`]), the map seed and how many play where that
+    /// changes the map (three or five round a ring on Measured land), else
+    /// 0.
     Field {
         choice: usize,
         tiles: u32,
         seed: u64,
+        players: u8,
     },
     /// A Conquest map: the choice (an index into
     /// [`CONQUEST_MAPS`](crate::lobby::CONQUEST_MAPS)), the size a made
@@ -117,6 +120,17 @@ pub fn preview_key(settings: &LobbySettings, players: usize) -> MapPreviewKey {
             choice: settings.map,
             tiles: field_map_tiles(settings.map_size, players),
             seed: settings.map_seed,
+            // (Only where the count changes the map, so a join or leave
+            // keeps the picture otherwise.)
+            players: match players {
+                3 | 5
+                    if (crate::lobby::MAPS.get(settings.map))
+                        .is_some_and(|m| m.starts_with("Measured")) =>
+                {
+                    players as u8
+                }
+                _ => 0,
+            },
         },
         GameMode::Conquest => MapPreviewKey::Conquest {
             choice: settings.map,
@@ -132,6 +146,17 @@ struct MapPreview {
     terrain: MinimapTerrain,
     /// Start positions, as fractions of the map's side (0 to 1).
     starts: Vec<[f32; 2]>,
+}
+
+/// The saved replays: still being looked for, or found. The page on screen
+/// goes with the list it pages through.
+enum ReplayShelf {
+    Loading,
+    Loaded {
+        /// Newest first.
+        entries: Vec<ReplayEntry>,
+        page: usize,
+    },
 }
 
 /// What the map code box says when the host types something that isn't a
@@ -164,13 +189,11 @@ pub struct Menu<N: Network = LocalNetwork> {
     surrender_sure: bool,
     /// The regiment types the army builder offers.
     roster: Vec<RosterUnit>,
-    /// The Army screen's copy of your army while it is open.
+    /// The Army screen's copy of your army while it is open. It starts
+    /// again from the lobby's slot each time the screen opens.
     army_draft: Option<Vec<u16>>,
-    /// The saved replays, newest first, and the page of them on screen.
-    replays: Vec<ReplayEntry>,
-    replay_page: usize,
-    /// The game is still reading the replay folder.
-    replays_loading: bool,
+    /// The saved replays, or the wait for them.
+    replays: ReplayShelf,
     /// What the map code box holds: the code of the map seed, or what the
     /// host is typing.
     code_entry: String,
@@ -236,9 +259,10 @@ impl<N: Network> Menu<N> {
             surrender_sure: false,
             roster: Vec::new(),
             army_draft: None,
-            replays: Vec::new(),
-            replay_page: 0,
-            replays_loading: false,
+            replays: ReplayShelf::Loaded {
+                entries: Vec::new(),
+                page: 0,
+            },
             code_entry: String::new(),
             code_for: None,
             code_note: None,
@@ -300,9 +324,10 @@ impl<N: Network> Menu<N> {
 
     /// The saved replays for the Replays screen, newest first.
     pub fn set_replays(&mut self, replays: Vec<ReplayEntry>) {
-        self.replays = replays;
-        self.replay_page = 0;
-        self.replays_loading = false;
+        self.replays = ReplayShelf::Loaded {
+            entries: replays,
+            page: 0,
+        };
     }
 
     /// The list is on its way: the Replays screen says so instead of
@@ -310,8 +335,7 @@ impl<N: Network> Menu<N> {
     pub fn replays_loading(&mut self) {
         // The old list would be stale, and a click on it could land on a
         // different replay once the new one arrives.
-        self.replays.clear();
-        self.replays_loading = true;
+        self.replays = ReplayShelf::Loading;
     }
 
     /// Show a problem on the current screen (the Replays screen shows why
@@ -343,6 +367,9 @@ impl<N: Network> Menu<N> {
         self.screen = screen;
         self.message = None;
         self.copied = None;
+        // The draft belongs to one visit to the Army screen, and every way
+        // onto that screen comes through here.
+        self.army_draft = None;
         self.forget_code_entry();
     }
 
@@ -448,6 +475,12 @@ impl<N: Network> Menu<N> {
         ui.draw.border(r, 2, theme::INK);
     }
 
+    /// Switch fullscreen from its keys, and save it at once.
+    pub fn set_fullscreen(&mut self, on: bool) {
+        self.settings.fullscreen = on;
+        self.save_settings();
+    }
+
     fn save_settings(&mut self) {
         self.settings.sanitize();
         if let Some(path) = &self.settings_path
@@ -468,9 +501,8 @@ impl<N: Network> Menu<N> {
             match event {
                 NetEvent::Started(start) => return MenuAction::StartMatch(start),
                 NetEvent::Left(why) => {
-                    self.screen = Screen::Play;
+                    self.show(Screen::Play);
                     self.message = Some((why, true));
-                    self.forget_code_entry();
                 }
             }
         }
@@ -566,15 +598,18 @@ impl<N: Network> Menu<N> {
         if ui.button(stack.next(button_h), quit, ButtonStyle::Normal, true) {
             action = MenuAction::Quit;
         }
-        ui.label(
-            12,
-            h - 24,
-            1,
-            theme::MUTED,
-            &format!("Grubcraft {}", self.version),
-        );
+        let version = format!("Grubcraft {}", self.version);
+        ui.label(12, h - 24, 1, theme::MUTED, &version);
         let hint = "Esc closes menus";
         ui.label_right(w - 12, h - 24, 1, theme::MUTED, hint);
+        // Why a button did nothing (the unit viewer without its models),
+        // on the bottom line between the version and the hint.
+        if let Some((text, _)) = &self.message {
+            let side = 12 + text_width(&version, 1).max(text_width(hint, 1)) + 16;
+            let room = ((w - 2 * side) / 8).max(8) as usize;
+            let line = Rect::new(0, h - 24, w, 16);
+            ui.label_centered(line, 1, theme::BAD_INK, &fit(text, room));
+        }
         if escape && self.in_match {
             if self.surrender_sure {
                 // Esc first takes the question back.
@@ -1137,7 +1172,12 @@ impl<N: Network> Menu<N> {
             ("", "Sky")
         };
         // A map code note takes the code row's right end while it shows,
-        // over the steppers that share that row.
+        // over the steppers that share that row. A note about another map
+        // (New map was pressed under it last frame) is gone: the code box
+        // below would drop it before drawing, and the steppers must show.
+        if self.code_for != Some(settings.map_seed) {
+            self.code_note = None;
+        }
         let noting = lobby.is_host && self.code_note.is_some();
         if noting && !two_rows {
         } else if lobby.is_host {
@@ -1345,11 +1385,16 @@ impl<N: Network> Menu<N> {
             "Pick your faction and colour, then tick Ready."
         };
         ui.label(panel.x + 24, footer_y + 22, 1, theme::INK, todo);
-        // Why Start is greyed out, right beside it.
-        let (why, color) = match &blocker {
-            Some(why) if mismatch => (why.as_str(), theme::BAD_INK),
-            Some(why) => (why.as_str(), theme::INK),
-            None => ("Everyone is ready.", theme::GOOD_INK),
+        // Why Start is greyed out, right beside it. Or why Start just
+        // failed, until a live reason comes up to say why it is greyed out.
+        if blocker.is_some() {
+            self.message = None;
+        }
+        let (why, color) = match (&self.message, &blocker) {
+            (Some((text, _)), _) => (text.as_str(), theme::BAD_INK),
+            (None, Some(why)) if mismatch => (why.as_str(), theme::BAD_INK),
+            (None, Some(why)) => (why.as_str(), theme::INK),
+            (None, None) => ("Everyone is ready.", theme::GOOD_INK),
         };
         let room = ((panel.w - 48 - text_width(todo, 1) - 24) / 8).max(0) as usize;
         let why = fit(why, room);
@@ -1578,11 +1623,15 @@ impl<N: Network> Menu<N> {
         let top = panel.y + sp(64);
         let bottom = panel.bottom() - 64;
         let per_page = (((bottom - top) / (row_h + sp(8))).max(1)) as usize;
-        let pages = self.replays.len().div_ceil(per_page).max(1);
-        self.replay_page = self.replay_page.min(pages - 1);
+        let (entries, loading, page): (&[ReplayEntry], bool, usize) = match &self.replays {
+            ReplayShelf::Loading => (&[], true, 0),
+            ReplayShelf::Loaded { entries, page } => (entries, false, *page),
+        };
+        let pages = entries.len().div_ceil(per_page).max(1);
+        let mut page = page.min(pages - 1);
         let mut action = MenuAction::None;
-        if self.replays.is_empty() {
-            let text = if self.replays_loading {
+        if entries.is_empty() {
+            let text = if loading {
                 "Looking for replays..."
             } else {
                 "No replays yet. Play a battle and it will be here to watch."
@@ -1591,9 +1640,9 @@ impl<N: Network> Menu<N> {
             let middle = Rect::new(panel.x + 24, top, panel.w - 48, (bottom - top) / 2);
             ui.label_centered(middle, 1, theme::INK_MUTED, text);
         }
-        let first = self.replay_page * per_page;
+        let first = page * per_page;
         let mut y = top;
-        for entry in self.replays.iter().skip(first).take(per_page) {
+        for entry in entries.iter().skip(first).take(per_page) {
             let row = Rect::new(panel.x + 24, y, panel.w - 48, row_h);
             ui.draw.rect(row, theme::CLOTH);
             let chars = ((row.w - 160) / 8).max(8) as usize;
@@ -1642,24 +1691,27 @@ impl<N: Network> Menu<N> {
                 Rect::new(panel.x + 24 + 148, btn_y, 120, 44),
                 "Newer",
                 ButtonStyle::Normal,
-                self.replay_page > 0,
+                page > 0,
             ) {
-                self.replay_page -= 1;
+                page -= 1;
             }
             ui.label_centered(
                 Rect::new(panel.x + 24 + 148 + 128, btn_y, 120, 44),
                 1,
                 theme::INK_MUTED,
-                &format!("{} of {pages}", self.replay_page + 1),
+                &format!("{} of {pages}", page + 1),
             );
             if ui.button(
                 Rect::new(panel.x + 24 + 148 + 256, btn_y, 120, 44),
                 "Older",
                 ButtonStyle::Normal,
-                self.replay_page + 1 < pages,
+                page + 1 < pages,
             ) {
-                self.replay_page += 1;
+                page += 1;
             }
+        }
+        if let ReplayShelf::Loaded { page: stored, .. } = &mut self.replays {
+            *stored = page;
         }
         let back = ui.button(
             Rect::new(panel.x + 24, btn_y, 140, 44),
@@ -1731,6 +1783,7 @@ impl<N: Network> Menu<N> {
         if ui.stepper(st.next(row), "UI scale", &mut si, &srefs) {
             s.ui_scale = UI_SCALES[si];
         }
+        ui.toggle(st.next(row), "Fullscreen", &mut s.fullscreen);
         ui.toggle(st.next(row), "V-sync", &mut s.vsync);
         let cnames: Vec<String> = FRAME_CAPS
             .iter()
@@ -1803,14 +1856,14 @@ impl<N: Network> Menu<N> {
             note_y,
             1,
             theme::INK_MUTED,
-            "Working: name, colour, faction, UI scale, Clarity, Tilt-shift, Full blood, shake, Master, Music.",
+            "Graphics: High is always sharp; Balanced eases resolution only if the GPU lags.",
         );
         ui.label(
             panel.x + 24,
             note_y + 16,
             1,
             theme::INK_MUTED,
-            "The other audio, graphics and accessibility choices are saved for later.",
+            "Not working yet: Effects, Unit voices, Interface, palette, banners, hints.",
         );
         let back = Rect::new(panel.x + 24, panel.bottom() - 52, 140, 44);
         let done = ui.button(back, "Back", ButtonStyle::Primary, true);
@@ -1886,6 +1939,7 @@ mod tests {
             choice,
             tiles,
             seed,
+            players: 0,
         }
     }
 
@@ -2418,6 +2472,34 @@ mod tests {
         ui.end_frame();
         assert!(find_text(&ui.draw, "Victory: Annihilation").is_some());
         assert!(find_text(&ui.draw, "Tempo: Standard").is_some());
+    }
+
+    #[test]
+    fn a_new_lobby_starts_the_army_screen_from_its_own_army() {
+        let mut h = Harness::new();
+        h.menu.set_roster(vec![RosterUnit {
+            name: "Yari Ashigaru".into(),
+            faction: Faction::EmberClans,
+            points: 400,
+        }]);
+        h.menu.settings.faction = Faction::EmberClans;
+        h.click("Play");
+        h.click_last("Host");
+        h.click_last("Army");
+        let (x, y) = find_all(&h.ui.draw, "+")[0];
+        h.click_at(x, y);
+        assert!(h.has("1 regiments, 400 of 4,000 points"));
+        // The match starts (or the host drops) while the screen is open, so
+        // it never sees Done. Later menus start again, in a new lobby.
+        h.menu.net().leave();
+        h.menu.show(Screen::Main);
+        h.frame(UiInput::default());
+        h.click("Play");
+        h.click_last("Host");
+        h.click_last("Army");
+        assert_eq!(h.menu.screen(), Screen::Army);
+        assert!(h.has("the Balanced mix will be picked for you"));
+        assert!(!h.has("1 regiments"), "the old lobby's draft");
     }
 
     #[test]
@@ -2991,6 +3073,76 @@ mod tests {
         h.click("not a code");
         type_text(&mut h, "x");
         assert!(!h.has("Not a map code"));
+    }
+
+    #[test]
+    fn new_map_under_a_map_code_note_keeps_the_sky_steppers() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        assert!(h.has("Weather"));
+        clear_code_box(&mut h);
+        type_text(&mut h, "not a code");
+        h.frame(UiInput {
+            enter: true,
+            ..Default::default()
+        });
+        h.frame(UiInput::default());
+        assert!(h.has("Not a map code") && !h.has("Weather"));
+        // The frame after New map: the note was about the old map, so the
+        // steppers are back at once rather than one frame later.
+        h.click("New map");
+        assert!(!h.has("Not a map code"));
+        assert!(h.has("Weather"));
+    }
+
+    #[test]
+    fn the_main_menu_says_why_the_unit_viewer_did_not_open() {
+        let mut h = Harness::new();
+        h.click("Unit viewer");
+        // The click's frame asked for the viewer; the game says no.
+        let why = "The unit viewer needs the 3D models, which did not load.";
+        h.menu.tell(why.into());
+        h.frame(UiInput::default());
+        assert_eq!(h.menu.screen(), Screen::Main);
+        assert!(h.has(why));
+        h.click("Settings");
+        h.click("Back");
+        assert!(!h.has(why));
+    }
+
+    #[test]
+    fn the_lobby_says_why_start_failed() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        h.click("Add AI");
+        assert!(h.has("Everyone is ready."));
+        h.menu.tell("The match has already started.".into());
+        h.frame(UiInput::default());
+        assert!(h.has("The match has already started."));
+        assert!(!h.has("Everyone is ready."));
+    }
+
+    #[test]
+    fn a_failed_start_gives_way_to_a_live_blocker() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        h.click("Add AI");
+        h.menu.tell("The match has already started.".into());
+        h.frame(UiInput::default());
+        assert!(h.has("The match has already started."));
+        // The lobby changes under it: the line says why Start is greyed
+        // out now, and the old failure does not come back after.
+        h.click("Remove");
+        h.frame(UiInput::default());
+        assert!(h.has("Add at least one more player"));
+        assert!(!h.has("The match has already started."));
+        h.click("Add AI");
+        h.frame(UiInput::default());
+        assert!(h.has("Everyone is ready."));
+        assert!(!h.has("The match has already started."));
     }
 
     /// A network that takes every join and notes where it went.
