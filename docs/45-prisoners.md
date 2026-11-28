@@ -57,11 +57,11 @@ Mario chose this on 2026-11-28 ("Ransom and work and recruit, but also mass exec
 - **The command:** `Command::Recruit { from, unit }` takes the oldest record of `from`'s `unit` that the issuer holds, one lot at a time, into the issuer's army. It is refused if the issuer holds none, or lacks the supply or the price.
 - **The price:** half the ransom of that lot (`RECRUIT_PERCENT` 50), paid to nobody.
 - **How they come:** at once, at the stockade's door, as one regiment of the captor's at the lot's count, keeping its rank, at half its morale.
-- **Turncoats:** a recruited regiment is never reinforced and never evolves (`turncoat`), so it wears down. Another faction's units stay a passing gain, and the factions' tech and twists, which aren't built for foreign units, never have to carry them.
+- **Turncoats:** a recruited regiment is never reinforced, never evolves and never gives itself up (`turncoat`), so it wears down and can't be laundered back into an ordinary regiment by a ransom or an escape. Another faction's units stay a passing gain, and the factions' tech and twists, which aren't built for foreign units, never have to carry them.
 
 ### Mass execution (Conquest)
 
-- **The command:** `Command::Execute { stockade }` puts every prisoner the issuer holds at that stockade to death, with the **Execute** button (the stockade holding the most). Refused if the issuer holds none there.
+- **The command:** `Command::Execute { stockade }` puts every prisoner the issuer holds at that stockade to death, with the **Execute** button (the stockade holding the most; a second click within 3 s confirms, as it can't be undone). Refused if the issuer holds none there.
 - **The dead:** they lie in a grave at the stockade, which the Concord's Tithe can raise in a match with a Tithe player. They count as no kills and give no experience.
 - **No quarter:** the owners can never ransom them, and from then on those owners' regiments never give themselves up to that captor: they fight on, or rally, or are cut down. It is told as `Event::Executed`, with news for both sides.
 

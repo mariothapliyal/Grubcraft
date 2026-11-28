@@ -1034,6 +1034,9 @@ struct Running {
     pending: Vec<PlayerCommand>,
     /// Orders from this machine's player, and a new match's deployment.
     human_orders: Vec<PlayerCommand>,
+    /// The Execute button was clicked once: a second click before this
+    /// moment (in the puppets' seconds) puts the prisoners to death.
+    execute_armed: Option<f32>,
     /// A joiner's opening view, waiting for the host's deployment zone: the
     /// way the start faces and the focus it was first given. The host moves a
     /// zone off the start where the ground needs it, and only it knows where.
@@ -2126,6 +2129,7 @@ impl App {
             matches: 0,
             pending,
             human_orders: Vec::with_capacity(64),
+            execute_armed: None,
             zone_look: None,
             prev_positions,
             alpha: 1.0,

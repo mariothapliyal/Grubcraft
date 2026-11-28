@@ -260,6 +260,9 @@ pub struct HudState {
     place_body: std::cell::RefCell<Option<std::rc::Rc<PlaceBody>>>,
 }
 
+/// Seconds after a first click on Execute that a second one confirms it.
+const EXECUTE_CONFIRM_SECONDS: f32 = 3.0;
+
 impl HudState {
     pub fn set_terrain(&mut self, hm: &Map) {
         self.terrain = minimap_terrain(hm);
@@ -1717,11 +1720,18 @@ impl Running {
             .is_some_and(|b| b.grub >= grub && b.marrow >= marrow)
             && self.world.room_for(side, unit);
         let recruit = Some((format!("Recruit {lot}"), tip, can));
+        let armed = self
+            .execute_armed
+            .is_some_and(|until| self.puppets.time() < until);
         let execute = self.fullest_stockade(side).map(|(_, n)| {
             (
-                format!("Execute {n}"),
+                if armed {
+                    format!("Sure? Execute {n}")
+                } else {
+                    format!("Execute {n}")
+                },
                 format!(
-                    "Put the {n} prisoners at your fullest stockade to death. Their owners can never ransom them, and from then on their regiments never give themselves up to you: they fight to the last."
+                    "Put the {n} prisoners at your fullest stockade to death (click twice). Their owners can never ransom them, and from then on their regiments never give themselves up to you: they fight to the last."
                 ),
                 true,
             )
@@ -1746,7 +1756,7 @@ impl Running {
     }
 
     /// The Execute button: put the prisoners at the fullest stockade to
-    /// death.
+    /// death, on a second click within [`EXECUTE_CONFIRM_SECONDS`].
     fn execute_fullest(&mut self) {
         let side = self.sandbox.side;
         let Some((stockade, _)) = self.fullest_stockade(side) else {
@@ -1755,6 +1765,14 @@ impl Running {
         if self.watching.is_some() {
             return;
         }
+        // It can't be undone: the first click only asks.
+        let now = self.puppets.time();
+        if !self.execute_armed.is_some_and(|until| now < until) {
+            self.execute_armed = Some(now + EXECUTE_CONFIRM_SECONDS);
+            self.ui_sound(sounds::UiSound::Move);
+            return;
+        }
+        self.execute_armed = None;
         self.human_orders.push(gc_sim::PlayerCommand {
             player: side,
             command: gc_sim::Command::Execute { stockade },

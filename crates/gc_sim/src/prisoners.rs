@@ -10,8 +10,8 @@
 //!   no experience or Tithe and counts as no kills
 //!   ([`crate::events::Event::Surrendered`]).
 //! - Never: regiments that can't rout, non-fighters (Caravans), heroes,
-//!   regiments a general rides with, summoned ones, and in Conquest any
-//!   unit nothing trains.
+//!   regiments a general rides with, summoned ones, turncoats (recruited
+//!   prisoners), and in Conquest any unit nothing trains.
 //! - In every mode the soldiers each player took are counted. In Conquest
 //!   they are held at the captor's finished main building or outpost hall
 //!   nearest where they gave up (its *stockade*, [`MAIN_HOLDS`] and
@@ -234,6 +234,8 @@ impl World {
             || r.hero_level[i] > 0
             || r.general[i].is_some()
             || r.cant_rout(i)
+            // Turncoats know what waits for them.
+            || r.turncoat[i]
             || self.combat.civil(r, i)
         {
             return false;

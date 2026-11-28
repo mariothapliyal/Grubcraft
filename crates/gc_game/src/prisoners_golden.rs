@@ -185,7 +185,12 @@ impl Script {
             }
             // And put the third to death.
             4 if held => {
-                let stockade = world.prisoners_held()[0].stockade;
+                let Some(stockade) = (world.prisoners_held().iter())
+                    .find(|h| h.captor == 0 && h.owner == 1)
+                    .map(|h| h.stockade)
+                else {
+                    return;
+                };
                 out.push(order(0, Command::Execute { stockade }));
                 self.phase = 5;
             }
