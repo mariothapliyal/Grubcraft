@@ -3425,6 +3425,7 @@ impl Running {
         let mut members = self.group.clone();
         let legs = if in_column {
             let (world, side) = (&self.world, self.sandbox.side);
+            column::ready(world, &mut members);
             let clear = |a, b| world.nav().clear_line(side, a, b);
             road::legs(&mut members, &fx, &brigades, |m, order, out| {
                 column::arrange(m, order, &clear, out);
@@ -3520,6 +3521,7 @@ impl Running {
         let (world, side) = (&self.world, self.sandbox.side);
         let clear = |a, b| world.nav().clear_line(side, a, b);
         let mut members = self.group.clone();
+        column::ready(world, &mut members);
         let mut leg = Vec::new();
         column::arrange(&mut members, order, &clear, &mut leg);
         let from = gc_sim::formation::centre_of(&self.group);
@@ -3551,14 +3553,14 @@ impl Running {
         } else {
             gc_fixed::Angle::of_vec(end - from)
         };
-        let (changes, march) = column::begin(&self.world, legs, end, facing, form);
+        let side = self.sandbox.side;
+        let (changes, march) = column::begin(&self.world, side, legs, end, facing, form);
         // An army marching in column is still that army; any other
         // regiments sent leave the places they held in theirs.
         self.army_plan = None;
         if army.is_none() {
             self.keep_army_places();
         }
-        let side = self.sandbox.side;
         self.human_orders
             .extend(changes.into_iter().map(|command| PlayerCommand {
                 player: side,
@@ -3590,21 +3592,23 @@ impl Running {
         if self.columns.is_empty() || self.human_orders.is_empty() {
             return;
         }
-        let side = self.sandbox.side;
-        let commands: Vec<gc_sim::Command> = (self.human_orders.iter())
-            .filter(|c| c.player == side)
-            .map(|c| c.command)
-            .collect();
         let mut out = Vec::new();
         for march in &mut self.columns {
-            march.heed(&commands, &mut out);
+            let commands: Vec<gc_sim::Command> = (self.human_orders.iter())
+                .filter(|c| c.player == march.side)
+                .map(|c| c.command)
+                .collect();
+            let mut theirs = Vec::new();
+            march.heed(&commands, &mut theirs);
+            let player = march.side;
+            out.extend(
+                theirs
+                    .into_iter()
+                    .map(|command| PlayerCommand { player, command }),
+            );
         }
         self.columns.retain(|m| !m.is_empty());
-        self.human_orders
-            .extend(out.into_iter().map(|command| PlayerCommand {
-                player: side,
-                command,
-            }));
+        self.human_orders.extend(out);
     }
 
     /// Look at each column of march sent: form up those come to their
@@ -3615,7 +3619,13 @@ impl Running {
         let mut out = Vec::new();
         let mut enemy = false;
         for march in &mut columns {
-            let Some(why) = column::watch(&self.world, side, march, &mut out) else {
+            // Another side's (sandbox, before Tab): watched when it is
+            // commanded again, since its orders go out as the side now
+            // commanded.
+            if march.side != side {
+                continue;
+            }
+            let Some(why) = column::watch(&self.world, march, &mut out) else {
                 continue;
             };
             enemy |= matches!(why, column::Why::Enemy(_));
@@ -7332,6 +7342,8 @@ impl Running {
         self.boxed.clear();
         self.control_groups = Default::default();
         self.armies = Default::default();
+        self.columns.clear();
+        self.road_preview = None;
         self.last_group_key = None;
         // Regiment handles are reissued: a leftover pick or cool-down from
         // the last match would match the new match's regiments.

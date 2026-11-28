@@ -244,7 +244,7 @@ struct Brigade {
     /// across this.
     ahead: FxVec2,
     /// Tiles a tick over the ground: the slowest its members go at the
-    /// pace they were ordered (a column quicker, see `Regiments::marched`).
+    /// pace they were ordered (a column quicker, see `Regiments::carried`).
     pace: Fx,
     /// How far along the track the anchor is, and how fast it went last
     /// tick.
@@ -945,7 +945,7 @@ impl Brigades {
             let of = |i: &u32| &self.members[*i as usize];
             let centre = middle_of(self.list.iter().map(|i| of(i).end));
             let pace = (self.list.iter())
-                .map(|&i| regs.marched(i as usize, of(&i).ordered))
+                .map(|&i| regs.carried(i as usize, of(&i).ordered))
                 .min()
                 .unwrap_or(Fx::MAX);
             let b = &mut self.pool[slot];
@@ -1671,7 +1671,7 @@ impl Brigades {
                             .max(theirs.station + theirs.half_depth + place.half_depth + GROUP_GAP);
                     }
                 }
-                let fastest = regs.marched(i, regs.speed[i]);
+                let fastest = regs.carried(i, regs.speed[i]);
                 let gain = if b.arrived() {
                     fastest
                 } else {
@@ -1709,10 +1709,11 @@ impl Brigades {
             }
         }
         let slow = (Fx::ONE - (lag - LAG_FREE) / LAG_SPAN).clamp(CRAWL, Fx::ONE);
-        // Over the ground: a column's quick march, or a march power,
-        // carries the whole body along when all of it has one.
+        // Over the ground: a column's quick march, a run or a march power
+        // carries the whole body along when all of it has one (one slowed
+        // lags, see `Regiments::carried`).
         let pace = (self.list.iter())
-            .map(|&i| regs.marched(i as usize, self.members[i as usize].ordered))
+            .map(|&i| regs.carried(i as usize, self.members[i as usize].ordered))
             .min();
         let b = &mut self.pool[slot];
         b.pace = pace.unwrap_or(b.pace);
@@ -1842,9 +1843,9 @@ impl Brigades {
                 } else {
                     Fx::ONE
                 };
-                (along * slant).min(regs.marched(i, regs.speed[i]))
+                (along * slant).min(regs.carried(i, regs.speed[i]))
             } else {
-                regs.marched(i, regs.speed[i])
+                regs.carried(i, regs.speed[i])
             };
             // It comes no nearer behind a member in its way than they
             // march (a file held up at a ford closes up no tighter), and
@@ -1868,7 +1869,7 @@ impl Brigades {
             }
             self.members[i].held = room < pace;
             // All of that is over the ground: the pace that goes as far.
-            let pace = regs.unmarched(i, pace.min(room));
+            let pace = regs.uncarried(i, pace.min(room));
             regs.target[i] = Some(target);
             regs.pace[i] = pace;
             self.members[i].set = target;

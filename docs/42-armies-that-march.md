@@ -1061,7 +1061,9 @@ army's own shape):
   army is ordered to its places there, facing on the way it came. The
   regiments behind file on to their places still in column, at the
   quick march, and each forms up (back into the formation it had) once
-  it is within 6 tiles of its place.
+  it is within 6 tiles of its place. An enemy coming near while they
+  file on makes all of them form up at once and go on to their places
+  in the shape the player chose (the army is not turned about).
 - **When an enemy comes near.** When an enemy regiment the side can see
   (not routing) comes within 32 tiles of any regiment of the column
   (as far as a regiment sees), every regiment forms up at once and the
@@ -1069,8 +1071,11 @@ army's own shape):
   The message bar says "Enemy near: the column deploys to face it".
 
 Any other order to a regiment of the column (a move, an attack, Hold,
-fall back, a formation change) takes it out of the column; one routing
-or dying leaves it too. `Alt` with `Shift` is an ordinary queued move:
+Brace, Skirmish, fall back, work, manning a wall, a formation change)
+takes it out of the column; one routing or dying leaves it too. Torches,
+a run, or a stance turned off do not. One that can't go into Column
+(fighting, or on a wall) marches in its file as it stands and deploys
+with the rest. `Alt` with `Shift` is an ordinary queued move:
 the column forms at once, so it cannot wait behind other orders.
 
 ### How it works (`gc_game::column`)
@@ -1084,7 +1089,7 @@ the column forms at once, so it cannot wait behind other orders.
   either way, until all of it is in clear line of its middle, because a
   brigade marches as one body only the regiments whose places it can see
   from the middle of them all.
-- **The watch.** The game watches each column it sent, every tick, and
+- **The watch.** The game watches each column it sent, each frame, and
   sends the formation changes and the deploying order itself, through
   the same orders the player gives. Nothing about a column is in the
   simulation, so a replay replays the orders.
@@ -1093,10 +1098,13 @@ the column forms at once, so it cannot wait behind other orders.
   a march power): the members' extra pace only took them ahead of their
   places. Since brigades came in (#413) a body in column, the computer's
   armies on the march too, went no faster than one in line. The brigade
-  now walks at the slowest pace its members go over the ground
-  (`Regiments::marched`), and each member's pace is set back from that
-  (`Regiments::unmarched`). A brigade with no one in column or on a
-  march power walks as before (the golden replays did not change).
+  now walks at the slowest pace its members go over the ground by what
+  quickens them (Column, a run, a march power: `Regiments::carried`),
+  and each member's pace is set back from that (`Regiments::uncarried`).
+  What slows a regiment (a Singing Wall, being winded) is left out, so
+  one slowed member lags its brigade as before rather than holding all
+  of it back. A brigade with no one in column, running or on a march
+  power walks as before (the golden replays did not change).
 
 ### What it measured (`STRESS=column-of-march`)
 

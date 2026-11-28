@@ -105,11 +105,13 @@ fn walk(real: &Real, report: &mut Report, how: How) -> Walk {
     let mut out = Vec::new();
     let mut march = None;
     if how.column {
+        column::ready(&world, &mut members);
         let clear = |a, b| world.nav().clear_line(0, a, b);
         column::arrange(&mut members, goal, &clear, &mut out);
         let mut legs = vec![out];
         let (changes, m) = column::begin(
             &world,
+            0,
             &mut legs,
             goal.target,
             NORTH,
@@ -128,7 +130,7 @@ fn walk(real: &Real, report: &mut Report, how: How) -> Walk {
         report.tick(&mut world, &[]);
         if let Some(m) = &mut march {
             let mut commands = Vec::new();
-            if let Some(why) = column::watch(&world, 0, m, &mut commands) {
+            if let Some(why) = column::watch(&world, m, &mut commands) {
                 let near = (of(&world, &enemy))
                     .flat_map(|e| {
                         of(&world, &army).map(move |v| (e.position - v.position).length())
