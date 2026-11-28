@@ -374,8 +374,9 @@ fn print_bases(world: &World, real: &Real, factions: &[Faction], choice: usize, 
     }
 }
 
-/// How many of `player`'s walls were drawn as curves (through more than
-/// two points), and how many were drawn in all.
+/// How many of `player`'s one-tile lines were drawn as curves (through
+/// more than two points), and how many were drawn in all: ring walls, and
+/// its barricades and plans too, which are always straight.
 pub(crate) fn drawn_walls(world: &World, player: PlayerId) -> (usize, usize) {
     let drawings = (0..).map_while(|id| world.drawing(id));
     let mine: Vec<_> = (drawings.filter(|d| d.owner == player && d.width <= 1)).collect();
@@ -498,6 +499,7 @@ fn wall_survey() {
     if let (Some(path), Some(rec)) = (record, rec) {
         let mut replay = rec.finish();
         replay.header.map = Some(choice as u8);
+        replay.header.map_maker = Some(gc_map::MAP_MAKER);
         replay.note = format!("wall survey: map {choice}, seed {seed}, Generals {picked}");
         replay.save(&path).expect("the replay is saved");
         println!("recorded {path}");

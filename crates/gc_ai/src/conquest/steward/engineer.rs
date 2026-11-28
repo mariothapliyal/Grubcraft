@@ -129,13 +129,24 @@ enum Bridge {
     /// It hasn't looked for a crossing yet.
     #[default]
     Unlooked,
-    /// The crossing it means to draw, and its tiles, not yet ordered.
-    Planned { path: DrawnPath, tiles: u32 },
-    /// Ordered last at `sent`, `tries` times in all: an order the sim
-    /// turned down (the Grub spent meanwhile, its worker taken, another
-    /// side's deck in the way) is sent again, over the crossing found by a
-    /// fresh look, [`BRIDGE_TRIES`] times at most.
-    Ordered { sent: u32, tries: u8 },
+    /// The crossing it means to draw and its tiles, ordered `tries` times
+    /// so far but not yet now; last looked for at `looked`.
+    Planned {
+        path: DrawnPath,
+        tiles: u32,
+        tries: u8,
+        looked: u32,
+    },
+    /// Ordered last at `sent`, `tries` times in all: an order the sim turned down (the Grub spent
+    /// meanwhile, its worker taken, another side's deck in the way) is sent
+    /// again, over the crossing found by a fresh look, [`BRIDGE_TRIES`]
+    /// times at most.
+    Ordered {
+        path: DrawnPath,
+        tiles: u32,
+        sent: u32,
+        tries: u8,
+    },
     /// No bridge: it needs or can draw none, or has drawn it, or has run
     /// out of tries. It looks no more.
     Done,
@@ -722,53 +733,86 @@ impl Steward {
     }
 
     /// When water cuts it off from every enemy start, bridge the narrowest
-    /// crossing near the straight way to the nearest. It looks once.
+    /// crossing near the straight way to the nearest. It looks once, and
+    /// again before each order it sends again, since another side's deck
+    /// may stand by then where it meant to draw.
     fn bridge(&mut self, s: &Sense, look: &Look, home: Vec2, spare: u32) -> Option<Order> {
         let b = s.kit.works(Role::Bridge)?;
-        let crossing = || {
-            let target = super::super::nearest_other_start(s, home)?;
-            if !s.terrain.cut_off(home, super::super::other_starts(s, home)) {
-                return None;
-            }
-            narrowest_crossing(s, b.id, home, target)
+        let target = super::super::nearest_other_start(s, home);
+        let crossing = || target.and_then(|t| narrowest_crossing(s, b.id, home, t));
+        let planned = |(path, tiles), tries| Bridge::Planned {
+            path,
+            tiles,
+            tries,
+            looked: s.now,
         };
-        let (path, tiles, tries) = match self.engineer.bridge {
+        match self.engineer.bridge {
             Bridge::Done => return None,
-            Bridge::Planned { path, tiles } => (path, tiles, 0),
-            // Its first look: the crossing it finds is planned, and ordered
-            // below if it can be now.
+            // Its first look.
             Bridge::Unlooked => {
-                let Some((path, tiles)) = crossing() else {
+                let cut_off = s.terrain.cut_off(home, super::super::other_starts(s, home));
+                let Some(found) = crossing().filter(|_| cut_off) else {
                     self.engineer.bridge = Bridge::Done;
                     return None;
                 };
-                self.engineer.bridge = Bridge::Planned { path, tiles };
-                (path, tiles, 0)
+                self.engineer.bridge = planned(found, 0);
             }
-            // Ordered: drawn once a deck of its own lies there, else it looks
-            // for the way again after a while, since another side's deck may
-            // now stand where it meant to draw, and orders that.
-            Bridge::Ordered { sent, tries } => {
-                let drawn = look.mine.iter().any(|m| m.stats.role == Role::Bridge);
-                if drawn || tries >= BRIDGE_TRIES {
+            // Planned again after an order: that order may have gone
+            // through after all.
+            Bridge::Planned { tries, .. } if tries > 0 && drew_bridge(s) => {
+                self.engineer.bridge = Bridge::Done;
+                return None;
+            }
+            Bridge::Planned { .. } => {}
+            // Ordered: done once the sim has drawn a bridge of its own, else
+            // a while later it looks again (keeping the old way where it
+            // finds none) and orders that. Not cut off any more, as another
+            // side's deck may have joined it, it still draws its own.
+            Bridge::Ordered {
+                path,
+                tiles,
+                sent,
+                tries,
+            } => {
+                if drew_bridge(s) || tries >= BRIDGE_TRIES {
                     self.engineer.bridge = Bridge::Done;
                     return None;
                 }
                 if s.now < sent + BRIDGE_RETRY {
                     return None;
                 }
-                let Some((path, tiles)) = crossing() else {
-                    self.engineer.bridge = Bridge::Done;
-                    return None;
-                };
-                (path, tiles, tries)
+                self.engineer.bridge = planned(crossing().unwrap_or((path, tiles)), tries);
             }
+        }
+        let Bridge::Planned {
+            path,
+            tiles,
+            tries,
+            looked,
+        } = self.engineer.bridge
+        else {
+            return None;
         };
         if spare < u32::from(b.stats.cost_grub) * tiles {
             return None;
         }
+        // Ground clear when it looked may be crowded now, and the sim draws
+        // a bridge whole or not at all: rather than spend a try on an order
+        // sure to be turned down, it waits for the ground to clear, and now
+        // and then looks for another way meanwhile.
+        let line = gc_sim::walls::Line::drawn(path, STANDARD);
+        let whole = (s.world.line_fits(s.party, b.id, &line))
+            .is_ok_and(|t| t.iter().all(|t| t.fits.is_ok()));
+        if !whole {
+            if s.now >= looked + BRIDGE_RETRY {
+                self.engineer.bridge = planned(crossing().unwrap_or((path, tiles)), tries);
+            }
+            return None;
+        }
         let w = self.builder_at(s, look, path.ends().0)?;
         self.engineer.bridge = Bridge::Ordered {
+            path,
+            tiles,
             sent: s.now,
             tries: tries + 1,
         };
@@ -781,6 +825,16 @@ impl Steward {
         };
         Some((order, Some(w)))
     }
+}
+
+/// Whether a bridge order of its own went through: the sim keeps every
+/// line drawn (a bridge is the only line wider than one tile), though its
+/// deck may not stand yet.
+fn drew_bridge(s: &Sense) -> bool {
+    let drawings = (0..).map_while(|id| s.world.drawing(id));
+    drawings
+        .into_iter()
+        .any(|d| d.owner == s.party && d.width > 1)
 }
 
 impl Steward {
