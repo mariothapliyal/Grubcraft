@@ -1378,7 +1378,7 @@
         // beats, block, parry, two hits, two deaths and a kill that lifts a
         // man on the pike and throws him.
         "Bone Pikes pike 1": (
-            from: "shared:grubcraft/fight-library/foes/bone-pikes-moves-1.glb",
+            from: "shared:grubcraft/fight-library/foes/bone-pikes-moves-2.glb",
             moves: [
                 (anim: "F_Pike_Guard", act: "Idle", weapon: "Polearm"),
                 (anim: "F_Pike_Push", act: "Attack", weapon: "Polearm", contact: Some(0.433)),
