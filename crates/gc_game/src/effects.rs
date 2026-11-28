@@ -162,6 +162,12 @@ impl Field {
         }
     }
 
+    /// A hero's ability went off at `pos`: a burst of dust, a little less
+    /// than a charge's.
+    pub fn cast(&mut self, pos: Vec3) {
+        self.impact(pos, 1.6, 10.0, 6.0, 0.9);
+    }
+
     /// Two regiments met at `pos` with a charge.
     pub fn charge_hit(&mut self, pos: Vec3) {
         self.impact(pos, 2.2, 16.0, 8.0, 1.0);

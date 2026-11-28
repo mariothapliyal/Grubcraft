@@ -164,6 +164,20 @@ pub enum Event {
     /// A player's walls closed round its main building (`walled`), or its
     /// ring was breached (see [`crate::towns`]).
     Town { player: PlayerId, walled: bool },
+    /// Hero `hero` cast its ability `slot` (0 basic, 1 ultimate) at `at`
+    /// (see [`crate::abilities`]).
+    Cast {
+        hero: RegimentHandle,
+        slot: u8,
+        at: FxVec2,
+    },
+    /// Hero `hero`'s cast of its ability `slot` couldn't go off, and why;
+    /// no cooldown was spent.
+    CastRefused {
+        hero: RegimentHandle,
+        slot: u8,
+        why: crate::structures::Refusal,
+    },
 }
 
 /// The bit player `p` has in an owners mask (`DebrisStruck`,
@@ -193,7 +207,12 @@ impl Events {
     pub(crate) fn new(capacity: usize) -> Events {
         Events {
             // A volley's two events, and each regiment's four at most.
-            list: Vec::with_capacity(2 * crate::combat::MAX_VOLLEYS + 4 * capacity),
+            // And each hero's cast.
+            list: Vec::with_capacity(
+                2 * crate::combat::MAX_VOLLEYS
+                    + 4 * capacity
+                    + crate::MAX_PARTIES * crate::heroes::MAX_HEROES,
+            ),
             before: alloc::vec![
                 Before {
                     alive: false,
@@ -226,6 +245,21 @@ impl Events {
             + 4 * regiments
             + self.before.len();
         self.list.reserve(room);
+    }
+
+    /// Tell of hero `hero` casting its ability `slot` at `at`.
+    pub(crate) fn cast(&mut self, hero: RegimentHandle, slot: u8, at: FxVec2) {
+        self.list.push(Event::Cast { hero, slot, at });
+    }
+
+    /// Tell of hero `hero`'s cast of ability `slot` refused, and why.
+    pub(crate) fn cast_refused(
+        &mut self,
+        hero: RegimentHandle,
+        slot: u8,
+        why: crate::structures::Refusal,
+    ) {
+        self.list.push(Event::CastRefused { hero, slot, why });
     }
 
     /// Tell of the tile `(x, y)` cleared of `was` (burnt, if `burnt`).

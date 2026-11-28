@@ -12,7 +12,8 @@
 //!   points of experience, shared evenly between that player's heroes in
 //!   reach (allies' heroes in reach share too). [`LEVELS`] says what each
 //!   level needs. A level adds the unit's growth to the hero's hit points
-//!   (healing them) and to its damage, and a skill point.
+//!   (healing them) and to its damage, and ranks up its abilities (see
+//!   [`crate::abilities`]).
 //! - **Leadership.** A standing hero leads its player's regiments within
 //!   [`LEAD_TILES`] as a Field Battle general does (see
 //!   [`crate::generals`]): [`Regiments::led`] is set for them, and morale
@@ -31,6 +32,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Fx, FxVec2};
 
+use crate::abilities::{HeroKit, MAX_ZONES, Pending, Zone};
 use crate::combat::Combat;
 use crate::conquest::ConquestUnit;
 use crate::regiments::{Regiments, hash_handle};
@@ -93,10 +95,14 @@ pub struct Hero {
     /// 1 to [`MAX_LEVEL`].
     pub level: u8,
     pub xp: u32,
-    /// Skill points not yet spent.
-    pub points: u8,
     /// Where it stood at the end of the last tick, or where it fell.
     pub at: FxVec2,
+    /// Which hero it is, for its abilities (see [`crate::abilities`]).
+    pub kit: Option<HeroKit>,
+    /// The tick each of its two abilities can be cast again from.
+    pub ready_at: [u32; 2],
+    /// A cast waiting for it to walk into reach.
+    pub pending: Option<Pending>,
 }
 
 impl Hero {
@@ -122,9 +128,14 @@ impl Hero {
         self.xp = self.xp.saturating_add(xp);
         let gained = level_of(self.xp).saturating_sub(self.level);
         self.level += gained;
-        self.points = self.points.saturating_add(gained);
         gained
     }
+}
+
+/// Hero slot `i`'s soldier's hit points at full health, with its levels'
+/// growth.
+pub(crate) fn full_hp(regs: &Regiments, stats: &UnitStats, i: usize) -> u16 {
+    stats.hp_per_model.saturating_add(regs.hp_bonus[i])
 }
 
 /// The level `xp` earns.
@@ -162,6 +173,8 @@ fn set_level(regs: &mut Regiments, i: usize, stats: &UnitStats, g: HeroGrowth, l
 #[derive(Clone, Debug, Default)]
 pub struct Heroes {
     list: Vec<Hero>,
+    /// Abilities pulsing on the field (see [`crate::abilities`]).
+    pub(crate) zones: Vec<Zone>,
     /// Scratch for sharing experience: the heroes in reach of one death.
     near: Vec<usize>,
 }
@@ -170,6 +183,7 @@ impl Heroes {
     pub(crate) fn new() -> Heroes {
         Heroes {
             list: Vec::with_capacity(MAX_PARTIES * MAX_HEROES),
+            zones: Vec::with_capacity(MAX_ZONES),
             near: Vec::with_capacity(MAX_PARTIES * MAX_HEROES),
         }
     }
@@ -188,6 +202,33 @@ impl Heroes {
     /// The hero whose regiment is `r`, if it is one.
     pub fn of_regiment(&self, r: RegimentHandle) -> Option<&Hero> {
         self.list.iter().find(|h| h.regiment == Some(r))
+    }
+
+    /// Where in the list the hero whose regiment is `r` is.
+    pub(crate) fn index_of(&self, r: RegimentHandle) -> Option<usize> {
+        self.list.iter().position(|h| h.regiment == Some(r))
+    }
+
+    pub(crate) fn get(&self, k: usize) -> &Hero {
+        &self.list[k]
+    }
+
+    pub(crate) fn get_mut(&mut self, k: usize) -> &mut Hero {
+        &mut self.list[k]
+    }
+
+    /// The abilities pulsing on the field.
+    pub fn zones(&self) -> &[Zone] {
+        &self.zones
+    }
+
+    /// Start zone `z`: false with [`MAX_ZONES`] already pulsing.
+    pub(crate) fn add_zone(&mut self, z: Zone) -> bool {
+        let room = self.zones.len() < MAX_ZONES;
+        if room {
+            self.zones.push(z);
+        }
+        room
     }
 
     /// Whether `player` may queue a hero of type `unit` now (to hire it,
@@ -225,7 +266,7 @@ impl Heroes {
         &mut self,
         regs: &mut Regiments,
         stats: &UnitStats,
-        growth: HeroGrowth,
+        (growth, kit): (HeroGrowth, Option<HeroKit>),
         owner: PlayerId,
         unit: UnitId,
         r: RegimentHandle,
@@ -247,17 +288,20 @@ impl Heroes {
                     regiment: None,
                     level: 1,
                     xp: 0,
-                    points: 1,
                     at,
+                    kit,
+                    ready_at: [0; 2],
+                    pending: None,
                 });
                 self.list.len() - 1
             }
         };
         let h = &mut self.list[k];
         h.regiment = Some(r);
+        h.pending = None;
         h.at = at;
         set_level(regs, i, stats, growth, h.level);
-        let full = stats.hp_per_model.saturating_add(regs.hp_bonus[i]);
+        let full = full_hp(regs, stats, i);
         for k in 0..regs.models[i] {
             *regs.hp_mut(i, k as u8) = full;
         }
@@ -278,6 +322,10 @@ impl Heroes {
         for j in 0..regs.deaths.len() {
             let dead = regs.deaths[j];
             if dead == 0 {
+                continue;
+            }
+            // Summoned and raised regiments are free: they feed no hero.
+            if regs.summoned_left[j] > 0 {
                 continue;
             }
             let hp = stats
@@ -323,6 +371,8 @@ impl Heroes {
             };
             let Some(i) = regs.resolve(r) else {
                 h.regiment = None;
+                // A cast it was walking to dies with it.
+                h.pending = None;
                 fall(regs, stats, units, h);
                 continue;
             };
@@ -355,9 +405,30 @@ impl Heroes {
             hash_handle(h, hero.regiment);
             h.u8(hero.level);
             h.u32(hero.xp);
-            h.u8(hero.points);
             h.i32(hero.at.x.raw());
             h.i32(hero.at.y.raw());
+            HeroKit::hash_into(hero.kit, h);
+            h.u32(hero.ready_at[0]);
+            h.u32(hero.ready_at[1]);
+            match hero.pending {
+                Some(p) => {
+                    h.u8(1 + p.slot);
+                    p.target.hash_into(h);
+                    match p.toward {
+                        Some(t) => {
+                            h.u8(1);
+                            h.i32(t.x.raw());
+                            h.i32(t.y.raw());
+                        }
+                        None => h.u8(0),
+                    }
+                }
+                None => h.u8(0),
+            }
+        }
+        h.u32(self.zones.len() as u32);
+        for z in &self.zones {
+            z.hash_into(h);
         }
     }
 }

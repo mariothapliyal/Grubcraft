@@ -152,6 +152,8 @@ const RETRY_TICKS: u16 = TICKS_PER_SECOND as u16;
 const STALLS: u8 = 3;
 /// Grub is kept in hundredths, so upkeep's cut of a small load isn't lost.
 const GRUB_SCALE: u32 = 100;
+/// How much a Market Crash cuts its victims' Grub income, in percent.
+pub const CRASH_PERCENT: u32 = 50;
 
 /// A seep or vein as the map places it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -292,6 +294,9 @@ pub struct Economy {
     /// Grub in hundredths, and Marrow, by player.
     grub: [u32; MAX_PARTIES],
     marrow: [u32; MAX_PARTIES],
+    /// By player: ticks left of a Market Crash (see [`crate::abilities`]),
+    /// cutting their Grub income by [`CRASH_PERCENT`].
+    crash_left: [u16; MAX_PARTIES],
     /// By regiment slot: its round, the node it works, the generation of
     /// the regiment sent (a slot reused by a new regiment doesn't inherit
     /// it), what it carries, and ticks until its load is full or its next
@@ -356,6 +361,7 @@ impl Economy {
             tune_clock: vec![0; slots],
             grub: setup.start.map(|(g, _)| g.saturating_mul(GRUB_SCALE)),
             marrow: setup.start.map(|(_, m)| m),
+            crash_left: [0; MAX_PARTIES],
             step: vec![Step::Idle; n],
             node: vec![0; n],
             work_gen: vec![0; n],
@@ -655,6 +661,9 @@ impl Economy {
         stances: &Stances,
         out: u8,
     ) {
+        for left in &mut self.crash_left {
+            *left = left.saturating_sub(1);
+        }
         // Regiments gone from their slots stop first, so what a dead worker
         // took goes back to its pile before the pile can be cleared away.
         for r in 0..self.step.len() {
@@ -933,8 +942,28 @@ impl Economy {
                 // Run dry: its tuner may have a fuller node in reach.
                 self.power_seen = None;
             }
-            self.deposit(structures.owner_of(s), kind, take, regs, kinds, used);
+            // A Symphony doubles what a chord's seeps yield (see
+            // [`crate::abilities`]).
+            let owner = structures.owner_of(s);
+            let sung =
+                kind == Resource::Grub && self.node_harmony[n] > 0 && structures.in_symphony(owner);
+            let take = if sung { take * 2 } else { take };
+            self.deposit(owner, kind, take, regs, kinds, used);
         }
+    }
+
+    /// Player `p`'s Grub income is cut by [`CRASH_PERCENT`] for `ticks`
+    /// (a Market Crash); over another, the longer.
+    pub(crate) fn crash(&mut self, p: PlayerId, ticks: u16) {
+        if let Some(left) = self.crash_left.get_mut(usize::from(p)) {
+            *left = (*left).max(ticks);
+        }
+    }
+
+    /// Ticks left of player `p`'s Market Crash.
+    #[cfg(test)]
+    pub fn crashed_left(&self, p: PlayerId) -> u16 {
+        self.crash_left.get(usize::from(p)).copied().unwrap_or(0)
     }
 
     /// Ticks between loads from tuned node `n`: slower once it runs dry,
@@ -1011,7 +1040,10 @@ impl Economy {
             return;
         }
         let used = used.get_or_insert_with(|| self.supply_in_use(kinds, regs))[p];
-        let kept = hundredths * upkeep_percent(used) / 100;
+        let mut kept = hundredths * upkeep_percent(used) / 100;
+        if self.crash_left[p] > 0 {
+            kept = kept * (100 - CRASH_PERCENT) / 100;
+        }
         self.grub[p] = self.grub[p].saturating_add(kept);
     }
 
@@ -1070,6 +1102,7 @@ impl Economy {
         for p in 0..MAX_PARTIES {
             h.u32(self.grub[p]);
             h.u32(self.marrow[p]);
+            h.u16(self.crash_left[p]);
         }
         for r in 0..self.step.len() {
             // A caravan's cargo outlives its orders, until it is banked or

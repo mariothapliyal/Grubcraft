@@ -21,6 +21,7 @@
 //! what the simulation decides (ticks, positions, losses), which are the
 //! same on every machine; time is held only to the generous budget.
 
+mod abilities;
 mod advance_in_line;
 mod ai_ring;
 pub(crate) mod arena;
@@ -101,6 +102,7 @@ const SCENARIOS: &[Scenario] = &[
     evolve_tithe::SCENARIO,
     charges::SCENARIO,
     heroes::SCENARIO,
+    abilities::SCENARIO,
     dropped::SCENARIO,
     high_water::SCENARIO,
 ];

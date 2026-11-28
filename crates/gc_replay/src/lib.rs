@@ -45,6 +45,8 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 59: hero abilities (the cast command, tag 55, and a unit's ability
+///   kit, read as none; docs/44);
 /// - 58: the header's map maker version (read as none: the replay's map
 ///   was made by an unknown version);
 /// - 57: the water's own level per tile (read as the map's line
@@ -121,7 +123,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 ///
 /// Anything older is refused with [`Error::Format`].
 // scripts/rules-bump.py reads and sets this line as written.
-pub const FORMAT: u16 = 58;
+pub const FORMAT: u16 = 59;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.

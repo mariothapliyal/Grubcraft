@@ -193,7 +193,7 @@ fn rosters_follow_the_design_rules() {
                 "{at}: missile growth only for ranged heroes"
             );
             assert!(!h.flags.contains(&Flag::Flying), "{at}: heroes walk");
-            assert_eq!(h.abilities.len(), 4, "{at}: four abilities");
+            assert_eq!(h.abilities.len(), 2, "{at}: two abilities (docs/44)");
             let ultimates = h.abilities.iter().filter(|a| a.kind == Kind::Ultimate);
             assert_eq!(ultimates.count(), 1, "{at}: one ultimate");
             for a in &h.abilities {
