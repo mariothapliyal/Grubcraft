@@ -15,6 +15,7 @@
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::arrange::{Arrangement, Preset, Role, Shape};
 use gc_sim::formation::{GROUP_LINE_GAP, GroupMember, GroupOrder, block_size, centre_of, middle_of};
+use gc_sim::orders::Step;
 use gc_sim::{Command, Formation, PlayerId, RegimentHandle, World};
 
 /// A seen enemy regiment this near a regiment of the column, in tiles,
@@ -22,9 +23,6 @@ use gc_sim::{Command, Formation, PlayerId, RegimentHandle, World};
 pub const NEAR: Fx = Fx::from_int(32);
 /// The column's head this near its end, in tiles, makes it deploy.
 const ARRIVE: Fx = Fx::from_int(12);
-/// A regiment whose march ends within this of one of the column's legs
-/// for it, in tiles, is still on the column's march.
-const SAME: Fx = Fx::from_int(3);
 
 /// The shape a column deploys into.
 #[derive(Clone, Debug)]
@@ -250,11 +248,6 @@ pub fn begin(
 }
 
 impl March {
-    /// The regiments still in the column.
-    pub fn regiments(&self) -> impl Iterator<Item = RegimentHandle> + '_ {
-        self.members.iter().map(|m| m.handle)
-    }
-
     /// Whether no regiment is left in it.
     pub fn is_empty(&self) -> bool {
         self.members.is_empty()
@@ -264,6 +257,44 @@ impl March {
     pub fn leave(&mut self, regiments: &[RegimentHandle]) {
         self.members.retain(|m| !regiments.contains(&m.handle));
         self.find_head();
+    }
+
+    /// Take out of the column the regiments `commands` (orders about to
+    /// be sent) send elsewhere, other than its own; filing, each forms up
+    /// as it goes (its order to, into `out`).
+    pub fn heed(&mut self, commands: &[Command], out: &mut Vec<Command>) {
+        let before = self.members.len();
+        for c in commands {
+            let (regiment, to) = match *c {
+                Command::MoveTo {
+                    regiment, target, ..
+                }
+                | Command::Then {
+                    regiment,
+                    step: Step::Move { target, .. },
+                } => (regiment, Some(target)),
+                Command::Then { regiment, .. }
+                | Command::Attack { regiment, .. }
+                | Command::AttackMove { regiment, .. }
+                | Command::AttackStructure { regiment, .. }
+                | Command::FallBack { regiment }
+                | Command::Hold { regiment, on: true } => (regiment, None),
+                _ => continue,
+            };
+            let Some(k) = self.members.iter().position(|m| m.handle == regiment) else {
+                continue;
+            };
+            if to.is_some_and(|t| self.members[k].ends.contains(&t)) {
+                continue;
+            }
+            let m = self.members.remove(k);
+            if self.filing {
+                out.push(m.form());
+            }
+        }
+        if self.members.len() != before {
+            self.find_head();
+        }
     }
 
     /// The head: the one whose march ends nearest the column's end.
@@ -277,32 +308,22 @@ impl March {
 }
 
 /// Look at column `march` of `side`. On the march: drop the regiments no
-/// longer on it (fallen, routed, out of column, or given other orders),
-/// and say whether it deploys now. Filing into its places after it came
-/// to the end (see [`deploy`]): put into `out` the formation changes of
-/// those come to their places (or given other orders), and of all of them
-/// if an enemy comes near.
-pub fn watch(world: &World, side: PlayerId, march: &mut March, out: &mut Vec<Command>) -> Option<Why> {
+/// longer of it (fallen, routed or out of column), and say whether it
+/// deploys now. Filing into its places after it came to the end (see
+/// [`deploy`]): put into `out` the formation changes of those come to
+/// their places, and of all of them if an enemy comes near.
+pub fn watch(
+    world: &World,
+    side: PlayerId,
+    march: &mut March,
+    out: &mut Vec<Command>,
+) -> Option<Why> {
     let before = march.members.len();
-    let filing = march.filing;
     march.members.retain(|m| {
-        let Some(r) = world.regiments.get(m.handle) else {
-            return false;
-        };
-        if r.formation != Formation::Column || r.morale.broken() {
-            return false;
-        }
-        let last = *m.ends.last().unwrap_or(&r.position);
-        let on = match world.goal(m.handle) {
-            Some(g) => m.ends.iter().any(|&e| (e - g).length() <= SAME),
-            // Halted: in a fight, or at the end of its march.
-            None => r.engaged || (last - r.position).length() <= ARRIVE,
-        };
-        // Filing, one sent elsewhere forms up as it goes.
-        if filing && !on {
-            out.push(m.form());
-        }
-        on
+        world
+            .regiments
+            .get(m.handle)
+            .is_some_and(|r| r.formation == Formation::Column && !r.morale.broken())
     });
     if march.members.len() != before || march.head.is_none() {
         march.find_head();
@@ -324,7 +345,7 @@ pub fn watch(world: &World, side: PlayerId, march: &mut March, out: &mut Vec<Com
             (d <= NEAR).then_some((r.position, d))
         })
         .min_by_key(|&(_, d)| d);
-    if filing {
+    if march.filing {
         // Each forms up at its place, or all of them at once with an
         // enemy near.
         march.members.retain(|m| {
@@ -348,9 +369,7 @@ pub fn watch(world: &World, side: PlayerId, march: &mut March, out: &mut Vec<Com
     let m = march.members.iter().find(|m| m.handle == head)?;
     let r = world.regiments.get(head)?;
     let last = *m.ends.last()?;
-    let on_last_leg =
-        r.queued == 0 && world.goal(head).is_none_or(|g| (g - last).length() <= SAME);
-    (on_last_leg && (last - r.position).length() <= ARRIVE).then_some(Why::Arrived)
+    (r.queued == 0 && (last - r.position).length() <= ARRIVE).then_some(Why::Arrived)
 }
 
 /// A regiment of a column this near its place in the army deployed, in
