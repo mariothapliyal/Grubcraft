@@ -67,7 +67,15 @@ pub fn record() -> Replay {
     );
     let mut m = gc_match::play::Match::new(&setup, SEED, &map, &tables, false, Some(note));
     while m.world.tick_count() < MINUTES * 60 * TICKS_PER_SECOND && !m.step(&[]).decided {}
-    m.finish().expect("recorded")
+    let mut replay = m.finish().expect("recorded");
+    // The roster table's names, so the game knows which table to show it
+    // with (as the game's own recordings keep them).
+    replay.header.unit_names = data
+        .conquest_units
+        .iter()
+        .map(|u| u.name().to_string())
+        .collect();
+    replay
 }
 
 #[cfg(test)]
