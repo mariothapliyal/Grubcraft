@@ -371,6 +371,10 @@ fn print_bases(world: &World, real: &Real, factions: &[Faction], choice: usize, 
         }
         let (curved, all) = drawn_walls(world, p);
         println!("walls drawn: {all}, as curves: {curved}");
+        let bridges = (0..).map_while(|id| world.drawing(id));
+        for d in bridges.filter(|d| d.owner == p && d.width > 1) {
+            println!("bridge drawn through {:?}", d.path.points());
+        }
     }
 }
 
@@ -382,6 +386,27 @@ pub(crate) fn drawn_walls(world: &World, player: PlayerId) -> (usize, usize) {
     let mine: Vec<_> = (drawings.filter(|d| d.owner == player && d.width <= 1)).collect();
     let curved = mine.iter().filter(|d| d.path.points().len() > 2).count();
     (curved, mine.len())
+}
+
+/// Ribcage Pass with a deep river some seven tiles wide from corner to
+/// corner, a quarter tile deep, over the ribs and the ford: it cuts the
+/// starts off from each other, so Generals bridge it. `AI_RIVER=1` surveys
+/// it (a replay of it is drawn from its stored ground, without the land's
+/// colours).
+pub(crate) fn river_across_ribcage() -> gc_map::Map {
+    use gc_map::def::{Mode, Shape, TerrainOp};
+    let mut def = gc_map::shipped("ribcage_pass").expect("shipped");
+    def.terrain.push(TerrainOp {
+        shape: Shape::Line {
+            a: (0, 127),
+            b: (127, 0),
+            half_width: 3,
+        },
+        mode: Mode::Set,
+        height: 4,
+        edge: 0,
+    });
+    gc_map::Map::from_def(&def)
 }
 
 /// One tick of `world`, through the recorder if there is one.
@@ -410,7 +435,10 @@ fn wall_survey() {
         .map(|c| Faction::ALL[usize::from(c - b'0') % Faction::ALL.len()])
         .collect();
     let real = Real::load();
-    let map = conquest::make_map(choice, tiles, seed);
+    let map = match std::env::var("AI_RIVER").is_ok_and(|v| v == "1") {
+        true => river_across_ribcage(),
+        false => conquest::make_map(choice, tiles, seed),
+    };
     let game = Headless::new(&real, map, &factions, seed);
     let defaults = gc_ui::lobby::LobbySettings::default();
     let plan = game.plan(Tempo::Standard, conquest::victories(defaults.victory));

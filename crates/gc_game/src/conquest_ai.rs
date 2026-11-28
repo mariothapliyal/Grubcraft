@@ -1390,21 +1390,7 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_generals_bridge_a_river_that_cuts_them_off() {
-        use gc_map::def::{Mode, Shape, TerrainOp};
-        let mut def = gc_map::shipped("ribcage_pass").expect("shipped");
-        // A river from corner to corner across the middle, about seven
-        // tiles wide and a quarter tile deep, over the ribs and the ford.
-        def.terrain.push(TerrainOp {
-            shape: Shape::Line {
-                a: (0, 127),
-                b: (127, 0),
-                half_width: 3,
-            },
-            mode: Mode::Set,
-            height: 4,
-            edge: 0,
-        });
-        let map = Map::from_def(&def);
+        let map = crate::wall_survey::river_across_ribcage();
         let nav = map.sim_nav_costs();
         let (a, b) = (map.starts()[0], map.starts()[1]);
         assert!(
