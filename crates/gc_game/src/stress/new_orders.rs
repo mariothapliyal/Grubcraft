@@ -25,7 +25,10 @@ use gc_ui::lobby::Tempo;
 pub(super) const SCENARIO: Scenario = Scenario {
     name: "new-orders",
     about: "column through a Gate, skirmishers, a run, a held line, a wedge charge and Generals giving them all",
-    budget_ms: 12_000,
+    // Room for all three Conquest matches (below): with the AI's curved
+    // works (2026-11-28) the first two gave no wedge, and the three took
+    // 15.4 s.
+    budget_ms: 24_000,
     run,
 };
 
