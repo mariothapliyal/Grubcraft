@@ -107,7 +107,9 @@ pub fn field_points(unit: &ConquestUnitRecord) -> u32 {
 
 /// The tables a Field Battle plays with on the roster table, as the lobby
 /// sets one up: its stats, factions and points, which types are heroes,
-/// and the Conquest unit table they take the field with.
+/// and the Conquest unit table they take the field with (the balance
+/// table and the heroes golden; the game builds its own in `main.rs`).
+#[cfg(test)]
 pub fn field_tables(data: &gc_data::GameData) -> gc_match::Tables {
     gc_match::Tables {
         units: (data.conquest_units.iter())
