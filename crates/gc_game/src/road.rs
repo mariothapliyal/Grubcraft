@@ -12,7 +12,7 @@
 
 use gc_fixed::{Angle, FxVec2};
 use gc_sim::Command;
-use gc_sim::formation::{GroupMember, GroupOrder};
+use gc_sim::formation::{GroupMember, GroupOrder, centre_of};
 use glam::Vec2;
 
 /// A drawn point is kept once the cursor's ground is this far from the
@@ -56,11 +56,10 @@ pub fn waypoints(from: Vec2, points: &[Vec2]) -> Vec<Vec2> {
             out.push(p);
         }
     }
-    // The end always: in the place of a waypoint too near it.
+    // The end always (the loop kept it, or one less than a leg short of
+    // it, which it takes the place of).
     match out.last_mut() {
-        Some(last) if last.distance(end) < LEG => *last = end,
-        Some(&mut last) if last != end => out.push(end),
-        Some(_) => {}
+        Some(last) => *last = end,
         None => out.push(end),
     }
     out
@@ -72,18 +71,21 @@ fn bends(points: &[Vec2], a: usize, b: usize, keep: &mut [bool]) {
     if b <= a + 1 {
         return;
     }
-    let (p, q) = (points[a], points[b]);
+    let (p, d) = (points[a], points[b] - points[a]);
+    let len = d.length();
     let off = |x: Vec2| {
-        let d = q - p;
-        if d.length_squared() < 1e-6 {
+        if len < 1e-3 {
             x.distance(p)
         } else {
-            (d.perp_dot(x - p) / d.length()).abs()
+            (d.perp_dot(x - p) / len).abs()
         }
     };
-    let (k, far) = ((a + 1)..b)
+    let Some((k, far)) = ((a + 1)..b)
         .map(|k| (k, off(points[k])))
-        .fold((a, 0.0f32), |best, c| if c.1 > best.1 { c } else { best });
+        .max_by(|x, y| x.1.total_cmp(&y.1))
+    else {
+        return;
+    };
     if far > BEND {
         keep[k] = true;
         bends(points, a, k, keep);
@@ -92,8 +94,9 @@ fn bends(points: &[Vec2], a: usize, b: usize, keep: &mut [bool]) {
 }
 
 /// The group orders that send `members` along `waypoints`, one list for
-/// each leg, laid out by `arrange` (the order's shape: a preset, a saved
-/// shape or a standing army). At each waypoint the army faces on toward
+/// each leg (its brigade the leg's number in `brigades`, else 0), laid out
+/// by `arrange` (the order's shape: a preset, a saved shape or a standing
+/// army). At each waypoint the army faces on toward
 /// the next, and at the end along the road's last leg. Each leg is
 /// arranged from where the one before leaves the army, turned with the
 /// road, so a regiment keeps its side of the army round a bend (a line
@@ -102,13 +105,14 @@ fn bends(points: &[Vec2], a: usize, b: usize, keep: &mut [bool]) {
 pub fn legs(
     members: &mut [GroupMember],
     waypoints: &[FxVec2],
+    brigades: &[u16],
     mut arrange: impl FnMut(&mut [GroupMember], GroupOrder, &mut Vec<Command>),
 ) -> Vec<Vec<Command>> {
     let mut out = Vec::with_capacity(waypoints.len());
     let Some(first) = members.first() else {
         return out;
     };
-    let mut from = centre(members);
+    let mut from = centre_of(members);
     let mut facing = first.facing;
     for (k, &at) in waypoints.iter().enumerate() {
         let next = waypoints.get(k + 1).copied();
@@ -123,7 +127,7 @@ pub fn legs(
         };
         // Turn the army about its middle as the road turns.
         let turn = Angle(face.0.wrapping_sub(facing.0));
-        let c = centre(members);
+        let c = centre_of(members);
         for m in members.iter_mut() {
             m.position = c + turn.rotate(m.position - c);
             m.facing = m.facing.wrapping_add(turn);
@@ -135,7 +139,7 @@ pub fn legs(
                 target: at,
                 facing: Some(face),
                 width: None,
-                brigade: 0,
+                brigade: brigades.get(k).copied().unwrap_or(0),
             },
             &mut leg,
         );
@@ -160,44 +164,29 @@ pub fn legs(
     out
 }
 
-/// The plain middle of `members`.
-fn centre(members: &[GroupMember]) -> FxVec2 {
-    let n = members.len().max(1) as i64;
-    let (x, y) = members.iter().fold((0i64, 0i64), |(x, y), m| {
-        (
-            x + i64::from(m.position.x.raw()),
-            y + i64::from(m.position.y.raw()),
-        )
-    });
-    FxVec2::new(
-        gc_fixed::Fx::from_raw((x / n) as i32),
-        gc_fixed::Fx::from_raw((y / n) as i32),
-    )
+/// The ground points a drag along straight lines between `corners`
+/// records, a tile or less apart.
+#[cfg(test)]
+pub(crate) fn stepped(corners: &[Vec2]) -> Vec<Vec2> {
+    let mut out = vec![corners[0]];
+    for w in corners.windows(2) {
+        let n = w[0].distance(w[1]).ceil().max(1.0) as usize;
+        out.extend((1..=n).map(|i| w[0].lerp(w[1], i as f32 / n as f32)));
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn line(points: &[(f32, f32)], step: f32) -> Vec<Vec2> {
-        // The corners, walked in steps as a drag would record them.
-        let mut out = vec![Vec2::from(points[0])];
-        for w in points.windows(2) {
-            let (a, b) = (Vec2::from(w[0]), Vec2::from(w[1]));
-            let n = (a.distance(b) / step).ceil() as usize;
-            for i in 1..=n {
-                out.push(a.lerp(b, i as f32 / n as f32));
-            }
-        }
-        out
+    fn line(points: &[(f32, f32)]) -> Vec<Vec2> {
+        stepped(&points.iter().map(|&p| Vec2::from(p)).collect::<Vec<_>>())
     }
 
     #[test]
     fn a_dogleg_keeps_its_corners_and_its_end() {
-        let drawn = line(
-            &[(64.0, 100.0), (24.0, 80.0), (24.0, 40.0), (64.0, 24.0)],
-            1.0,
-        );
+        let drawn = line(&[(64.0, 100.0), (24.0, 80.0), (24.0, 40.0), (64.0, 24.0)]);
         let w = waypoints(Vec2::new(64.0, 104.0), &drawn);
         // The start lies within a leg of the army; the three corners stay.
         assert_eq!(w.len(), 3, "{w:?}");
@@ -218,7 +207,7 @@ mod tests {
 
     #[test]
     fn close_bends_merge_into_the_later() {
-        let drawn = line(&[(0.0, 0.0), (4.0, 6.0), (8.0, 0.0), (40.0, 0.0)], 1.0);
+        let drawn = line(&[(0.0, 0.0), (4.0, 6.0), (8.0, 0.0), (40.0, 0.0)]);
         let w = waypoints(Vec2::new(-20.0, 0.0), &drawn);
         assert!(w.windows(2).all(|p| p[0].distance(p[1]) >= LEG), "{w:?}");
         assert_eq!(*w.last().unwrap(), Vec2::new(40.0, 0.0));
@@ -248,7 +237,7 @@ mod tests {
         };
         let mut members = vec![member(0, 50), member(1, 60), member(2, 70)];
         let way = [FxVec2::from_ints(60, 60), FxVec2::from_ints(20, 60)];
-        let legs = legs(&mut members, &way, |m, order, out| {
+        let legs = legs(&mut members, &way, &[], |m, order, out| {
             arranged_move(m, order, Arrangement::Preset(Preset::Line), out);
         });
         assert_eq!(legs.len(), 2);

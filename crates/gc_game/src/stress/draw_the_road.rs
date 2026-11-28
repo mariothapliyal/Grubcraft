@@ -68,8 +68,8 @@ fn world(real: &Real) -> World {
     arena.world(real, 47, 0)
 }
 
-/// The army's moves as `legs` of group orders, each a brigade of its own
-/// and queued after the one before.
+/// The army's moves as `legs` of group orders, each queued after the one
+/// before.
 fn send(legs: Vec<Vec<Command>>) -> Vec<gc_sim::PlayerCommand> {
     let mut orders = Vec::new();
     for (k, leg) in legs.into_iter().enumerate() {
@@ -80,7 +80,7 @@ fn send(legs: Vec<Vec<Command>>) -> Vec<gc_sim::PlayerCommand> {
                 facing,
                 files,
                 pace,
-                ..
+                brigade,
             } = c
             else {
                 continue;
@@ -91,7 +91,7 @@ fn send(legs: Vec<Vec<Command>>) -> Vec<gc_sim::PlayerCommand> {
                 files,
                 pace,
                 hunt: false,
-                brigade: k as u16 + 1,
+                brigade,
             };
             orders.push(order(0, Command::of_step(regiment, step, k > 0)));
         }
@@ -113,24 +113,14 @@ fn walk(real: &Real, report: &mut Report, by_road: bool) -> Walk {
     let arrange = |m: &mut [GroupMember], o: GroupOrder, out: &mut Vec<Command>| {
         arranged_move(m, o, Arrangement::Preset(Preset::Line), out);
     };
-    let drawn: Vec<Vec2> = (ROAD.windows(2))
-        .flat_map(|w| {
-            let (a, b) = (Vec2::from(w[0]), Vec2::from(w[1]));
-            let n = a.distance(b).ceil() as usize;
-            (0..n).map(move |i| a.lerp(b, i as f32 / n as f32))
-        })
-        .chain([Vec2::from(ROAD[ROAD.len() - 1])])
-        .collect();
-    let from = members
-        .iter()
-        .map(|m| crate::from_fx_vec(m.position))
-        .sum::<Vec2>()
-        / 6.0;
+    let drawn = road::stepped(&ROAD.map(Vec2::from));
+    let from = crate::from_fx_vec(gc_sim::formation::centre_of(&members));
     let legs = if by_road {
         let way: Vec<FxVec2> = (road::waypoints(from, &drawn).into_iter())
             .map(crate::fx_vec)
             .collect();
-        road::legs(&mut members, &way, arrange)
+        let brigades: Vec<u16> = (1..=way.len() as u16).collect();
+        road::legs(&mut members, &way, &brigades, arrange)
     } else {
         let mut out = Vec::new();
         let goal = centre(GOAL.0, GOAL.1);
@@ -138,7 +128,7 @@ fn walk(real: &Real, report: &mut Report, by_road: bool) -> Walk {
             target: goal,
             facing: Some(NORTH),
             width: None,
-            brigade: 0,
+            brigade: 1,
         };
         arrange(&mut members, o, &mut out);
         vec![out]
@@ -199,12 +189,7 @@ fn walk(real: &Real, report: &mut Report, by_road: bool) -> Walk {
 /// How far `p` lies from the nearest point of the drawn line.
 fn off_road(p: Vec2, line: &[Vec2]) -> f32 {
     (line.windows(2))
-        .map(|w| {
-            let (a, b) = (w[0], w[1]);
-            let d = b - a;
-            let t = ((p - a).dot(d) / d.length_squared().max(1e-6)).clamp(0.0, 1.0);
-            p.distance(a + d * t)
-        })
+        .map(|w| gc_ai::perception::segment_distance(p, w[0], w[1]))
         .fold(f32::MAX, f32::min)
 }
 

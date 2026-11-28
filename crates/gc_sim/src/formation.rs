@@ -218,7 +218,7 @@ pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<
 }
 
 /// The middle of where the members stand now (`members` must not be empty).
-pub(crate) fn centre_of(members: &[GroupMember]) -> FxVec2 {
+pub fn centre_of(members: &[GroupMember]) -> FxVec2 {
     middle_of(members.iter().map(|m| m.position))
 }
 

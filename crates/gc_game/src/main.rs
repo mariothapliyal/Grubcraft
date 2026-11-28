@@ -3131,16 +3131,14 @@ impl Running {
                 // Ctrl+right-drag: the army goes by the road drawn.
                 if self.drawing_road() {
                     self.record_road();
-                }
-                let road = self.drawing_road() && road::length(&self.road) >= road::MIN_ROAD;
-                if road {
-                    self.issue_road(self.input.shift);
+                    if road::length(&self.road) >= road::MIN_ROAD {
+                        self.issue_road(self.input.shift);
+                        self.road.clear();
+                        self.input.right_down = None;
+                        return;
+                    }
                 }
                 self.road.clear();
-                if road {
-                    self.input.right_down = None;
-                    return;
-                }
                 let drag = self.drag_order();
                 let plain = drag.is_none().then(|| self.ground_under_cursor()).flatten();
                 // Riding, the ground point lies far behind a soldier clicked
@@ -3351,47 +3349,47 @@ impl Running {
         }
     }
 
-    /// The legs of group orders that send the selection along the road
-    /// drawn (see [`road`]), in the selection's arrangement: a standing
-    /// army's own shape (its places kept in `army_plan` until sent), else
-    /// the army shape chosen with `O`.
-    fn plan_road(&mut self) -> Vec<Vec<gc_sim::Command>> {
+    /// The waypoints of the road drawn and the legs of group orders that
+    /// send the selection along them (see [`road`]), in the selection's
+    /// arrangement: a standing army's own shape (its places kept in
+    /// `army_plan` until sent), else the army shape chosen with `O`. With
+    /// `numbered`, each leg of two or more regiments is a new brigade.
+    fn plan_road(&mut self, numbered: bool) -> (Vec<Vec2>, Vec<Vec<gc_sim::Command>>) {
         self.fill_group();
         self.army_plan = None;
         if self.group.is_empty() {
-            return Vec::new();
+            return Default::default();
         }
-        let n = self.group.len() as f32;
-        let from = self
-            .group
-            .iter()
-            .map(|m| from_fx_vec(m.position))
-            .sum::<Vec2>()
-            / n;
-        let way: Vec<gc_fixed::FxVec2> = (road::waypoints(from, &self.road).into_iter())
-            .map(fx_vec)
-            .collect();
+        let from = from_fx_vec(gc_sim::formation::centre_of(&self.group));
+        let way = road::waypoints(from, &self.road);
+        let brigades: Vec<u16> = if numbered && self.group.len() > 1 {
+            way.iter().map(|_| self.next_brigade()).collect()
+        } else {
+            Vec::new()
+        };
+        let fx: Vec<gc_fixed::FxVec2> = way.iter().map(|&p| fx_vec(p)).collect();
         let mut members = self.group.clone();
-        if let Some(n) = self.army_selected()
+        let legs = if let Some(n) = self.army_selected()
             && let Some(mut army) = self.armies[n].clone()
         {
-            let legs = road::legs(&mut members, &way, |m, order, out| {
+            let legs = road::legs(&mut members, &fx, &brigades, |m, order, out| {
                 army.order(m, order, out);
             });
             self.army_plan = Some((n, army));
             legs
         } else {
             let how = self.army_shapes.arrangement();
-            road::legs(&mut members, &way, |m, order, out| {
+            road::legs(&mut members, &fx, &brigades, |m, order, out| {
                 gc_sim::arrange::arranged_move(m, order, how, out);
             })
-        }
+        };
+        (way, legs)
     }
 
     /// Send the selection along the road drawn: the first leg as an order
-    /// (after the current ones with `queue`), the rest queued after it,
-    /// each leg a brigade of its own. While the armies deploy an order
-    /// places, so the road's end alone is ordered.
+    /// (after the current ones with `queue`), the rest queued after it.
+    /// While the armies deploy an order places, so the road's end alone is
+    /// ordered.
     fn issue_road(&mut self, queue: bool) {
         let Some(&end) = self.road.last() else {
             return;
@@ -3400,16 +3398,9 @@ impl Running {
             self.issue_march(hud::move_order(end), false, false);
             return;
         }
-        let legs = self.plan_road();
+        let (_, legs) = self.plan_road(true);
         self.keep_army_places();
-        let many = self.group.len() > 1;
-        for (k, mut leg) in legs.into_iter().enumerate() {
-            let brigade = if many { self.next_brigade() } else { 0 };
-            for c in &mut leg {
-                if let gc_sim::Command::MoveTo { brigade: b, .. } = c {
-                    *b = brigade;
-                }
-            }
+        for (k, leg) in legs.into_iter().enumerate() {
             self.group_commands = leg;
             self.send_planned(false, queue || k > 0);
         }
@@ -3418,7 +3409,7 @@ impl Running {
     /// The road being drawn, dotted, with a plate at each waypoint, and
     /// ghost plates where the army will stand at its end.
     fn push_road_preview(&mut self) {
-        let mut legs = self.plan_road();
+        let (way, mut legs) = self.plan_road(false);
         let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
         let color = [cr, cg, cb, 200];
         // A dot every ROUTE_DOT_SPACING along the line (its recorded
@@ -3433,14 +3424,7 @@ impl Running {
                 last = p;
             }
         }
-        let n = self.group.len().max(1) as f32;
-        let from = self
-            .group
-            .iter()
-            .map(|m| from_fx_vec(m.position))
-            .sum::<Vec2>()
-            / n;
-        for p in road::waypoints(from, &self.road) {
+        for p in way {
             self.instances.push(BoxInstance {
                 pos: p.to_array(),
                 facing: [0.0, 1.0],
