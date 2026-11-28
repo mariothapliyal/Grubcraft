@@ -22,11 +22,17 @@ impl Steward {
         let Some(bank) = s.world.bank(s.party) else {
             return;
         };
-        if bank.supply_used >= bank.supply_cap {
-            return;
-        }
-        for h in (s.world.prisoners_held().iter()).filter(|h| h.owner == s.party) {
-            if h.rank == 0 && !self.arming {
+        let held = s.world.prisoners_held();
+        for h in held.iter().filter(|h| h.owner == s.party) {
+            // A ransom buys back the oldest lot of that unit from that
+            // captor, so judge only that one.
+            let first = held
+                .iter()
+                .find(|g| g.owner == h.owner && g.captor == h.captor && g.unit == h.unit);
+            if !first.is_some_and(|g| std::ptr::eq(g, h))
+                || (h.rank == 0 && !self.arming)
+                || !s.world.can_take_back(s.party, h.unit)
+            {
                 continue;
             }
             let Some((grub, marrow, _)) = s.world.ransom_price(s.party, h.captor, h.unit) else {

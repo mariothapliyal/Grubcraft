@@ -238,6 +238,8 @@ const CORPSE_SINK_SECONDS: f32 = 3.0;
 /// Seconds the men of a regiment that gave itself up stand before they sink
 /// away.
 const YIELD_STAND_SECONDS: f32 = 3.0;
+/// How far ahead a man who gave himself up "falls": never, in a match.
+const NEVER_FALLS_SECONDS: f32 = 1.0e4;
 const MAX_SINKING: usize = 256;
 /// An arrow that killed a soldier sticks in him anywhere within this much
 /// of his length (along the way he lies) and of his width, in tiles.
@@ -919,6 +921,9 @@ pub struct Corpse {
     /// victim's half, which starts with his killer's, `age` + its contact
     /// seconds ago. `None` for his own death.
     pub kill: Option<u16>,
+    /// He gave himself up and was not killed: he stands, then sinks away.
+    /// Not a body: no crows, no dirt, not counted among the dead.
+    pub yielded: bool,
 }
 
 /// An arrow that has just killed a soldier and stays in his body: where it
@@ -1579,7 +1584,7 @@ impl Puppets {
             let man = Fallen {
                 pos: self.pos[base + k],
                 facing: self.facing[base + k],
-                fell: self.time + 1.0e4,
+                fell: self.time + NEVER_FALLS_SECONDS,
                 unit: self.unit[r],
                 owner: self.player[r],
                 look: self.looks[base + k],
@@ -2817,6 +2822,7 @@ impl Puppets {
                 sink,
                 kill: f.pair,
                 lying: f.lying(),
+                yielded: -age > NEVER_FALLS_SECONDS / 2.0,
             }
         };
         self.corpses.iter().map(move |f| corpse(f, 0.0)).chain(

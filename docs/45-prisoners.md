@@ -10,7 +10,7 @@ Reviewed on Opus before building (2026-11-28). The review's ten points are folde
 
 - **The check:** once a second, after the morale checks, in regiment slot order.
 - **Who gives up:** a routing or shattered regiment that has run for at least **5 seconds** surrenders when both of these hold. The 5 seconds are its head start: a regiment that breaks in the middle of a fight runs first and is taken only if it is run down, not where it broke.
-  - an enemy fighting regiment's block touches its block at melee reach this tick. Workers can't catch; archers and riders can.
+  - an enemy fighting regiment's block (not a broken one) touches its block at melee reach this tick. Workers can't catch; archers and riders can.
   - no fighting regiment of its own side (its owner's or an ally's) is within 8 tiles of it.
 - **The catcher:** the touching enemy regiment with the lowest slot index. The prisoners belong to that regiment's owner.
 - **Who never gives up:**
@@ -24,7 +24,7 @@ Reviewed on Opus before building (2026-11-28). The review's ten points are folde
   - The regiment leaves the field at once, as a shattered regiment that goes home does. In Conquest that frees its supply.
 - **What you see:**
   - The men stand still for three seconds, then sink away (there is no kneeling move in the fight library yet).
-  - The news says, for example, "12 Yari Ashigaru surrendered to Blue".
+  - The news tells the captor "12 prisoners taken" and the owner "12 of your soldiers gave themselves up", for surrenders they can see.
   - Field Battle results add a *Prisoners taken* line for each side.
 
 ### Holding them (Conquest)

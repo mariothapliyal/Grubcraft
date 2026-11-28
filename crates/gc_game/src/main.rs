@@ -203,6 +203,8 @@ mod match_kit;
 mod models;
 mod moves;
 mod online;
+#[cfg(test)]
+mod prisoners_golden;
 mod profile;
 mod puppets;
 mod replays;
@@ -386,7 +388,7 @@ fn push_standard(
 /// he will lie), leaving out those sinking to make room for newer dead.
 fn lying_bodies(puppets: &Puppets) -> impl Iterator<Item = Vec2> + '_ {
     (puppets.corpses())
-        .filter(|c| c.sink == 0.0)
+        .filter(|c| c.sink == 0.0 && !c.yielded)
         .map(|c| aftermath::body_at(c.rest, c.rest_facing))
 }
 
@@ -7640,8 +7642,11 @@ impl Running {
                     if lod < LODS && room > 0 {
                         room -= 1;
                         let look = models::look(c.look);
-                        let ([wr, wg, wb], tone) =
-                            aftermath::worn([r, g, b], look.tone, aftermath::DEAD_DIRT);
+                        let ([wr, wg, wb], tone) = aftermath::worn(
+                            [r, g, b],
+                            look.tone,
+                            if c.yielded { 0.0 } else { aftermath::DEAD_DIRT },
+                        );
                         art.buckets[model * LODS + lod].push(SoldierInstance {
                             pos: c.pos.to_array(),
                             facing: c.facing.to_array(),
@@ -7782,7 +7787,7 @@ impl Running {
                         self.online.is_some() && self.menu.net().catching_up(),
                     ) {
                         let dead = (self.puppets.corpses())
-                            .filter(|c| c.pos.distance(at) <= aftermath::DEAD_RADIUS)
+                            .filter(|c| !c.yielded && c.pos.distance(at) <= aftermath::DEAD_RADIUS)
                             .count();
                         let tint = color_of(&self.parties, owner);
                         // The nearest foe by takes the standard.

@@ -1618,7 +1618,8 @@ impl Running {
         let can = self
             .world
             .bank(side)
-            .is_some_and(|b| b.grub >= grub && b.marrow >= marrow);
+            .is_some_and(|b| b.grub >= grub && b.marrow >= marrow)
+            && self.world.can_take_back(side, unit);
         Some((format!("Ransom {held}"), tip, can))
     }
 

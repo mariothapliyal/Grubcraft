@@ -101,7 +101,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Burn { .. } => "Burn",
         Command::Concede => "Concede",
     };
-    const KINDS: [&str; 46] = [
+    const KINDS: [&str; 47] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -148,6 +148,7 @@ fn the_goldens_cover_every_kind_of_command() {
         "Burn",
         "PlantStakes",
         "Concede",
+        "Ransom",
     ];
     let seen: BTreeSet<&str> = goldens()
         .iter()

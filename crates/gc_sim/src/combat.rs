@@ -1185,7 +1185,10 @@ impl Combat {
             range,
             Whose::Enemies(at.owner[i]),
             |j| {
-                if best.is_some_and(|b| b < j) || self.civil(regs, j) {
+                if best.is_some_and(|b| b < j)
+                    || self.civil(regs, j)
+                    || regs.morale_state[j].broken()
+                {
                     return;
                 }
                 if self.blocks.get(j).is_some_and(|b| me.touches(b, gap)) {

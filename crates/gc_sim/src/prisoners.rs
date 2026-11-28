@@ -151,8 +151,12 @@ impl Prisoners {
 /// `marrow` are worth, `soldiers` of them: the reinforcement share (see
 /// [`crate::reinforce`]).
 pub(crate) fn share(grub: u16, marrow: u16, full: u16, soldiers: u16) -> (u32, u32) {
-    let (n, full) = (u32::from(soldiers), u32::from(full.max(1)));
-    (u32::from(grub) * n / full, u32::from(marrow) * n / full)
+    // What reinforcing a regiment from `full - soldiers` back up to `full`
+    // charges, step by step (`reinforce::share`), summed.
+    let full = u32::from(full.max(1));
+    let short = full - u32::from(soldiers).min(full);
+    let cost = |c: u16| u32::from(c) - u32::from(c) * short / full;
+    (cost(grub), cost(marrow))
 }
 
 impl Regiments {
@@ -392,6 +396,15 @@ impl World {
     }
 
     /// Whether `owner` has the supply for another regiment of `unit`.
+    /// Whether `owner` could take a ransomed lot of `unit` back now: it has
+    /// a finished main building and the supply free. The price and the
+    /// lot are [`World::ransom_price`].
+    pub fn can_take_back(&self, owner: PlayerId, unit: UnitId) -> bool {
+        self.conquest.as_ref().is_some_and(|c| {
+            (c.structures.finished_of(owner)).any(|m| c.structures.stats_of(m).role == Role::Main)
+        }) && self.room_for(owner, unit)
+    }
+
     fn room_for(&self, owner: PlayerId, unit: UnitId) -> bool {
         let Some(c) = &self.conquest else {
             return false;

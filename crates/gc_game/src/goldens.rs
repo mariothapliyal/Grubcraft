@@ -904,6 +904,11 @@ fn record_golden_replays() {
         println!("{}", replay.note);
         write(crate::hero_golden::NAME, replay);
     }
+    if wanted(crate::prisoners_golden::NAME) {
+        let replay = crate::prisoners_golden::record();
+        println!("{}", replay.note);
+        write(crate::prisoners_golden::NAME, replay);
+    }
     if wanted(crate::conquest_golden::NAME) {
         let replay = crate::conquest_golden::record();
         println!("{}", replay.note);
