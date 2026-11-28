@@ -1,10 +1,12 @@
-//! The prisoners golden replay (`replays/conquest-prisoners-1v1.gcr`): two
+//! The prisoners golden replay (`replays/conquest-prisoners-1v1.gcr`): four
 //! minutes of Conquest on Ribcage Pass between a scripted Ember Clans side
 //! and a scripted Brood side (docs/45). The host raises a regiment of
 //! Skitterlings for the Brood midway, alone, and Mounted Samurai and Yari
 //! for the Clans a little way off; the Clans hunt the Skitterlings until
 //! they give themselves up, and then the Brood buys them back (`Ransom`,
-//! replay format 60).
+//! replay format 60). Twice more the host raises Skitterlings midway and
+//! the Clans run them down: the second lot they take into their own army
+//! (`Recruit`), the third they put to death (`Execute`, replay format 61).
 //!
 //! To record it again (only when the script or the data change what it
 //! does; a simulation change that only moves the hashes is blessed
@@ -26,7 +28,7 @@ use crate::headless::{Headless, Real};
 
 pub const NAME: &str = "conquest-prisoners-1v1";
 const SEED: u64 = 0x4e51;
-const MINUTES: u32 = 2;
+const MINUTES: u32 = 6;
 const FACTIONS: [Faction; 2] = [Faction::EmberClans, Faction::Brood];
 /// When the host raises the regiments.
 const RAISE_AT: u32 = 2 * TICKS_PER_SECOND;
@@ -38,14 +40,27 @@ struct Ids {
     hunters: [UnitId; 2],
     /// Any building, to find open ground with.
     plot: u16,
+    /// A Clans house: the host puts up two, so the Clans have the supply
+    /// to recruit.
+    house: u16,
 }
 
 struct Script {
     ids: Ids,
     starts: Vec<(i32, i32)>,
     middle: (i32, i32),
-    ransomed: bool,
+    /// Where the script is: 0 hunting the first Skitterlings, 1 waiting
+    /// to raise the second, 2 hunting them, 3 waiting to raise the third,
+    /// 4 hunting them, 5 done.
+    phase: u8,
+    /// When the next Skitterlings are raised.
+    raise_at: u32,
+    /// Where the hunters are raised.
+    hunters_from: (i32, i32),
 }
+
+/// How long after a ransom or a recruiting the next prey is raised.
+const NEXT_PREY: u32 = 5 * TICKS_PER_SECOND;
 
 impl Script {
     fn tick(&mut self, world: &World, out: &mut Vec<PlayerCommand>) {
@@ -76,21 +91,59 @@ impl Script {
                 self.middle.0 + (dx as f32 / len * 12.0) as i32,
                 self.middle.1 + (dy as f32 / len * 12.0) as i32,
             );
+            self.hunters_from = off;
             let mut taken = vec![prey];
             for unit in ids.hunters {
                 let at = open(off, &taken);
                 taken.push(at);
                 out.push(order(0, spawn(unit, at)));
             }
+            let home = self.starts[0];
+            let mut built: Vec<(i32, i32)> = Vec::new();
+            for _ in 0..2 {
+                let (x, y) = nearest(world, (home.0 + 8, home.1 + 8), |x, y| {
+                    world.can_build(ids.house, (x, y), 0).is_ok()
+                        && (built.iter()).all(|&(bx, by)| (bx - x).abs().max((by - y).abs()) >= 5)
+                })
+                .expect("room for a house");
+                built.push((x, y));
+                out.push(order(
+                    0,
+                    Command::SpawnStructure {
+                        building: ids.house,
+                        tile: (x as i16, y as i16),
+                        turn: 0,
+                    },
+                ));
+            }
         }
-        // The hunters stay on the Skitterlings while they run, until they are
-        // bought back (an attack-move: a hunter that has lost sight of them
-        // may not order an attack).
-        if !self.ransomed && t > RAISE_AT && t.is_multiple_of(2 * TICKS_PER_SECOND) {
-            let prey = (world.regiments.iter()).find(|r| r.owner == 1 && r.unit == ids.prey);
+        if matches!(self.phase, 1 | 3) && t == self.raise_at {
+            let prey = open(self.middle, &[]);
+            out.push(order(1, spawn(ids.prey, prey)));
+            // The second lot wore the first hunters out: fresh ones for the
+            // third.
+            if self.phase == 3 {
+                let mut taken = vec![prey];
+                for unit in ids.hunters {
+                    let at = open(self.hunters_from, &taken);
+                    taken.push(at);
+                    out.push(order(0, spawn(unit, at)));
+                }
+            }
+            self.phase += 1;
+        }
+        // The hunters stay on the Skitterlings while they run, until they
+        // give up (an attack-move: a hunter that has lost sight of them may
+        // not order an attack). Ransomed ones, out at the Hive, are left be.
+        let hunting = matches!(self.phase, 0 | 2 | 4);
+        if hunting && t > RAISE_AT && t.is_multiple_of(2 * TICKS_PER_SECOND) {
+            let mid = FxVec2::new(Fx::from_int(self.middle.0), Fx::from_int(self.middle.1));
+            let prey = (world.regiments.iter())
+                .filter(|r| r.owner == 1 && r.unit == ids.prey)
+                .min_by_key(|r| (r.position - mid).length_sq_raw());
             if let Some(prey) = prey {
                 for r in (world.regiments.iter())
-                    .filter(|r| r.owner == 0 && ids.hunters.contains(&r.unit))
+                    .filter(|r| r.owner == 0 && ids.hunters.contains(&r.unit) && !r.morale.broken())
                 {
                     out.push(order(
                         0,
@@ -106,15 +159,37 @@ impl Script {
                 }
             }
         }
-        if !self.ransomed && world.ransom_price(1, 0, ids.prey).is_some() {
-            self.ransomed = true;
-            out.push(order(
-                1,
-                Command::Ransom {
-                    from: 0,
-                    unit: ids.prey,
-                },
-            ));
+        let held = world.recruit_price(0, 1, ids.prey).is_some();
+        match self.phase {
+            // The Brood buy the first back.
+            0 if held => {
+                out.push(order(
+                    1,
+                    Command::Ransom {
+                        from: 0,
+                        unit: ids.prey,
+                    },
+                ));
+                (self.phase, self.raise_at) = (1, t + NEXT_PREY);
+            }
+            // The Clans take the second into their army.
+            2 if held => {
+                out.push(order(
+                    0,
+                    Command::Recruit {
+                        from: 1,
+                        unit: ids.prey,
+                    },
+                ));
+                (self.phase, self.raise_at) = (3, t + NEXT_PREY);
+            }
+            // And put the third to death.
+            4 if held => {
+                let stockade = world.prisoners_held()[0].stockade;
+                out.push(order(0, Command::Execute { stockade }));
+                self.phase = 5;
+            }
+            _ => {}
         }
     }
 }
@@ -139,10 +214,13 @@ pub fn record() -> Replay {
             prey: real.unit("Skitterlings"),
             hunters: [real.unit("Mounted Samurai"), real.unit("Yari Ashigaru")],
             plot: real.building("Ancestor Shrine"),
+            house: real.building("Farmstead"),
         },
         starts,
         middle,
-        ransomed: false,
+        phase: 0,
+        raise_at: 0,
+        hunters_from: (0, 0),
     };
     let mut out = Vec::new();
     while world.tick_count() < MINUTES * 60 * TICKS_PER_SECOND {
@@ -156,12 +234,15 @@ pub fn record() -> Replay {
             world.tick_count() - 1
         );
     }
-    assert!(script.ransomed, "the Skitterlings gave themselves up");
+    assert_eq!(
+        script.phase, 5,
+        "the Skitterlings gave themselves up three times"
+    );
     let mut replay = rec.finish();
     replay.note = format!(
         "{NAME}: Conquest recorded from gc_game's prisoners_golden.rs, seed {SEED:#x}, Ribcage \
-         Pass; Ember Clans v Brood, scripted: Skitterlings run down alone give themselves up and \
-         are ransomed, {MINUTES} minutes"
+         Pass; Ember Clans v Brood, scripted: Skitterlings run down alone give themselves up, \
+         are ransomed, recruited and put to death, {MINUTES} minutes"
     );
     replay
 }
@@ -170,22 +251,31 @@ pub fn record() -> Replay {
 mod tests {
     use super::*;
 
-    /// The Skitterlings give themselves up, and come back ransomed.
+    /// The Skitterlings give themselves up three times, and are ransomed,
+    /// recruited and put to death.
     #[test]
-    fn the_skitterlings_give_up_and_are_ransomed() {
+    fn the_skitterlings_give_up_and_are_ransomed_recruited_and_put_to_death() {
+        use gc_sim::events::Event;
         let replay = record();
         let mut world = replay.new_world();
-        let (mut gave_up, mut ransomed) = (false, false);
+        let (mut gave_up, mut executed) = (0, false);
         for t in 0..replay.info().ticks {
-            let commands = replay.commands_at(t);
-            ransomed |= commands
-                .iter()
-                .any(|c| matches!(c.command, Command::Ransom { .. }));
-            world.tick(commands);
-            gave_up |= (world.events().iter())
-                .any(|e| matches!(e, gc_sim::events::Event::Surrendered { owner: 1, .. }));
+            world.tick(replay.commands_at(t));
+            for e in world.events() {
+                match e {
+                    Event::Surrendered { owner: 1, .. } => gave_up += 1,
+                    Event::Executed { captor: 0, .. } => executed = true,
+                    _ => {}
+                }
+            }
         }
-        assert!(gave_up && ransomed, "{gave_up} {ransomed}");
+        assert!(gave_up >= 3 && executed, "{gave_up} {executed}");
         assert!(world.prisoners_held().is_empty());
+        assert!(world.no_quarter(1, 0));
+        let skitterlings = Real::load().unit("Skitterlings");
+        assert!(
+            (world.regiments.iter()).any(|r| r.owner == 0 && r.unit == skitterlings),
+            "the Clans field recruited Skitterlings"
+        );
     }
 }

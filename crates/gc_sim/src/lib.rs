@@ -916,6 +916,20 @@ pub enum Command {
     /// unless `from` is hostile and holds some, and the issuer has a
     /// finished main building, the supply and the price.
     Ransom { from: PlayerId, unit: UnitId },
+    /// Conquest: the issuer takes the oldest lot (at most a full regiment)
+    /// of player `from`'s soldiers of `unit` that they hold prisoner into
+    /// their own army, for half what reinforcing them would cost. It
+    /// stands up at its stockade's door, keeping its rank, at half its
+    /// morale, and is never reinforced or evolved (see [`prisoners`]).
+    /// Refused unless the issuer holds some and has the supply and the
+    /// price.
+    Recruit { from: PlayerId, unit: UnitId },
+    /// Conquest: the issuer puts to death every prisoner they hold at
+    /// their building `stockade`. Their owners can never ransom them, and
+    /// from then on those owners' regiments never give themselves up to
+    /// the issuer (see [`prisoners`]). Refused unless the issuer holds
+    /// some there.
+    Execute { stockade: StructureHandle },
     /// Conquest: one of the issuer's towers shoots enemy regiment `target`
     /// first whenever it is in range, until it falls; `None` lets the tower
     /// choose again (see [`towers`]). The target must be one the issuer's
@@ -1117,6 +1131,8 @@ impl Command {
             | Command::Cast { .. }
             | Command::Evolve { .. }
             | Command::Ransom { .. }
+            | Command::Recruit { .. }
+            | Command::Execute { .. }
             | Command::FocusTower { .. }
             | Command::SetGate { .. }
             | Command::BuildWall { .. }
@@ -2936,6 +2952,8 @@ impl World {
                 c.evolve(&mut self.regiments, &self.units, pc.player, regiment, into)
             }),
             Command::Ransom { from, unit } => self.ransom(pc.player, from, unit),
+            Command::Recruit { from, unit } => self.recruit(pc.player, from, unit),
+            Command::Execute { stockade } => self.execute(pc.player, stockade),
             Command::FocusTower { structure, target } => {
                 self.focus_tower(pc.player, structure, target)
             }

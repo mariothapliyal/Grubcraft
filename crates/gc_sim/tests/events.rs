@@ -116,6 +116,7 @@ fn every_volley_is_told_loosed_then_landed_and_losses_add_up() {
                     assert!(world.regiments.get(regiment).is_none(), "still there");
                     gave_up.push(regiment);
                 }
+                Event::Executed { soldiers, .. } => assert!(soldiers > 0),
                 Event::Morale { from, to, .. } => {
                     assert_ne!(from, to);
                     if from == MoraleState::Steady {

@@ -713,6 +713,9 @@ regiment_fields! {
     /// Volleys left of a Split Beam, and the percent more each deals.
     volleys_up: u8 = 0,
     volley_bonus: u8 = 0,
+    /// Recruited from prisoners taken from another side (see
+    /// [`crate::prisoners`]): never reinforced or evolved.
+    turncoat: bool = false,
 }
 
 impl Regiments {

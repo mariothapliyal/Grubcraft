@@ -189,6 +189,16 @@ pub enum Event {
         soldiers: u16,
         at: FxVec2,
     },
+    /// `captor` put to death the `soldiers` prisoners it held at the
+    /// stockade standing at `at`, taken from the players in mask `owners`
+    /// (see [`owner_bit`]); those players' regiments never give up to
+    /// `captor` again (see [`crate::prisoners`]).
+    Executed {
+        captor: crate::PlayerId,
+        owners: u8,
+        soldiers: u32,
+        at: FxVec2,
+    },
 }
 
 /// The bit player `p` has in an owners mask (`DebrisStruck`,
@@ -275,6 +285,11 @@ impl Events {
 
     /// Tell of a regiment giving itself up (see [`Event::Surrendered`]).
     pub(crate) fn surrendered(&mut self, e: Event) {
+        self.list.push(e);
+    }
+
+    /// Tell of prisoners put to death (see [`Event::Executed`]).
+    pub(crate) fn executed(&mut self, e: Event) {
         self.list.push(e);
     }
 

@@ -7925,6 +7925,7 @@ impl Running {
         // Soldiers who gave themselves up this tick: taken by the viewer's
         // side, and the viewer's own (see `gc_sim::prisoners`).
         let (mut took, mut lost_men) = (0u32, 0u32);
+        let mut executed: Option<String> = None;
         let mut news = Vec::new();
         let (focus, distance) = self.view_focus();
         // What happened while catching up online is old news.
@@ -8128,6 +8129,24 @@ impl Running {
                         };
                     self.puppets.surrendered(regiment, seen);
                 }
+                Event::Executed {
+                    captor,
+                    owners,
+                    soldiers,
+                    ..
+                } => {
+                    let side = self.sandbox.side;
+                    if captor == side {
+                        executed = Some(format!(
+                            "{soldiers} prisoners put to death: their side will give no quarter now"
+                        ));
+                    } else if owners & gc_sim::events::owner_bit(side) != 0 {
+                        executed = Some(format!(
+                            "{} put {soldiers} prisoners to death: ours will never give themselves up to them",
+                            party_name(&self.parties, captor)
+                        ));
+                    }
+                }
                 // A hero of ours walked to cast and found it couldn't.
                 Event::CastRefused { hero, why, .. }
                     if self.world.regiments.owner(hero) == Some(self.sandbox.side) =>
@@ -8234,6 +8253,9 @@ impl Running {
         };
         if let (Some(p), false) = (&prisoners, old_news) {
             news.push(p.as_str());
+        }
+        if let (Some(e), false) = (&executed, old_news) {
+            news.push(e.as_str());
         }
         // Kept up while catching up online, but what happened then is old
         // news.

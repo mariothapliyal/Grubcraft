@@ -440,6 +440,12 @@ pub struct HudData<'a> {
     /// The Ransom button (Conquest, while an enemy holds some of your
     /// soldiers prisoner); `None` hides it. `lit` when you can pay.
     pub ransom: Option<HandOverButton<'a>>,
+    /// The Recruit button (Conquest, while you hold prisoners): take the
+    /// next lot into your army. `lit` when you can pay.
+    pub recruit: Option<HandOverButton<'a>>,
+    /// The Execute button (Conquest, while you hold prisoners): put those
+    /// at your fullest stockade to death. Always lit.
+    pub execute: Option<HandOverButton<'a>>,
     /// The online match kit: chat, pings, the surrender vote and the pause
     /// banner. Default draws nothing.
     pub kit: KitData<'a>,
@@ -482,6 +488,8 @@ const WIDGET_SHAPE: u32 = 13 << 24;
 pub(crate) const WIDGET_TIPS: u32 = 14 << 24;
 const WIDGET_HANDOVER: u32 = 15 << 24;
 const WIDGET_RANSOM: u32 = 17 << 24;
+const WIDGET_RECRUIT: u32 = 18 << 24;
+const WIDGET_EXECUTE: u32 = 19 << 24;
 /// The match kit's buttons (the surrender vote's Yes and No).
 pub(crate) const WIDGET_KIT: u32 = 16 << 24;
 
@@ -552,6 +560,10 @@ pub enum HudEvent {
     HandOver,
     /// Ransom the next lot of your soldiers held prisoner.
     Ransom,
+    /// Recruit the next lot of the prisoners you hold.
+    Recruit,
+    /// Put to death the prisoners at your fullest stockade.
+    Execute,
     /// The surrender vote banner's Yes (`true`) or No was clicked.
     SurrenderVote(bool),
 }
@@ -639,6 +651,8 @@ const TIP_GUIDE: u32 = 101;
 const TIP_PLACE: u32 = 102;
 const TIP_HANDOVER: u32 = 103;
 const TIP_RANSOM: u32 = 104;
+const TIP_RECRUIT: u32 = 105;
+const TIP_EXECUTE: u32 = 106;
 /// Army shape chips' tooltips use this and their place.
 const TIP_SHAPE: u32 = 110;
 
@@ -1171,21 +1185,51 @@ impl Hud {
             }
         }
 
-        // Ransom (prisoners held by an enemy): left of Hand over.
-        if let Some(h) = data.ransom {
+        // Ransom (prisoners held by an enemy), then Recruit and Execute
+        // (prisoners you hold): left of Hand over.
+        let chips = [
+            (
+                data.ransom,
+                WIDGET_RANSOM,
+                TIP_RANSOM,
+                "Ransom",
+                HudEvent::Ransom,
+                Icon::Flag,
+            ),
+            (
+                data.recruit,
+                WIDGET_RECRUIT,
+                TIP_RECRUIT,
+                "Recruit",
+                HudEvent::Recruit,
+                Icon::Spear,
+            ),
+            (
+                data.execute,
+                WIDGET_EXECUTE,
+                TIP_EXECUTE,
+                "Execute",
+                HudEvent::Execute,
+                Icon::Sword,
+            ),
+        ];
+        for (chip, widget, tip, name, event, icon) in chips {
+            let Some(h) = chip else {
+                continue;
+            };
             let w = 34 + text_width(h.label, 1);
             let rect = Rect::new(right - w, chip_y, w, chip_h);
             right = rect.x - gap;
             let hot = rect.contains(input.mouse.0, input.mouse.1);
             let (clicked, down) = self.press.widget(
-                WIDGET_RANSOM,
+                widget,
                 rect,
                 input.mouse,
                 input.left_pressed,
                 input.left_released,
             );
             if clicked {
-                events.push(HudEvent::Ransom);
+                events.push(event);
             }
             let fill = match (down, hot, h.lit) {
                 (true, ..) => mix(theme::WELD, theme::INK, 0.2),
@@ -1197,15 +1241,15 @@ impl Hud {
             icons::icon(
                 draw,
                 Rect::new(rect.x + 7, rect.y + 6, 12, 12),
-                Icon::Flag,
+                icon,
                 theme::INK,
             );
             draw.text_bold(rect.x + 24, text_y, 1, theme::INK, h.label);
             if hot {
                 self.tip = Some(Tip {
-                    id: TIP_RANSOM,
+                    id: tip,
                     anchor: rect,
-                    name: "Ransom".into(),
+                    name: name.into(),
                     key: String::new(),
                     text: h.tip.to_string(),
                     note: String::new(),
@@ -2193,6 +2237,8 @@ mod tests {
         tips: Option<TipsCard<'a>>,
         handover: Option<HandOverButton<'a>>,
         ransom: Option<HandOverButton<'a>>,
+        recruit: Option<HandOverButton<'a>>,
+        execute: Option<HandOverButton<'a>>,
         selection: Option<Selection<'a>>,
         kit: KitData<'a>,
         alerts: &'a [Alert],
@@ -2254,6 +2300,8 @@ mod tests {
             tips: extras.tips,
             handover: extras.handover,
             ransom: extras.ransom,
+            recruit: extras.recruit,
+            execute: extras.execute,
         };
         let mut draw = DrawList::default();
         let mut events = Vec::new();
@@ -2480,6 +2528,8 @@ mod tests {
                 tips: None,
                 handover: None,
                 ransom: None,
+                recruit: None,
+                execute: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             Hud::default().frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -2533,6 +2583,8 @@ mod tests {
                 tips: None,
                 handover: None,
                 ransom: None,
+                recruit: None,
+                execute: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             hud.frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -2616,6 +2668,8 @@ mod tests {
             tips: None,
             handover: None,
             ransom: None,
+            recruit: None,
+            execute: None,
         };
         let l = HudLayout::new(SCREEN);
         let over_panel = (30, l.bar.y - 40);
@@ -3125,6 +3179,8 @@ mod tests {
                     tips: None,
                     handover: None,
                     ransom: None,
+                    recruit: None,
+                    execute: None,
                 };
                 let input = HudInput {
                     // The last button, in the bar's bottom-right corner.
@@ -3188,6 +3244,8 @@ mod tests {
                 tips: None,
                 handover: None,
                 ransom: None,
+                recruit: None,
+                execute: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             hud.frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);
@@ -3250,6 +3308,8 @@ mod tests {
             tips: None,
             handover: None,
             ransom: None,
+            recruit: None,
+            execute: None,
         };
         let screen = (1280, 720);
         let (mut draw, mut events) = (DrawList::default(), Vec::new());
@@ -3313,6 +3373,8 @@ mod tests {
             tips: None,
             handover: None,
             ransom: None,
+            recruit: None,
+            execute: None,
         };
         let (mut draw, mut events) = (DrawList::default(), Vec::new());
         Hud::default().frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);

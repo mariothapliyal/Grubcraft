@@ -85,6 +85,8 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Cast { .. } => "Cast",
         Command::Evolve { .. } => "Evolve",
         Command::Ransom { .. } => "Ransom",
+        Command::Recruit { .. } => "Recruit",
+        Command::Execute { .. } => "Execute",
         Command::FocusTower { .. } => "FocusTower",
         Command::SetGate { .. } => "SetGate",
         Command::BuildWall { .. } => "BuildWall",
@@ -101,7 +103,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Burn { .. } => "Burn",
         Command::Concede => "Concede",
     };
-    const KINDS: [&str; 47] = [
+    const KINDS: [&str; 49] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -149,6 +151,8 @@ fn the_goldens_cover_every_kind_of_command() {
         "PlantStakes",
         "Concede",
         "Ransom",
+        "Recruit",
+        "Execute",
     ];
     let seen: BTreeSet<&str> = goldens()
         .iter()

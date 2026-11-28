@@ -1166,15 +1166,17 @@ impl Combat {
         (self.civil.get(usize::from(regs.unit[i]))).is_some_and(|&c| c)
     }
 
-    /// The enemy regiment, not a worker or caravan, with the lowest slot
-    /// whose block touches regiment `i`'s at `gap`, as the grid saw them at
-    /// the start of this tick (see [`crate::prisoners`]).
+    /// The enemy regiment, not a worker or caravan, not broken and not of
+    /// an owner in mask `banned`, with the lowest slot whose block touches
+    /// regiment `i`'s at `gap`, as the grid saw them at the start of this
+    /// tick (see [`crate::prisoners`]).
     pub(crate) fn catcher(
         &self,
         at: &Placement,
         regs: &Regiments,
         i: usize,
         gap: Fx,
+        banned: u8,
     ) -> Option<usize> {
         let me = self.blocks.get(i)?;
         let range = self.radius[i] + self.max_radius + gap;
@@ -1188,6 +1190,7 @@ impl Combat {
                 if best.is_some_and(|b| b < j)
                     || self.civil(regs, j)
                     || regs.morale_state[j].broken()
+                    || banned & crate::events::owner_bit(regs.owner[j]) != 0
                 {
                     return;
                 }

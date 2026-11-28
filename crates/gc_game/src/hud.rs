@@ -830,6 +830,7 @@ impl Running {
         };
         let handover = self.handover_text(side);
         let ransom = self.ransom_text(side);
+        let (recruit, execute) = self.captor_texts(side);
         // The online match kit: the pause and the team's surrender vote as
         // the host tells them, the live pings and where they are on screen.
         let in_net_match = self.online.as_ref().is_some_and(|o| o.ended.is_none());
@@ -1377,6 +1378,16 @@ impl Running {
                 tip,
                 lit: *lit,
             }),
+            recruit: recruit.as_ref().map(|(label, tip, lit)| HandOverButton {
+                label,
+                tip,
+                lit: *lit,
+            }),
+            execute: execute.as_ref().map(|(label, tip, lit)| HandOverButton {
+                label,
+                tip,
+                lit: *lit,
+            }),
             hero,
             minimap: MinimapData {
                 map_tiles: map,
@@ -1513,6 +1524,8 @@ impl Running {
             HudEvent::ArmyShape(i) => self.pick_army_shape(i),
             HudEvent::HandOver => self.hand_over_next(),
             HudEvent::Ransom => self.ransom_next(),
+            HudEvent::Recruit => self.recruit_next(),
+            HudEvent::Execute => self.execute_fullest(),
             // The queue gives back its last regiment, whichever is clicked.
             HudEvent::Unqueue(_) => self.untrain(),
             HudEvent::Ready => {
@@ -1635,6 +1648,116 @@ impl Running {
         self.human_orders.push(gc_sim::PlayerCommand {
             player: side,
             command: gc_sim::Command::Ransom { from, unit },
+        });
+        self.ui_sound(sounds::UiSound::Move);
+    }
+
+    /// The next lot of prisoners `side` holds: whose, its unit, and its
+    /// recruiting price and size.
+    fn next_recruit(&self, side: PlayerId) -> Option<(PlayerId, u16, (u32, u32, u16))> {
+        let held = (self.world.prisoners_held().iter()).find(|h| h.captor == side)?;
+        let price = self.world.recruit_price(side, held.owner, held.unit)?;
+        Some((held.owner, held.unit, price))
+    }
+
+    /// `side`'s stockade holding the most prisoners (the first of those
+    /// equal), and how many it holds.
+    fn fullest_stockade(&self, side: PlayerId) -> Option<(gc_sim::StructureHandle, u32)> {
+        let held = self.world.prisoners_held();
+        let mut best: Option<(gc_sim::StructureHandle, u32)> = None;
+        for h in held.iter().filter(|h| h.captor == side) {
+            let n: u32 = (held.iter())
+                .filter(|g| g.captor == side && g.stockade == h.stockade)
+                .map(|g| u32::from(g.soldiers))
+                .sum();
+            if best.is_none_or(|(_, m)| n > m) {
+                best = Some((h.stockade, n));
+            }
+        }
+        best
+    }
+
+    /// The Recruit and Execute buttons' labels, tooltips and whether each
+    /// can be clicked; `None` while `side` holds no prisoners.
+    #[allow(clippy::type_complexity)]
+    fn captor_texts(
+        &self,
+        side: PlayerId,
+    ) -> (
+        Option<(String, String, bool)>,
+        Option<(String, String, bool)>,
+    ) {
+        if self.watching.is_some() {
+            return (None, None);
+        }
+        let Some((from, unit, (grub, marrow, lot))) = self.next_recruit(side) else {
+            return (None, None);
+        };
+        let held: u32 = (self.world.prisoners_held().iter())
+            .filter(|h| h.captor == side)
+            .map(|h| u32::from(h.soldiers))
+            .sum();
+        let name = self
+            .units
+            .names
+            .get(usize::from(unit))
+            .map_or("soldiers", String::as_str);
+        let cost = if marrow > 0 {
+            format!("{grub} Grub and {marrow} Marrow")
+        } else {
+            format!("{grub} Grub")
+        };
+        let tip = format!(
+            "You hold {held} prisoners, and they work for you. Click to take {lot} of {}'s {name} into your army for {cost}: they stand up at the stockade with their rank, at half their morale, and are never reinforced. Needs the supply for one regiment.",
+            party_name(&self.parties, from)
+        );
+        let can = self
+            .world
+            .bank(side)
+            .is_some_and(|b| b.grub >= grub && b.marrow >= marrow)
+            && self.world.room_for(side, unit);
+        let recruit = Some((format!("Recruit {lot}"), tip, can));
+        let execute = self.fullest_stockade(side).map(|(_, n)| {
+            (
+                format!("Execute {n}"),
+                format!(
+                    "Put the {n} prisoners at your fullest stockade to death. Their owners can never ransom them, and from then on their regiments never give themselves up to you: they fight to the last."
+                ),
+                true,
+            )
+        });
+        (recruit, execute)
+    }
+
+    /// The Recruit button: take the next lot of prisoners into the army.
+    fn recruit_next(&mut self) {
+        let side = self.sandbox.side;
+        let Some((from, unit, _)) = self.next_recruit(side) else {
+            return;
+        };
+        if self.watching.is_some() {
+            return;
+        }
+        self.human_orders.push(gc_sim::PlayerCommand {
+            player: side,
+            command: gc_sim::Command::Recruit { from, unit },
+        });
+        self.ui_sound(sounds::UiSound::Move);
+    }
+
+    /// The Execute button: put the prisoners at the fullest stockade to
+    /// death.
+    fn execute_fullest(&mut self) {
+        let side = self.sandbox.side;
+        let Some((stockade, _)) = self.fullest_stockade(side) else {
+            return;
+        };
+        if self.watching.is_some() {
+            return;
+        }
+        self.human_orders.push(gc_sim::PlayerCommand {
+            player: side,
+            command: gc_sim::Command::Execute { stockade },
         });
         self.ui_sound(sounds::UiSound::Move);
     }

@@ -162,6 +162,12 @@ impl Tithe {
         taken
     }
 
+    /// `dead` prisoners were put to death at `at` at `tick`: they lie in
+    /// a grave there, as the fallen do (see [`crate::prisoners`]).
+    pub(crate) fn lay(&mut self, at: FxVec2, dead: u16, tick: u32) {
+        self.bury(at, dead, tick);
+    }
+
     /// `dead` soldiers fell at `at` at `tick`: into the grave there, or a
     /// new one.
     fn bury(&mut self, at: FxVec2, dead: u16, tick: u32) {

@@ -26,6 +26,14 @@
 //!   their owner's regiments while the owner has the supply. An
 //!   owner put out of the match loses theirs.
 //!
+//! - The captor recruits them instead ([`crate::Command::Recruit`]), a lot
+//!   at a time, for [`RECRUIT_PERCENT`] of that price: they stand up at
+//!   the stockade as the captor's regiment, keeping their rank, at half
+//!   their morale, and are never reinforced or evolved (`turncoat`).
+//! - Or puts to death all it holds at a stockade
+//!   ([`crate::Command::Execute`]): the dead lie in a grave there, and the
+//!   owners' regiments never give up to that captor again (no quarter).
+//!
 //! The records and the counts are in the state hash, once anyone has taken
 //! a prisoner.
 
@@ -52,6 +60,9 @@ pub const MAIN_HOLDS: u32 = 60;
 pub const OUTPOST_HOLDS: u32 = 30;
 /// Grub a held soldier earns its captor each minute.
 pub const WORK_GRUB: u32 = 1;
+/// What recruiting a lot costs its captor, in percent of what ransoming
+/// it would cost its owner.
+pub const RECRUIT_PERCENT: u32 = 50;
 
 /// Soldiers of one unit and rank, taken from `owner` by `captor`, held at
 /// `stockade`.
@@ -76,6 +87,11 @@ pub(crate) struct Prisoners {
     taken: [u32; MAX_PARTIES],
     /// The regiments that gave up this tick, so they aren't told as killed.
     pub(crate) gone: Vec<RegimentHandle>,
+    /// For each player, the mask of captors their regiments never give up
+    /// to: captors that put prisoners of theirs to death.
+    no_quarter: [u8; MAX_PARTIES],
+    /// Executions ordered this tick, told once the tick's events start.
+    told: Vec<Event>,
 }
 
 /// Records held before the list grows (ticking doesn't allocate until then).
@@ -88,6 +104,8 @@ impl Prisoners {
             held: Vec::with_capacity(HELD_ROOM),
             taken: [0; MAX_PARTIES],
             gone: Vec::with_capacity(regiments),
+            no_quarter: [0; MAX_PARTIES],
+            told: Vec::with_capacity(MAX_PARTIES),
         }
     }
 
@@ -131,6 +149,9 @@ impl Prisoners {
         }
         for &n in &self.taken {
             h.u32(n);
+        }
+        for &m in &self.no_quarter {
+            h.u8(m);
         }
         h.u32(self.held.len() as u32);
         for r in &self.held {
@@ -233,6 +254,9 @@ impl World {
     /// Broken regiments caught alone give themselves up (once a second).
     pub(crate) fn take_prisoners(&mut self) {
         self.prisoners.gone.clear();
+        for e in self.prisoners.told.drain(..) {
+            self.events.executed(e);
+        }
         if !self.tick.is_multiple_of(TICKS_PER_SECOND) {
             return;
         }
@@ -248,7 +272,11 @@ impl World {
             {
                 continue;
             }
-            let Some(j) = self.combat.catcher(&at, &self.regiments, i, REACH) else {
+            let banned = (self.prisoners.no_quarter)
+                .get(usize::from(self.regiments.owner[i]))
+                .copied()
+                .unwrap_or(0);
+            let Some(j) = self.combat.catcher(&at, &self.regiments, i, REACH, banned) else {
                 continue;
             };
             self.surrender(i, j);
@@ -395,7 +423,6 @@ impl World {
         }
     }
 
-    /// Whether `owner` has the supply for another regiment of `unit`.
     /// Whether `owner` could take a ransomed lot of `unit` back now: it has
     /// a finished main building and the supply free. The price and the
     /// lot are [`World::ransom_price`].
@@ -405,7 +432,8 @@ impl World {
         }) && self.room_for(owner, unit)
     }
 
-    fn room_for(&self, owner: PlayerId, unit: UnitId) -> bool {
+    /// Whether `owner` has the supply for another regiment of `unit`.
+    pub fn room_for(&self, owner: PlayerId, unit: UnitId) -> bool {
         let Some(c) = &self.conquest else {
             return false;
         };
@@ -480,5 +508,103 @@ impl World {
             self.prisoners.held.remove(k);
         }
         true
+    }
+
+    /// What `captor` recruiting the oldest lot of `from`'s `unit` it holds
+    /// would cost (Grub, Marrow) and how many soldiers it is.
+    pub fn recruit_price(
+        &self,
+        captor: PlayerId,
+        from: PlayerId,
+        unit: UnitId,
+    ) -> Option<(u32, u32, u16)> {
+        let c = self.conquest.as_ref()?;
+        let held = (self.prisoners.held.iter())
+            .find(|h| h.captor == captor && h.owner == from && h.unit == unit)?;
+        let full = self.units.get(usize::from(unit))?.models;
+        let lot = held.soldiers.min(full);
+        let (_, grub, marrow) = c.reinforces_as(unit);
+        let (g, m) = share(grub, marrow, full, lot);
+        Some((g * RECRUIT_PERCENT / 100, m * RECRUIT_PERCENT / 100, lot))
+    }
+
+    /// `player` takes the oldest lot of `from`'s `unit` they hold into
+    /// their own army: it stands up at its stockade's door.
+    pub(crate) fn recruit(&mut self, player: PlayerId, from: PlayerId, unit: UnitId) -> bool {
+        let Some(k) = (self.prisoners.held.iter())
+            .position(|h| h.captor == player && h.owner == from && h.unit == unit)
+        else {
+            return false;
+        };
+        let held = self.prisoners.held[k];
+        let Some((grub, marrow, lot)) = self.recruit_price(player, from, unit) else {
+            return false;
+        };
+        let Some(c) = &self.conquest else {
+            return false;
+        };
+        if !self.room_for(player, unit) || !c.economy.can_afford(player, grub, marrow) {
+            return false;
+        }
+        let Some(h) = self.raise_lot(player, unit, held.rank, lot, held.at, Angle::ZERO) else {
+            return false;
+        };
+        let i = h.index as usize;
+        self.regiments.turncoat[i] = true;
+        self.regiments.morale[i] /= 2;
+        let Some(c) = &mut self.conquest else {
+            return false;
+        };
+        c.economy.spend(player, grub, marrow);
+        let r = &mut self.prisoners.held[k];
+        r.soldiers -= lot;
+        if r.soldiers == 0 {
+            self.prisoners.held.remove(k);
+        }
+        true
+    }
+
+    /// `player` puts to death every prisoner they hold at `stockade`.
+    pub(crate) fn execute(&mut self, player: PlayerId, stockade: StructureHandle) -> bool {
+        let Some(c) = &mut self.conquest else {
+            return false;
+        };
+        let (mut owners, mut dead, mut at) = (0u8, 0u32, FxVec2::ZERO);
+        for h in
+            (self.prisoners.held.iter()).filter(|h| h.captor == player && h.stockade == stockade)
+        {
+            owners |= crate::events::owner_bit(h.owner);
+            dead += u32::from(h.soldiers);
+            at = h.at;
+        }
+        if dead == 0 {
+            return false;
+        }
+        (self.prisoners.held).retain(|h| !(h.captor == player && h.stockade == stockade));
+        for (p, mask) in self.prisoners.no_quarter.iter_mut().enumerate() {
+            if owners & crate::events::owner_bit(p as PlayerId) != 0 {
+                *mask |= crate::events::owner_bit(player);
+            }
+        }
+        if c.meters.contains(&crate::powers::Meter::Tithe) {
+            c.tithe
+                .lay(at, u16::try_from(dead).unwrap_or(u16::MAX), self.tick);
+        }
+        if !self.scratch {
+            self.prisoners.told.push(Event::Executed {
+                captor: player,
+                owners,
+                soldiers: dead,
+                at,
+            });
+        }
+        true
+    }
+
+    /// Whether `owner`'s regiments never give up to `captor` (it put
+    /// prisoners of theirs to death).
+    pub fn no_quarter(&self, owner: PlayerId, captor: PlayerId) -> bool {
+        (self.prisoners.no_quarter.get(usize::from(owner)))
+            .is_some_and(|m| m & crate::events::owner_bit(captor) != 0)
     }
 }

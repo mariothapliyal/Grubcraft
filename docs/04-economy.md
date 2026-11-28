@@ -119,6 +119,8 @@ Added 2026-11-28 ([45](45-prisoners.md)).
 - **Work:** each held soldier earns its captor 1 Grub a minute, cut by upkeep like gathered Grub.
 - **Ransom:** their owner can buy back a lot (at most a full regiment) at once with the Ransom button, for what reinforcing those soldiers would cost, paid to the captor. It comes out at the owner's main building with its rank and needs the supply.
 - **When a stockade falls:** its prisoners stand up there as their owner's regiments, while the owner has the supply.
+- **Recruit (Mario 2026-11-28):** the captor can take a lot into its own army with the Recruit button, for half its ransom. It stands up at the stockade with its rank, at half its morale, and is never reinforced or evolved.
+- **Mass execution:** the captor can put everyone held at a stockade to death with the Execute button. The dead lie in a grave there (the Concord's Tithe can raise them), the owner can never ransom them, and from then on the owner's regiments never give themselves up to that captor.
 
 ## Expansion
 
