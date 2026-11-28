@@ -223,7 +223,7 @@ pub fn centre_of(members: &[GroupMember]) -> FxVec2 {
 }
 
 /// The middle of `points` (the origin of none).
-pub(crate) fn middle_of(points: impl Iterator<Item = FxVec2>) -> FxVec2 {
+pub fn middle_of(points: impl Iterator<Item = FxVec2>) -> FxVec2 {
     let (mut n, mut sum) = (0i64, (0i64, 0i64));
     for p in points {
         n += 1;

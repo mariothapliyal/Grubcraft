@@ -32,6 +32,7 @@ mod bridge_flood_armies;
 mod brigade;
 mod charges;
 mod crossing;
+mod column_of_march;
 mod draw_the_road;
 mod dropped;
 mod evolve_tithe;
@@ -101,6 +102,7 @@ const SCENARIOS: &[Scenario] = &[
     make_way::SCENARIO,
     advance_in_line::SCENARIO,
     draw_the_road::SCENARIO,
+    column_of_march::SCENARIO,
     evolve_tithe::SCENARIO,
     charges::SCENARIO,
     heroes::SCENARIO,

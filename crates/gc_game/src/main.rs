@@ -214,6 +214,7 @@ mod river_debris;
 #[cfg(test)]
 mod river_golden;
 mod river_watch;
+mod column;
 mod road;
 mod roster;
 mod sandbox;
