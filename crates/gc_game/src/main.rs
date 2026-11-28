@@ -191,6 +191,7 @@ mod stress;
 #[cfg(test)]
 mod wall_survey;
 // The Guide's data (docs/08-ui-ux.md#guide).
+mod column;
 mod drawn_tool;
 mod guide_data;
 mod hero_casts;
@@ -994,6 +995,9 @@ fn usage() -> ! {
     std::process::exit(2);
 }
 
+/// A road preview: (points, shift, alt, waypoints, the last leg's moves).
+type RoadPreview = (usize, bool, bool, Vec<Vec2>, Vec<gc_sim::Command>);
+
 /// Everything that exists once the window and GPU are up.
 struct Running {
     window: Arc<Window>,
@@ -1138,9 +1142,12 @@ struct Running {
     /// whether or not Ctrl is still held when it is let go.
     road_on: bool,
     /// The road preview last planned, kept while the road has as many
-    /// points and Shift is as it was: (points, shift, waypoints, the last
-    /// leg's moves).
-    road_preview: Option<(usize, bool, Vec<Vec2>, Vec<gc_sim::Command>)>,
+    /// points and Shift and Alt are as they were: (points, shift, alt,
+    /// waypoints, the last leg's moves).
+    road_preview: Option<RoadPreview>,
+    /// Armies sent in column of march (Alt+right-click), watched until
+    /// they deploy (docs/42-armies-that-march.md, "Column of march").
+    columns: Vec<column::March>,
     last_group_key: Option<(usize, Instant)>,
     /// When the last right-click order was given, and to whom: a second
     /// one to the same selection soon after runs (see [`Self::run`]).
@@ -2175,6 +2182,7 @@ impl App {
             road: Vec::new(),
             road_on: false,
             road_preview: None,
+            columns: Vec::new(),
             last_group_key: None,
             last_right: None,
             attack_mark: None,
@@ -3209,8 +3217,13 @@ impl Running {
                 {
                     self.issue_siege(building);
                 } else if let Some(order) = drag.or_else(|| plain.map(hud::move_order)) {
-                    self.issue_march(order, false, queue);
-                    ordered = true;
+                    // Alt+right-click on the ground: in column of march.
+                    if drag.is_none() && self.input.alt && !queue && !self.world.deploying() {
+                        self.issue_column(order);
+                    } else {
+                        self.issue_march(order, false, queue);
+                        ordered = true;
+                    }
                 }
                 // A second right-click soon after the first: they run there.
                 if ordered && !queue && !self.world.deploying() {
@@ -3379,7 +3392,12 @@ impl Running {
     /// arrangement: a standing army's own shape (its places kept in
     /// `army_plan` until sent), else the army shape chosen with `O`. With
     /// `numbered`, each leg of two or more regiments is a new brigade.
-    fn plan_road(&mut self, numbered: bool, queue: bool) -> (Vec<Vec2>, Vec<Vec<gc_sim::Command>>) {
+    fn plan_road(
+        &mut self,
+        numbered: bool,
+        queue: bool,
+        in_column: bool,
+    ) -> (Vec<Vec2>, Vec<Vec<gc_sim::Command>>) {
         self.fill_group();
         self.army_plan = None;
         if self.group.is_empty() {
@@ -3405,7 +3423,12 @@ impl Running {
         };
         let fx: Vec<gc_fixed::FxVec2> = way.iter().map(|&p| fx_vec(p)).collect();
         let mut members = self.group.clone();
-        let legs = if let Some(n) = self.army_selected()
+        let legs = if in_column {
+            let (world, side) = (&self.world, self.sandbox.side);
+            road::legs(&mut members, &fx, &brigades, |m, order, out| {
+                column::plan(world, side, m, order, out);
+            })
+        } else if let Some(n) = self.army_selected()
             && let Some(mut army) = self.armies[n].clone()
         {
             let legs = road::legs(&mut members, &fx, &brigades, |m, order, out| {
@@ -3458,7 +3481,23 @@ impl Running {
             self.issue_march(hud::move_order(end), false, queue);
             return;
         }
-        let (_, legs) = self.plan_road(true, queue);
+        // Alt: in column of march (not after other orders: the column
+        // forms now).
+        let in_column = self.input.alt && !queue;
+        let (way, mut legs) = self.plan_road(true, queue, in_column);
+        if in_column {
+            let at = |k: usize| way.get(k).map(|&p| fx_vec(p));
+            let (Some(end), before) = (at(way.len().wrapping_sub(1)), way.len().checked_sub(2))
+            else {
+                return;
+            };
+            let from = match before.and_then(at) {
+                Some(p) => p,
+                None => gc_sim::formation::centre_of(&self.group),
+            };
+            self.send_column(&mut legs, end, from);
+            return;
+        }
         self.keep_army_places();
         for (k, leg) in legs.into_iter().enumerate() {
             self.group_commands = leg;
@@ -3466,17 +3505,179 @@ impl Running {
         }
     }
 
+    /// Alt+right-click: the selection marches to `order`'s target in
+    /// column of march, and deploys there, or on meeting an enemy, in its
+    /// shape (see [`column`]).
+    fn issue_column(&mut self, mut order: GroupOrder) {
+        self.fill_group();
+        if self.group.is_empty() {
+            return;
+        }
+        if self.group.len() > 1 {
+            order.brigade = self.next_brigade();
+        }
+        let mut members = self.group.clone();
+        let mut leg = Vec::new();
+        column::plan(
+            &self.world,
+            self.sandbox.side,
+            &mut members,
+            order,
+            &mut leg,
+        );
+        let from = gc_sim::formation::centre_of(&self.group);
+        self.send_column(&mut [leg], order.target, from);
+    }
+
+    /// Send the selection (in `self.group`) along `legs` planned by
+    /// [`column::arrange`] (the first as an order, the rest queued),
+    /// into column first, and watch it until it deploys at `end`, facing
+    /// on the way from `from`.
+    fn send_column(
+        &mut self,
+        legs: &mut [Vec<gc_sim::Command>],
+        end: gc_fixed::FxVec2,
+        from: gc_fixed::FxVec2,
+    ) {
+        let selected = self.selected.regiments().to_vec();
+        for march in &mut self.columns {
+            march.leave(&selected);
+        }
+        self.columns.retain(|m| !m.is_empty());
+        let army = self.army_selected();
+        let form = match army {
+            Some(n) => column::Form::Army(n),
+            None => column::Form::of(self.army_shapes.arrangement()),
+        };
+        let facing = if end == from {
+            self.group.first().map(|m| m.facing).unwrap_or_default()
+        } else {
+            gc_fixed::Angle::of_vec(end - from)
+        };
+        let side = self.sandbox.side;
+        let (changes, march) = column::begin(&self.world, side, legs, end, facing, form);
+        // An army marching in column is still that army; any other
+        // regiments sent leave the places they held in theirs.
+        self.army_plan = None;
+        if army.is_none() {
+            self.keep_army_places();
+        }
+        self.human_orders
+            .extend(changes.into_iter().map(|command| PlayerCommand {
+                player: side,
+                command,
+            }));
+        let first = self.order_marks.len();
+        for (k, leg) in legs.iter().enumerate() {
+            self.group_commands.clone_from(leg);
+            self.send_planned(false, k > 0, k > 0);
+        }
+        // Their marks as they will stand in column, not as they stand now.
+        for mark in &mut self.order_marks[first..] {
+            if let Some(r) = self.world.regiments.get(mark.regiment) {
+                let stats = &self.units.stats[r.unit as usize];
+                let files = gc_sim::Formation::Column.files(r.frontage, r.models);
+                let (w, d) = stats.block_size_in(gc_sim::Formation::Column, files, r.models);
+                mark.size = [fx_to_f32(w), fx_to_f32(d)];
+            }
+        }
+        self.columns.push(march);
+        self.say(
+            "In column of march: it deploys at the end, or facing an enemy that comes near".into(),
+        );
+    }
+
+    /// Take out of the columns of march the regiments the orders about to
+    /// be sent send elsewhere.
+    fn columns_heed_orders(&mut self) {
+        if self.columns.is_empty() || self.human_orders.is_empty() {
+            return;
+        }
+        let mut out = Vec::new();
+        let mut theirs = Vec::new();
+        for march in &mut self.columns {
+            let player = march.side;
+            let orders = (self.human_orders.iter())
+                .filter(|c| c.player == player)
+                .map(|c| c.command);
+            march.heed(orders, &mut theirs);
+            out.extend(
+                theirs
+                    .drain(..)
+                    .map(|command| PlayerCommand { player, command }),
+            );
+        }
+        self.columns.retain(|m| !m.is_empty());
+        self.human_orders.extend(out);
+    }
+
+    /// Look at each column of march sent: form up those come to their
+    /// places, and deploy any come to its end or near an enemy.
+    fn watch_columns(&mut self) {
+        let side = self.sandbox.side;
+        let mut columns = std::mem::take(&mut self.columns);
+        let mut out = Vec::new();
+        let mut enemy = false;
+        for march in &mut columns {
+            // Another side's (sandbox, before Tab): watched when it is
+            // commanded again, since its orders go out as the side now
+            // commanded.
+            if march.side != side {
+                continue;
+            }
+            let Some(why) = column::watch(&self.world, march, &mut out) else {
+                continue;
+            };
+            enemy |= matches!(why, column::Why::Enemy(_));
+            let brigade = self.next_brigade();
+            let (armies, roles) = (&mut self.armies, &self.units.roles);
+            let arrange = |form: &column::Form,
+                           m: &mut [GroupMember],
+                           o: GroupOrder,
+                           out: &mut Vec<gc_sim::Command>| {
+                use gc_sim::arrange::{Arrangement, Preset, arranged_move};
+                match form {
+                    column::Form::Preset(p) => arranged_move(m, o, Arrangement::Preset(*p), out),
+                    column::Form::Saved(s) => arranged_move(m, o, Arrangement::Saved(s), out),
+                    column::Form::Army(n) => match armies.get_mut(*n).and_then(Option::as_mut) {
+                        Some(a) => a.order(m, o, out),
+                        None => arranged_move(m, o, Arrangement::Preset(Preset::Line), out),
+                    },
+                }
+            };
+            out.extend(column::deploy(
+                &self.world,
+                march,
+                why,
+                brigade,
+                roles,
+                arrange,
+            ));
+        }
+        columns.retain(|m| !m.is_empty());
+        self.columns = columns;
+        if out.is_empty() {
+            return;
+        }
+        if enemy {
+            self.say("Enemy near: the column deploys to face it".into());
+        }
+        self.group_commands = out;
+        self.send_planned(false, false, true);
+    }
+
     /// The road being drawn, dotted, with a plate at each waypoint, and
     /// ghost plates where the army will stand at its end.
     fn push_road_preview(&mut self) {
-        let shift = self.input.shift;
-        let fresh =
-            matches!(&self.road_preview, Some((n, q, ..)) if *n == self.road.len() && *q == shift);
+        let (shift, alt) = (self.input.shift, self.input.alt);
+        let fresh = matches!(&self.road_preview,
+            Some((n, q, a, ..)) if *n == self.road.len() && *q == shift && *a == alt);
         if !fresh {
-            let (way, mut legs) = self.plan_road(false, shift);
-            self.road_preview = Some((self.road.len(), shift, way, legs.pop().unwrap_or_default()));
+            let (way, mut legs) = self.plan_road(false, shift, alt && !shift);
+            let last = legs.pop().unwrap_or_default();
+            self.road_preview = Some((self.road.len(), shift, alt, way, last));
         }
-        let Some((_, _, way, last)) = &self.road_preview else {
+        let Some((_, _, _, way, last)) = &self.road_preview else {
             return;
         };
         let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
@@ -4804,6 +5005,7 @@ impl Running {
             let t_ai = Instant::now();
             tagged_alloc::scope(Tag::Ai, || self.minds.tick(&self.world, &mut self.pending));
             self.stats.ai_time += t_ai.elapsed();
+            self.columns_heed_orders();
             self.pending.append(&mut self.human_orders);
             self.step();
         }
@@ -4813,6 +5015,9 @@ impl Running {
         // past the newest tick.
         self.sim_clock = self.sim_clock.min(TICK - Duration::from_nanos(1));
         if ticks_this_frame > 0 {
+            if self.watching.is_none() && !self.columns.is_empty() {
+                self.watch_columns();
+            }
             // Tuned stats take effect in the tick after they are sent.
             self.units.stats.clone_from_slice(self.world.units());
             self.judge_battle();
@@ -6367,6 +6572,7 @@ impl Running {
                 o.report = Some(line);
             }
         }
+        self.columns_heed_orders();
         let Some(o) = &mut self.online else {
             return 0;
         };
@@ -7138,6 +7344,8 @@ impl Running {
         self.boxed.clear();
         self.control_groups = Default::default();
         self.armies = Default::default();
+        self.columns.clear();
+        self.road_preview = None;
         self.last_group_key = None;
         // Regiment handles are reissued: a leftover pick or cool-down from
         // the last match would match the new match's regiments.
