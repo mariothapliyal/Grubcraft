@@ -870,11 +870,42 @@ impl Regiments {
     /// march (see [`PowerEffect::March`]), less while a Singing Wall slows
     /// it.
     pub(crate) fn marched(&self, i: usize, pace: Fx) -> Fx {
+        Self::by(pace, self.march_percent(i, true))
+    }
+
+    /// How far regiment slot `i` goes at `pace` this tick by what quickens
+    /// it (a march power, a column, a run), leaving out what slows it (a
+    /// Singing Wall, being winded): what a brigade carries along when all
+    /// of it has it. A slowed member lags its brigade, as it always did.
+    pub(crate) fn carried(&self, i: usize, pace: Fx) -> Fx {
+        Self::by(pace, self.march_percent(i, false))
+    }
+
+    fn by(pace: Fx, percent: i64) -> Fx {
+        match percent {
+            100 => pace,
+            percent => Fx::from_raw((i64::from(pace.raw()) * percent / 100) as i32),
+        }
+    }
+
+    /// The pace that takes regiment slot `i` `ground` tiles this tick by
+    /// what quickens it ([`Regiments::carried`] the other way, at most a
+    /// hair short).
+    pub(crate) fn uncarried(&self, i: usize, ground: Fx) -> Fx {
+        match self.march_percent(i, false) {
+            100 => ground,
+            percent => Fx::from_raw((i64::from(ground.raw()) * 100 / percent.max(1)) as i32),
+        }
+    }
+
+    /// Percent of its pace regiment slot `i` goes this tick (see
+    /// [`Regiments::marched`]): with what slows it only when `slowed`.
+    fn march_percent(&self, i: usize, slowed: bool) -> i64 {
         let mut percent = 100;
         if self.march_left[i] > 0 {
             percent += i64::from(self.march[i].min(MAX_HASTE));
         }
-        if self.sung_left[i] > 0 {
+        if slowed && self.sung_left[i] > 0 {
             // Slowed by a Choir Singing Wall (see [`crate::twists`]).
             percent = percent * crate::twists::SUNG_PACE_PERCENT / 100;
         }
@@ -883,15 +914,11 @@ impl Regiments {
         if self.formation[i] == crate::Formation::Column {
             percent = percent * crate::COLUMN_PACE_PERCENT / 100;
         }
-        percent = match self.stride[i] {
+        match self.stride[i] {
             Stride::Running(_) => percent * crate::regiments::RUN_PERCENT / 100,
-            Stride::Winded(_) => percent * crate::regiments::WINDED_PACE_PERCENT / 100,
-            Stride::Fresh => percent,
-        };
-        if percent == 100 {
-            return pace;
+            Stride::Winded(_) if slowed => percent * crate::regiments::WINDED_PACE_PERCENT / 100,
+            Stride::Winded(_) | Stride::Fresh => percent,
         }
-        Fx::from_raw((i64::from(pace.raw()) * percent / 100) as i32)
     }
 
     /// Regiment `h`'s march: ticks left, 0 for none.

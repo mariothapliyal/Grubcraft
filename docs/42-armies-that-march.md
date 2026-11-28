@@ -183,6 +183,9 @@ below.
 19. **Column of march.** A brigade can be told to go in road column the
     whole way (faster on roads and through country full of narrow
     places) and to deploy on arrival or when an enemy comes near.
+    Built, `SIM_VERSION` 102 (a brigade in column now keeps the column's
+    quicker pace, Mario chose it 28 November 2026): see "Column of march
+    in full" below.
 
 **Stage 5. Every soldier on the ground** (the option C call)
 
@@ -1041,3 +1044,97 @@ Along the road the army's middle kept within 4 tiles of the drawn line.
   still counts toward the way the army faces (their mean) when the road
   sets off.
 - Dots drawn in woods hide under the trees, as a route's do.
+
+## Column of march in full
+
+### What the player does
+
+Hold `Alt` and right-click the ground. Each selected regiment goes into
+Column formation (four wide, a quarter quicker, can't charge, 10 less
+melee defence) and the army marches there one regiment behind the
+other, as a brigade on one track; the order's plates show the file.
+`Ctrl`+`Alt`+right-drag draws a road and goes along it in column. The
+column deploys by itself, into the army shape chosen (or a standing
+army's own shape):
+
+- **At the end.** When its head comes within 12 tiles of the end, the
+  army is ordered to its places there, facing on the way it came. The
+  regiments behind file on to their places still in column, at the
+  quick march, and each forms up (back into the formation it had) once
+  it is within 6 tiles of its place. An enemy coming near while they
+  file on makes all of them form up at once and go on to their places
+  in the shape the player chose (the army is not turned about).
+- **When an enemy comes near.** When an enemy regiment the side can see
+  (not routing) comes within 32 tiles of any regiment of the column
+  (as far as a regiment sees), every regiment forms up at once and the
+  army stands in line about the regiment nearest the enemy, facing it.
+  The message bar says "Enemy near: the column deploys to face it".
+
+Any other order to a regiment of the column (a move, an attack, Hold,
+Brace, Skirmish, fall back, work, manning a wall, a formation change)
+takes it out of the column; one routing or dying leaves it too. Torches,
+a run, or a stance turned off do not. One that can't go into Column
+(fighting, or on a wall) marches in its file as it stands and deploys
+with the rest. `Alt` with `Shift` is an ordinary queued move:
+the column forms at once, so it cannot wait behind other orders.
+
+### How it works (`gc_game::column`)
+
+- **The file.** Regiments file off in the order they stand: the one
+  furthest ahead the way they go first, and of those abreast (within 4
+  tiles), the left first. Each stands a block deep and 3 tiles behind the
+  one before. The file lies back from the target the way the army comes;
+  where that ground is cut off (thicket, cliff, water between its places
+  and its middle), it is swung about the target, 20 degrees at a time
+  either way, until all of it is in clear line of its middle, because a
+  brigade marches as one body only the regiments whose places it can see
+  from the middle of them all.
+- **The watch.** The game watches each column it sent, each frame, and
+  sends the formation changes and the deploying order itself, through
+  the same orders the player gives. Nothing about a column is in the
+  simulation, so a replay replays the orders.
+- **The rule change.** A brigade's middle walked at the slowest pace its
+  members were ordered, ignoring the column's quarter quicker march (and
+  a march power): the members' extra pace only took them ahead of their
+  places. Since brigades came in (#413) a body in column, the computer's
+  armies on the march too, went no faster than one in line. The brigade
+  now walks at the slowest pace its members go over the ground by what
+  quickens them (Column, a run, a march power: `Regiments::carried`),
+  and each member's pace is set back from that (`Regiments::uncarried`).
+  What slows a regiment (a Singing Wall, being winded) is left out, so
+  one slowed member lags its brigade as before rather than holding all
+  of it back. A brigade with no one in column, running or on a march
+  power walks as before (the golden replays did not change).
+
+### What it measured (`STRESS=column-of-march`)
+
+Six regiments in line (spears, swords and bows) march north on an
+ordinary group order and in column of march, over open country (160
+tiles) and through narrow country (two hedges of thicket across the
+field, each with one 10-tile gap, the gaps 80 tiles apart):
+
+| March | All formed at the end | In disorder |
+|---|---|---|
+| Open, ordinary order | 59.5 s | 10.2 regiment-s |
+| Open, column of march (deployed at 43.2 s) | 53.6 s | 27.2 regiment-s |
+| Narrow, ordinary order | 76.1 s | 24.7 regiment-s |
+| Narrow, column of march (deployed at 65.2 s) | 73.6 s | 51.1 regiment-s |
+
+With three enemy spearmen standing 28 tiles beside the way, the column
+deployed when they were 32 tiles off, stood formed in line facing them
+6.2 s later, and no regiment fought in column.
+
+### What it does not do yet
+
+- The column's regiments jostle the one ahead more than a line's do
+  (the disorder above): a regiment closing up behind another in file
+  pushes into it. A wider gap (5 tiles) was tried and was worse.
+- Through narrow country it gains little: the column's rear still
+  closes up the whole length of the column after the head arrives, and
+  the brigade halts members that run ahead of their places at a gap.
+- Deploying at the end takes as long as the rear needs to come up (about
+  10 s for six regiments). Deploying facing an enemy forms the line at
+  the regiment nearest it, which may be by a wood or a hedge.
+- The computer generals march in column already (their own rule) and do
+  not use this order.
+
