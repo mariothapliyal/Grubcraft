@@ -855,6 +855,9 @@ impl Regiments {
             &mut self.stoned_left,
             &mut self.sung_left,
             &mut self.trapped_left,
+            &mut self.inspired_left,
+            &mut self.stunned_left,
+            &mut self.untouchable_left,
         ] {
             for left in lefts.iter_mut() {
                 *left = left.saturating_sub(1);

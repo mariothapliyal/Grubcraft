@@ -2885,8 +2885,9 @@ impl Combat {
                 Strike::Early => true,
                 Strike::Rest => false,
             };
-            // A cocoon takes blows and strikes none.
-            if !strikes || regs.models[i] == 0 || regs.cocooned(i) {
+            // A cocoon takes blows and strikes none; nor does a regiment a
+            // hero's ability has stunned.
+            if !strikes || regs.models[i] == 0 || regs.cannot_act(i) {
                 continue;
             }
             if !on_turn {
@@ -2935,7 +2936,9 @@ impl Combat {
             // `UnitStats::melee_defence_in`).
             let defence =
                 defender.melee_defence_in(regs.formation[j], side == Side::Front, regs.still(j));
-            let hit = hit_percent(i32::from(attacker.melee_attack), defence) as u32;
+            // A hero's ability may inspire it (see `abilities`).
+            let attack = i32::from(attacker.melee_attack) + regs.attack_bonus(i);
+            let hit = hit_percent(attack, defence) as u32;
             let charge = 100
                 + u128::from(regs.charge_bonus[i]) * u128::from(regs.charge[i])
                     / u128::from(CHARGE_TICKS);
@@ -3041,7 +3044,7 @@ impl Combat {
                 || regs.target[i].is_some()
                 || regs.models[i] == 0
                 || regs.morale_state[i].broken()
-                || regs.cocooned(i)
+                || regs.cannot_act(i)
             {
                 continue;
             }
@@ -3072,17 +3075,24 @@ impl Combat {
                     as u8,
                 kind: TowerShot::Arrows,
             };
+            // A Split Beam's charged volley (see `abilities`).
+            let beam = regs.beam_percent(i);
+            let shot = Shot {
+                damage: (u64::from(shot.damage) * beam / 100).min(u64::from(u16::MAX)) as u16,
+                ..shot
+            };
             if !self.loose(regs, j, shot, tick) {
                 continue;
             }
-            regs.reload[i] = if regs.loophole[i] {
+            regs.volleys_up[i] = regs.volleys_up[i].saturating_sub(1);
+            let reload = if regs.loophole[i] {
                 // Shooting through a Castle Wall's loopholes.
                 let percent = 100 + crate::twists::LOOPHOLE_PERCENT;
                 (u32::from(stats.reload_ticks) * 100 / u32::from(percent)) as u16
             } else {
                 stats.reload_ticks
-            }
-            .max(1);
+            };
+            regs.reload[i] = regs.inspired_reload(i, reload).max(1);
         }
 
         // Volleys landing this tick.
@@ -3401,6 +3411,16 @@ fn deal(
     let taken = regs.take_damage_hp(j, whole.min(u64::from(u32::MAX)) as u32);
     step_up(regs, units, nav, j, ranks_before);
     taken
+}
+
+/// Regiment `j` takes `hp` of a hero ability's damage (see
+/// [`crate::abilities`]): back ranks first, no dice and no armour, the
+/// block stepping up as a rank empties. The soldiers lost.
+pub(crate) fn hurt(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, j: usize, hp: u32) -> u16 {
+    let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
+    let (lost, _) = regs.take_damage_hp(j, hp);
+    step_up(regs, units, nav, j, ranks_before);
+    lost
 }
 
 /// Marks regiment `j` as struck on `side`, for its next morale check.

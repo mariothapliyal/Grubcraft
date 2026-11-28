@@ -69,6 +69,9 @@ pub enum Armed {
     /// Conquest: the target of this faction power (its place in the
     /// powers table).
     Power(u8),
+    /// Conquest: the point or enemy regiment the selected hero casts its
+    /// ability at (0 basic, 1 ultimate; docs/44).
+    Cast(u8),
 }
 
 /// Slots of the command grid, row by row (docs/08-ui-ux.md#screen-layout-1080p-reference).
@@ -79,8 +82,8 @@ pub const SLOT_ATTACK: usize = 1;
 pub const SLOT_ADVANCE: usize = 4;
 /// Burn (E): set the woods beside each selected regiment alight.
 pub const SLOT_BURN: usize = 2;
-/// Hold (S): stand fast; and Run (D). Both share their slots with a
-/// hero's second and third abilities, which win while a hero is shown.
+/// Hold (S): stand fast, sharing its slot with a hero's ultimate, which
+/// wins while a hero is shown; and Run (D).
 pub const SLOT_HOLD: usize = 5;
 pub const SLOT_RUN: usize = 6;
 pub const SLOT_FORMATION: usize = 3;
@@ -100,7 +103,8 @@ const LABELS: [&str; GRID_SLOTS] = [
     "Advance",
     "Hold",
     "Run",
-    "Ultimate",
+    // F: free since a hero's ultimate went on S (its key is R's twin).
+    "",
     "Brace",
     "Torches",
     "Stakes",
@@ -116,7 +120,7 @@ const ICONS: [Icon; GRID_SLOTS] = [
     Icon::Attack,
     Icon::Hold,
     Icon::Run,
-    Icon::Ultimate,
+    Icon::None,
     Icon::Brace,
     Icon::Torch,
     Icon::Hammer,
@@ -132,7 +136,7 @@ const TIPS: [&str; GRID_SLOTS] = [
     "March to a spot, but stop and fight any enemy met on the way, then march on. Then click the ground. Shift queues it.",
     "Stand fast: halt and fight only what reaches you, giving ground at half the pace; no chasing. Any order lifts it; press again to stand down.",
     "Run where they are going: half again as fast for up to 8 s, then winded for 10 s (slower, weaker blows). Double right-click runs too.",
-    "A hero's ultimate. Needs a hero.",
+    "",
     "Spears and pikes brace against a charge; archers and other shooters skirmish, stepping back from melee to shoot again. Press again to stop.",
     "Light torches at night: seen from afar, but they see further and can't be ambushed out of the dark. Press again to put them out.",
     "In Conquest, spearmen and archers plant a line of stakes in front of them.",
@@ -288,8 +292,7 @@ impl HudState {
         self.right_held
     }
 
-    /// Show or hide the made-up hero (there are no heroes in the game yet).
-    /// Whether a hero is on show, and so owns the A, S, D and F keys.
+    /// Whether the made-up hero is on show (F6; see `preview_hero`).
     pub fn hero_shown(&self) -> bool {
         self.hero_preview
     }
@@ -732,6 +735,7 @@ impl Running {
         self.selected
             .retain(|&h| self.world.regiments.get(h).is_some());
         self.drop_stale_power();
+        self.drop_stale_cast();
         // A building stays selected while it stands and is ours.
         if (self.selected.structure())
             .is_some_and(|h| self.world.structures().and_then(|s| s.owner(h)) != Some(side))
@@ -958,6 +962,7 @@ impl Running {
                 }
             }
         }
+        let ability_tips = self.hero_selected().map(|h| self.ability_tips(h));
         let hud = &mut self.hud;
         // A power being aimed needs no selection, unless it shifts one (see
         // `drop_stale_power`).
@@ -1069,7 +1074,7 @@ impl Running {
                 _ => None,
             }
         };
-        let ability_status: [String; 4] = match &hero {
+        let ability_status: [String; 2] = match &hero {
             Some(h) => h.abilities.map(|a| a.status()),
             None => Default::default(),
         };
@@ -1119,8 +1124,7 @@ impl Running {
         if has_orders && !burnable {
             grid[SLOT_BURN].tip = "Too wet to burn: the ground must dry first.";
         }
-        // A hero's abilities take the A, S, D and F slots (the made-up one's;
-        // the real ones have none yet, docs/43 stage H2).
+        // A hero's two abilities take the A and S slots (docs/44).
         if let Some(h) = hero
             .as_ref()
             .filter(|h| h.abilities.iter().any(|a| !a.short.is_empty()))
@@ -1128,8 +1132,9 @@ impl Running {
             for (i, a) in h.abilities.iter().enumerate() {
                 let slot = &mut grid[HERO_SLOT_FIRST + i];
                 slot.label = a.short;
-                slot.icon = if i == 3 { Icon::Ultimate } else { Icon::Skill };
-                slot.tip = "A hero ability. Needs a rank to use.";
+                slot.icon = if i == 1 { Icon::Ultimate } else { Icon::Skill };
+                slot.tip = (ability_tips.as_ref())
+                    .map_or("A hero ability. Needs a rank to use.", |t| t[i]);
                 slot.detail = &ability_status[i];
                 slot.state =
                     ready(a.usable() && h.revive_secs.is_none() && self.watching.is_none());
@@ -1139,6 +1144,9 @@ impl Running {
             Some(Armed::Move) => grid[SLOT_MOVE].state = SlotState::Armed,
             Some(Armed::Attack) => grid[SLOT_ATTACK].state = SlotState::Armed,
             Some(Armed::AttackMove) => grid[SLOT_ADVANCE].state = SlotState::Armed,
+            Some(Armed::Cast(slot)) => {
+                grid[HERO_SLOT_FIRST + usize::from(slot)].state = SlotState::Armed;
+            }
             Some(
                 Armed::Lay(_)
                 | Armed::Wall(..)
@@ -1603,8 +1611,13 @@ impl Running {
             return;
         }
         // A hero shown owns these slots for its abilities.
-        if matches!(slot, SLOT_ADVANCE | SLOT_HOLD | SLOT_RUN) && self.hud.hero_shown() {
-            return;
+        if matches!(slot, SLOT_ADVANCE | SLOT_HOLD) {
+            if let Some(h) = self.hero_selected() {
+                return self.hero_press(h, (slot - HERO_SLOT_FIRST) as u8);
+            }
+            if self.hud.hero_shown() {
+                return;
+            }
         }
         match slot {
             SLOT_MOVE | SLOT_ATTACK | SLOT_ADVANCE => {
@@ -1641,6 +1654,7 @@ impl Running {
             Armed::Clear | Armed::Fell => return self.finish_clearing(),
             Armed::Dump => return self.finish_dumping(),
             Armed::Power(power) => return self.finish_power(power),
+            Armed::Cast(ability) => return self.finish_cast(ability),
             Armed::Move => match self.ground_under_cursor() {
                 Some(p) => self.issue_march(move_order(p), false, shift),
                 None => return,
@@ -2443,7 +2457,18 @@ fn hero_panel<'a>(
         hp,
         max_hp,
         xp,
-        abilities: Default::default(),
+        abilities: [0, 1].map(|slot| {
+            let a = hero.ability(slot);
+            HeroAbility {
+                short: a.map_or("", |a| a.short),
+                rank: gc_sim::abilities::rank(slot, hero.level),
+                max_rank: gc_sim::abilities::rank(slot, u8::MAX),
+                passive: a.is_some_and(|a| a.passive),
+                cooldown_secs: crate::faction_powers::cooling_secs(
+                    hero.cooling(slot, world.tick_count()),
+                ),
+            }
+        }),
         items: [None; 3],
         revive_secs: None,
     })
@@ -2468,9 +2493,7 @@ fn preview_hero(color: [u8; 3]) -> HeroPanel<'static> {
         max_hp: 340,
         xp: 0.4,
         abilities: [
-            ability("Rally", 2, false, 0),
-            ability("Aura", 1, true, 0),
-            ability("Chall", 1, false, 12),
+            ability("Rally", 2, false, 12),
             ability("Banner", 0, false, 0),
         ],
         items: [Some("Jade Charm"), None, None],

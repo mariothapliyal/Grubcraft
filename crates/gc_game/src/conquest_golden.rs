@@ -1243,6 +1243,14 @@ impl Match {
     }
 }
 
+/// Side `p`'s first hero's regiment, while it stands.
+pub(crate) fn hero_of(world: &World, p: PlayerId) -> Option<RegimentHandle> {
+    world
+        .heroes()
+        .find(|h| h.owner == p)
+        .and_then(|h| h.regiment)
+}
+
 /// Side `p`'s buildings of type `b` (or any type, for `None`).
 pub(crate) fn own(world: &World, p: PlayerId, b: Option<BuildingId>) -> Vec<StructureView> {
     world

@@ -1,15 +1,15 @@
-//! The hero panel: portrait, level, hit points, experience, the four
+//! The hero panel: portrait, level, hit points, experience, the two
 //! abilities' ranks and the three item slots. Docs:
-//! docs/08-ui-ux.md#screen-layout-1080p-reference.
+//! docs/08-ui-ux.md#screen-layout-1080p-reference, docs/44-hero-abilities.md.
 //!
 //! Display only. The abilities themselves are used from the command grid
-//! (keys A, S, D, F), which the game fills from [`HeroPanel::abilities`].
+//! (keys A and S), which the game fills from [`HeroPanel::abilities`].
 //! Drawn above the bar's left end, over the battlefield.
 
 use crate::draw::{CELL_W, DrawList, Rect, fit, text_width};
 use crate::hud::{
-    GRID_KEYS, HERO_SLOT_FIRST, dim_ink, draw_portrait, health_color, ink_meter, linen_light,
-    muted_ink,
+    GRID_KEYS, HERO_ABILITIES, HERO_SLOT_FIRST, dim_ink, draw_portrait, health_color, ink_meter,
+    linen_light, muted_ink,
 };
 use crate::ui::theme;
 
@@ -23,7 +23,7 @@ const ITEM_W: i32 = 24;
 const GAP: i32 = 3;
 const XP_COLOR: [u8; 4] = theme::WOAD;
 
-/// One of a hero's four abilities (three basic and the ultimate).
+/// One of a hero's two abilities (the basic one and the ultimate).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HeroAbility<'a> {
     /// At most 6 characters, as on a command grid button.
@@ -66,7 +66,7 @@ pub struct HeroPanel<'a> {
     pub max_hp: u32,
     /// Progress to the next level, 0 to 1.
     pub xp: f32,
-    pub abilities: [HeroAbility<'a>; 4],
+    pub abilities: [HeroAbility<'a>; HERO_ABILITIES],
     pub items: [Option<&'a str>; 3],
     /// Seconds until the hero can be revived, when dead.
     pub revive_secs: Option<u32>,
@@ -129,7 +129,7 @@ pub fn draw(draw: &mut DrawList, bar_top: i32, hero: &HeroPanel, over: &mut Vec<
     for (a, key) in hero
         .abilities
         .iter()
-        .zip(&GRID_KEYS[HERO_SLOT_FIRST..HERO_SLOT_FIRST + 4])
+        .zip(&GRID_KEYS[HERO_SLOT_FIRST..HERO_SLOT_FIRST + HERO_ABILITIES])
     {
         let cell = Rect::new(cell_x, row_y, ABILITY_W, ROW_H);
         let (back, ink) = match (a.rank, a.cooldown_secs) {
@@ -193,8 +193,6 @@ mod tests {
             xp: 0.4,
             abilities: [
                 ability("Rally", 2, false, 0),
-                ability("Aura", 1, true, 0),
-                ability("Chall", 0, false, 0),
                 ability("Banner", 0, false, 0),
             ],
             items: [Some("Jade Charm"), None, None],
@@ -220,16 +218,20 @@ mod tests {
     fn only_a_learned_active_ability_off_cooldown_is_usable() {
         let a = hero().abilities;
         assert!(a[0].usable());
-        assert!(!a[1].usable(), "passive");
-        assert!(!a[2].usable(), "not learned");
+        assert!(!a[1].usable(), "not learned");
+        let passive = HeroAbility {
+            passive: true,
+            ..a[0]
+        };
+        assert!(!passive.usable());
         let cooling = HeroAbility {
             cooldown_secs: 12,
             ..a[0]
         };
         assert!(!cooling.usable());
         assert_eq!(cooling.status(), "12s");
-        assert_eq!(a[1].status(), "auto");
-        assert_eq!(a[2].status(), "locked");
+        assert_eq!(passive.status(), "auto");
+        assert_eq!(a[1].status(), "locked");
         assert_eq!(a[0].status(), "");
     }
 

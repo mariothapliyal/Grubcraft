@@ -37,7 +37,7 @@ Every unit has one **class**. Class drives soft counters (the [counters table](0
 | Siege | Built to break structures | 4 |
 | Support | Economy and aura units (Reclaimer, Caravan, Conductor) | 2 to 3 |
 | Monster | One huge model, causes terror | 6 |
-| Hero | Levels 1 to 10, four abilities | 5 |
+| Hero | Levels 1 to 10, two abilities | 5 |
 
 Summoned units use no supply.
 
@@ -58,7 +58,7 @@ Heroes take and deal ×1.0 against everything. Siege units deal ×3.0 to Fortifi
 
 ## Shared rules
 
-- **Heroes** never rout. They cost 200 Grub and 50 Marrow, take 40 s to hire at the faction's hero building, and use 5 supply. Each has three basic abilities with three ranks (written 1/2/3 below) and an ultimate at level 6. Hero stats grow every level by the amounts listed.
+- **Heroes** never rout. They cost 200 Grub and 50 Marrow, take 40 s to hire at the faction's hero building, and use 5 supply. Each has two abilities (since H2, 2026-11-22; the others were dropped, [44 · Hero abilities](44-hero-abilities.md)): a basic one with three ranks (written 1/2/3 below; ranks at levels 1, 4 and 7) and an ultimate from level 6. Hero stats grow every level by the amounts listed.
 - **Hero leadership** (decided 2026-11-22, [43 · Heroes](43-heroes.md)): a hero leads its player's regiments within 16 tiles as the Field Battle general does (1 morale a second, breaking point 5 lower, undead strike 10% harder); its fall costs those within 16 tiles 10 morale.
 - **Workers** and Support units are not counted as regiments for the "6 to 8 regiment types" rule in 03.
 - Every Brood regiment and worker also costs one larva.

@@ -193,6 +193,9 @@ mod wall_survey;
 // The Guide's data (docs/08-ui-ux.md#guide).
 mod drawn_tool;
 mod guide_data;
+mod hero_casts;
+#[cfg(test)]
+mod hero_golden;
 mod hud;
 mod lens;
 mod map_preview;
@@ -2654,11 +2657,10 @@ impl ApplicationHandler for App {
                         // The grid's keys leave Cmd/Ctrl/Alt chords to the system.
                         KeyCode::KeyQ if grid_key => r.battle_press(hud::SLOT_MOVE),
                         KeyCode::KeyW if grid_key => r.battle_press(hud::SLOT_ATTACK),
-                        // A advances (attack-move), unless a hero owns the key.
+                        // A advances (attack-move); with a hero selected, A and S
+                        // cast its two abilities.
                         KeyCode::KeyA if grid_key => r.battle_press(hud::SLOT_ADVANCE),
-                        // The hero's fourth ability owns F while a hero is shown.
-                        KeyCode::KeyF if grid_key && r.hud.hero_shown() => {}
-                        // Otherwise F stays as R's twin until the Ultimate slot has an ability.
+                        // F is R's twin (a hero's abilities are on A and S).
                         KeyCode::KeyR | KeyCode::KeyF if grid_key => {
                             r.battle_press(hud::SLOT_FORMATION);
                         }
@@ -8086,6 +8088,21 @@ impl Running {
                     "The rivers have gone down: the fords are open again"
                 }),
                 Event::Season { season } => news.push(season_news(season)),
+                // A hero's ability goes off with a burst where it was aimed,
+                // when that is seen.
+                Event::Cast { at, .. } => {
+                    let p = from_fx_vec(at);
+                    if self.reveal_all || self.fog.sees_tile((p.x as i32, p.y as i32)) {
+                        let ground = self.heightmap.height_at(p.x, p.y);
+                        self.effects.cast(glam::Vec3::new(p.x, ground, p.y));
+                    }
+                }
+                // A hero of ours walked to cast and found it couldn't.
+                Event::CastRefused { hero, why, .. }
+                    if self.world.regiments.owner(hero) == Some(self.sandbox.side) =>
+                {
+                    news.push(buildings::why(why));
+                }
                 // Only a side's own town is told of.
                 Event::Town { player, walled } if player == self.sandbox.side => {
                     news.push(if walled {

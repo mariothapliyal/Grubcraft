@@ -43,8 +43,9 @@ const HERO_BREAK_OUT: &str =
     "Ordered away mid-fight, it cuts its way out: nobody can pin it for up to 8 s";
 const HERO_REVIVE: &str =
     "At its building, at its level: 65% of the hire price and time at level 1, 15% more a level";
-/// Until stage H2 (docs/43) the abilities are listed but do nothing.
-const HERO_ABILITIES: &str = "Abilities are coming: listed below, they do nothing in play yet";
+/// docs/44: two abilities, ranked by level.
+const HERO_ABILITIES: &str =
+    "Two, on keys A and S: the first ranks up at levels 1, 4 and 7, the ultimate opens at level 6";
 
 // ---- the roster files, as much of them as the Guide reads ----------------
 
@@ -1335,6 +1336,35 @@ mod tests {
         let first = REVIVE_PERCENT + REVIVE_LEVEL_PERCENT;
         assert!(HERO_REVIVE.contains(&format!("{first}% of the hire")));
         assert!(HERO_REVIVE.contains(&format!("{REVIVE_LEVEL_PERCENT}% more a level")));
+        use gc_sim::abilities::{RANK_LEVELS, ULTIMATE_LEVEL};
+        let [a, b, c] = RANK_LEVELS;
+        assert!(HERO_ABILITIES.contains(&format!("levels {a}, {b} and {c}")));
+        assert!(HERO_ABILITIES.contains(&format!("opens at level {ULTIMATE_LEVEL}")));
+    }
+
+    /// The simulation's ability table (`gc_sim::abilities`) and the
+    /// rosters name the same two abilities for every hero, with the same
+    /// reach, cooldown and kind.
+    #[test]
+    fn every_heros_abilities_are_the_simulations() {
+        use gc_sim::abilities::{Aim, Kit};
+        let mut seen = 0;
+        for h in rosters().iter().flat_map(|r| &r.heroes) {
+            let kit = Kit::named(&h.stats.name).unwrap_or_else(|| panic!("{}", h.stats.name));
+            seen += 1;
+            for (a, sim) in h.abilities.iter().zip(kit.abilities()) {
+                let at = format!("{}: {}", h.stats.name, a.name);
+                assert_eq!(a.name, sim.name, "{at}");
+                assert_eq!(a.kind == Kind::Passive, sim.passive, "{at}");
+                assert_eq!(a.cooldown.round() as u16, sim.cooldown_secs, "{at}");
+                let range = a.range.round() as u8;
+                assert_eq!(range, sim.range, "{at}: range");
+                assert_eq!(sim.aim == Aim::Hero, sim.range == 0, "{at}");
+                assert!(sim.short.len() <= 6, "{at}");
+            }
+            assert_eq!(h.abilities.len(), 2);
+        }
+        assert_eq!(seen, Kit::ALL.len());
     }
 
     fn rosters() -> Vec<Roster> {
@@ -1662,7 +1692,7 @@ mod tests {
                 .iter()
                 .any(|u| u.tag == "Ultimate (level 6)")
         );
-        assert_eq!(daimyo.upgrades.len(), 4);
+        assert_eq!(daimyo.upgrades.len(), 2);
         // Research is honest about not existing.
         let forge = find(&d, 0, true, "Forge");
         let research = forge
