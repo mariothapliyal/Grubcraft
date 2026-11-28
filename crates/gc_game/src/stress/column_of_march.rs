@@ -105,9 +105,7 @@ fn walk(real: &Real, report: &mut Report, how: How) -> Walk {
     let mut out = Vec::new();
     let mut march = None;
     if how.column {
-        column::ready(&world, &mut members);
-        let clear = |a, b| world.nav().clear_line(0, a, b);
-        column::arrange(&mut members, goal, &clear, &mut out);
+        column::plan(&world, 0, &mut members, goal, &mut out);
         let mut legs = vec![out];
         let (changes, m) = column::begin(
             &world,
@@ -138,7 +136,7 @@ fn walk(real: &Real, report: &mut Report, how: How) -> Walk {
                     .min()
                     .map_or(f32::NAN, crate::fx_to_f32);
                 w.deployed = Some((t, near));
-                commands = column::deploy(&world, m, why, 2, &[], line);
+                commands = column::deploy(&world, m, why, 2, &[], |_, m, o, out| line(m, o, out));
             }
             if m.is_empty() {
                 march = None;
@@ -169,8 +167,7 @@ fn walk(real: &Real, report: &mut Report, how: How) -> Walk {
         w.facing_enemy = of(&world, &army)
             .filter(|v| {
                 let to = Angle::of_vec(foe - v.position);
-                let off = to.0.wrapping_sub(v.facing.0) as i16;
-                i32::from(off).abs() <= 0x10000 / 12
+                i32::from(v.facing.delta_to(to)).abs() <= 0x10000 / 12
             })
             .count();
     }

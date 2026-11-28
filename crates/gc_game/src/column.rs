@@ -15,14 +15,14 @@
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::arrange::{Arrangement, Preset, Role, Shape};
 use gc_sim::formation::{
-    GROUP_LINE_GAP, GroupMember, GroupOrder, block_size, centre_of, middle_of,
+    GROUP_LINE_GAP, GroupMember, GroupOrder, block_size, centre_of, middle_of, pace_of,
 };
 use gc_sim::orders::Step;
 use gc_sim::{Command, Formation, PlayerId, RegimentHandle, World};
 
 /// A seen enemy regiment this near a regiment of the column, in tiles,
-/// makes it deploy: as far as a regiment sees ([`gc_sim::vision::SIGHT`]).
-pub const NEAR: Fx = Fx::from_int(32);
+/// makes it deploy: as far as a regiment sees.
+pub const NEAR: Fx = gc_sim::vision::SIGHT;
 /// The column's head this near its end, in tiles, makes it deploy.
 const ARRIVE: Fx = Fx::from_int(12);
 
@@ -68,12 +68,10 @@ pub struct March {
     /// The side that sent it: only that side's orders and sight count.
     pub side: PlayerId,
     members: Vec<Member>,
-    /// The regiment at the column's front.
-    head: Option<RegimentHandle>,
     /// Where the march ends, and the way the army faces there.
     end: FxVec2,
     facing: Angle,
-    pub form: Form,
+    form: Form,
     /// Come to the end: filing on to its places in the army deployed.
     filing: bool,
 }
@@ -137,11 +135,7 @@ pub fn arrange(
         backs.push(back);
         back += depth / 2;
     }
-    let pace = if members.len() < 2 {
-        Fx::ZERO
-    } else {
-        members.iter().map(|m| m.speed).min().unwrap_or(Fx::ZERO)
-    };
+    let pace = pace_of(members);
     let mut best: Option<(usize, Angle)> = None;
     for turn in TURNS {
         let facing = way.wrapping_add(Angle(turn));
@@ -171,24 +165,28 @@ pub fn arrange(
     }
 }
 
-/// Make `members` (each as it stands now) ready for [`arrange`]: spaced
-/// and paced as it marches in Column, whatever formation it is in, so a
+/// [`arrange`] `members` (as they stand now) of `side` in `world`, spaced
+/// and paced as each marches in Column whatever formation it is in (so a
 /// shield wall in the army neither slows the column's order nor stands
-/// closer behind the one ahead than a column's depth.
-pub fn ready(world: &World, members: &mut [GroupMember]) {
-    for m in members {
+/// closer behind the one ahead than a column's depth), by the ground
+/// `side` knows.
+pub fn plan(
+    world: &World,
+    side: PlayerId,
+    members: &mut [GroupMember],
+    order: GroupOrder,
+    out: &mut Vec<Command>,
+) {
+    for m in members.iter_mut() {
         let Some(r) = world.regiments.get(m.handle) else {
             continue;
         };
-        let stats = &world.units()[usize::from(r.unit)];
-        (m.file_spacing, m.rank_spacing) = stats.spacing(Formation::Column);
-        m.speed = paced(stats.speed, Formation::Column);
+        let g =
+            GroupMember::in_formation(&r, &world.units()[usize::from(r.unit)], Formation::Column);
+        (m.file_spacing, m.rank_spacing, m.speed) = (g.file_spacing, g.rank_spacing, g.speed);
     }
-}
-
-/// Speed `speed` in formation `f` (a shield wall slower).
-fn paced(speed: Fx, f: Formation) -> Fx {
-    Fx::from_raw((i64::from(speed.raw()) * i64::from(f.pace_percent()) / 100) as i32)
+    let clear = |a, b| world.nav().clear_line(side, a, b);
+    arrange(members, order, &clear, out);
 }
 
 /// Regiments within this of each other the way they go, in tiles, stand
@@ -271,16 +269,14 @@ pub fn begin(
             });
         }
     }
-    let mut march = March {
+    let march = March {
         side,
         members,
-        head: None,
         end,
         facing,
         form,
         filing: false,
     };
-    march.find_head();
     (changes, march)
 }
 
@@ -293,16 +289,14 @@ impl March {
     /// Take `regiments` out of the column (they were given other orders).
     pub fn leave(&mut self, regiments: &[RegimentHandle]) {
         self.members.retain(|m| !regiments.contains(&m.handle));
-        self.find_head();
     }
 
     /// Take out of the column the regiments `commands` (orders of its
     /// side about to be sent) send elsewhere, other than its own; filing,
     /// each forms up as it goes (its order to, into `out`).
-    pub fn heed(&mut self, commands: &[Command], out: &mut Vec<Command>) {
-        let before = self.members.len();
+    pub fn heed(&mut self, commands: impl IntoIterator<Item = Command>, out: &mut Vec<Command>) {
         for c in commands {
-            let (regiment, to) = match *c {
+            let (regiment, to) = match c {
                 Command::MoveTo {
                     regiment, target, ..
                 }
@@ -310,31 +304,19 @@ impl March {
                     regiment,
                     step: Step::Move { target, .. },
                 } => (regiment, Some(target)),
-                // Any other order that sends it about other business.
-                // (Not a formation change, which [`watch`] sees, nor
-                // torches, a run, or a stance turned off.)
+                // Any other order that sends it about other business: a
+                // move, attack or work, or a stance. (Not a formation
+                // change, which [`watch`] sees, nor torches, a run, or a
+                // stance turned off.)
                 Command::Then { regiment, .. }
-                | Command::Attack { regiment, .. }
-                | Command::AttackMove { regiment, .. }
-                | Command::AttackStructure { regiment, .. }
-                | Command::FallBack { regiment }
                 | Command::RemoveRegiment { regiment }
-                | Command::Hold { regiment, on: true }
                 | Command::Brace { regiment, on: true }
                 | Command::Skirmish { regiment, on: true }
-                | Command::Burn { regiment }
-                | Command::Gather { regiment, .. }
-                | Command::Trade { regiment, .. }
-                | Command::Build { regiment, .. }
-                | Command::Clear { regiment, .. }
-                | Command::Fell { regiment, .. }
-                | Command::Dump { regiment, .. }
-                | Command::Construct { regiment, .. }
-                | Command::WorkPlan { regiment }
-                | Command::ManWall { regiment, .. }
-                | Command::Climb { regiment, .. }
-                | Command::PlantStakes { regiment, .. } => (regiment, None),
-                _ => continue,
+                | Command::Burn { regiment } => (regiment, None),
+                c => match c.redirects() {
+                    Some(regiment) => (regiment, None),
+                    None => continue,
+                },
             };
             let Some(k) = self.members.iter().position(|m| m.handle == regiment) else {
                 continue;
@@ -347,30 +329,16 @@ impl March {
                 out.push(m.form());
             }
         }
-        if self.members.len() != before {
-            self.find_head();
-        }
-    }
-
-    /// The head: the one whose march ends nearest the column's end.
-    fn find_head(&mut self) {
-        let end = self.end;
-        self.head = (self.members.iter())
-            .filter_map(|m| Some((m.handle, (*m.ends.last()? - end).length())))
-            .min_by_key(|&(_, d)| d)
-            .map(|(h, _)| h);
     }
 }
 
 /// Look at column `march`. On the march: drop the regiments no longer of
 /// it (fallen, routed, or out of column after they were in it), and say
-/// whether it
-/// deploys now. Filing into its places after it came to the end (see
+/// whether it deploys now. Filing into its places after it came to the end (see
 /// [`deploy`]): put into `out` the formation changes of those come to
 /// their places, and of all of them if an enemy comes near.
 pub fn watch(world: &World, march: &mut March, out: &mut Vec<Command>) -> Option<Why> {
     let side = march.side;
-    let before = march.members.len();
     march.members.retain_mut(|m| {
         world.regiments.get(m.handle).is_some_and(|r| {
             let column = r.formation == Formation::Column;
@@ -379,17 +347,27 @@ pub fn watch(world: &World, march: &mut March, out: &mut Vec<Command>) -> Option
             kept
         })
     });
-    if march.members.len() != before || march.head.is_none() {
-        march.find_head();
-    }
     let positions: Vec<FxVec2> = (march.members.iter())
         .filter_map(|m| world.regiments.get(m.handle).map(|r| r.position))
         .collect();
     if positions.is_empty() {
         return None;
     }
-    // The nearest seen enemy within reach of any of the column.
+    // The nearest seen enemy within reach of any of the column (none
+    // outside the box about it first).
+    let reach = FxVec2::new(NEAR, NEAR);
+    let (low, high) = (positions.iter()).fold((positions[0], positions[0]), |(l, h), &p| {
+        (
+            FxVec2::new(l.x.min(p.x), l.y.min(p.y)),
+            FxVec2::new(h.x.max(p.x), h.y.max(p.y)),
+        )
+    });
+    let (low, high) = (low - reach, high + reach);
     let enemy = (world.regiments.iter())
+        .filter(|r| {
+            let p = r.position;
+            p.x >= low.x && p.y >= low.y && p.x <= high.x && p.y <= high.y
+        })
         .filter(|r| world.hostile(side, r.owner) && !r.morale.broken())
         .filter(|r| world.sees(side, r.handle))
         .filter_map(|r| {
@@ -419,10 +397,12 @@ pub fn watch(world: &World, march: &mut March, out: &mut Vec<Command>) -> Option
     if let Some((at, _)) = enemy {
         return Some(Why::Enemy(at));
     }
-    let head = march.head?;
-    let m = march.members.iter().find(|m| m.handle == head)?;
-    let r = world.regiments.get(head)?;
-    let last = *m.ends.last()?;
+    // The head: the one whose march ends nearest the column's end.
+    let end = march.end;
+    let (m, last) = (march.members.iter())
+        .filter_map(|m| Some((m, *m.ends.last()?)))
+        .min_by_key(|&(_, last)| (last - end).length())?;
+    let r = world.regiments.get(m.handle)?;
     (r.queued == 0 && (last - r.position).length() <= ARRIVE).then_some(Why::Arrived)
 }
 
@@ -454,7 +434,7 @@ pub fn deploy(
     why: Why,
     brigade: u16,
     roles: &[Role],
-    arrange: impl FnOnce(&mut [GroupMember], GroupOrder, &mut Vec<Command>),
+    arrange: impl FnOnce(&Form, &mut [GroupMember], GroupOrder, &mut Vec<Command>),
 ) -> Vec<Command> {
     let mut out = Vec::new();
     let mut members = Vec::with_capacity(march.members.len());
@@ -467,11 +447,8 @@ pub fn deploy(
         }
         // As it stands formed up: its pace marched in column is quicker
         // still while it files on.
-        let stats = &world.units()[usize::from(r.unit)];
-        let mut g = GroupMember::of(&r, stats);
-        (g.file_spacing, g.rank_spacing) = stats.spacing(m.was);
+        let mut g = GroupMember::in_formation(&r, &world.units()[usize::from(r.unit)], m.was);
         g.files = m.files;
-        g.speed = paced(stats.speed, m.was);
         if let Some(&role) = roles.get(usize::from(r.unit)) {
             g.role = role;
         }
@@ -504,7 +481,7 @@ pub fn deploy(
         brigade: if members.len() > 1 { brigade } else { 0 },
     };
     let start = out.len();
-    arrange(&mut members, order, &mut out);
+    arrange(&march.form, &mut members, order, &mut out);
     if why == Why::Arrived {
         march.filing = true;
         let placed: Vec<(RegimentHandle, FxVec2)> = (out[start..].iter())

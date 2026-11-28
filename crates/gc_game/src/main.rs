@@ -3425,10 +3425,8 @@ impl Running {
         let mut members = self.group.clone();
         let legs = if in_column {
             let (world, side) = (&self.world, self.sandbox.side);
-            column::ready(world, &mut members);
-            let clear = |a, b| world.nav().clear_line(side, a, b);
             road::legs(&mut members, &fx, &brigades, |m, order, out| {
-                column::arrange(m, order, &clear, out);
+                column::plan(world, side, m, order, out);
             })
         } else if let Some(n) = self.army_selected()
             && let Some(mut army) = self.armies[n].clone()
@@ -3518,12 +3516,15 @@ impl Running {
         if self.group.len() > 1 {
             order.brigade = self.next_brigade();
         }
-        let (world, side) = (&self.world, self.sandbox.side);
-        let clear = |a, b| world.nav().clear_line(side, a, b);
         let mut members = self.group.clone();
-        column::ready(world, &mut members);
         let mut leg = Vec::new();
-        column::arrange(&mut members, order, &clear, &mut leg);
+        column::plan(
+            &self.world,
+            self.sandbox.side,
+            &mut members,
+            order,
+            &mut leg,
+        );
         let from = gc_sim::formation::centre_of(&self.group);
         self.send_column(&mut [leg], order.target, from);
     }
@@ -3593,17 +3594,16 @@ impl Running {
             return;
         }
         let mut out = Vec::new();
+        let mut theirs = Vec::new();
         for march in &mut self.columns {
-            let commands: Vec<gc_sim::Command> = (self.human_orders.iter())
-                .filter(|c| c.player == march.side)
-                .map(|c| c.command)
-                .collect();
-            let mut theirs = Vec::new();
-            march.heed(&commands, &mut theirs);
             let player = march.side;
+            let orders = (self.human_orders.iter())
+                .filter(|c| c.player == player)
+                .map(|c| c.command);
+            march.heed(orders, &mut theirs);
             out.extend(
                 theirs
-                    .into_iter()
+                    .drain(..)
                     .map(|command| PlayerCommand { player, command }),
             );
         }
@@ -3630,11 +3630,13 @@ impl Running {
             };
             enemy |= matches!(why, column::Why::Enemy(_));
             let brigade = self.next_brigade();
-            let form = march.form.clone();
             let (armies, roles) = (&mut self.armies, &self.units.roles);
-            let arrange = |m: &mut [GroupMember], o: GroupOrder, out: &mut Vec<gc_sim::Command>| {
+            let arrange = |form: &column::Form,
+                           m: &mut [GroupMember],
+                           o: GroupOrder,
+                           out: &mut Vec<gc_sim::Command>| {
                 use gc_sim::arrange::{Arrangement, Preset, arranged_move};
-                match &form {
+                match form {
                     column::Form::Preset(p) => arranged_move(m, o, Arrangement::Preset(*p), out),
                     column::Form::Saved(s) => arranged_move(m, o, Arrangement::Saved(s), out),
                     column::Form::Army(n) => match armies.get_mut(*n).and_then(Option::as_mut) {

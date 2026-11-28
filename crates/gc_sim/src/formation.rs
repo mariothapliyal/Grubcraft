@@ -87,7 +87,17 @@ impl GroupMember {
     /// A regiment as a group order sees it: its block in its formation,
     /// and the pace that formation allows.
     pub fn of(r: &RegimentView, stats: &UnitStats) -> GroupMember {
-        let (file_spacing, rank_spacing) = stats.spacing(r.formation);
+        GroupMember::in_formation(r, stats, r.formation)
+    }
+
+    /// Regiment `r` as it would stand in `formation`: spaced and paced
+    /// for it (its frontage as it is).
+    pub fn in_formation(
+        r: &RegimentView,
+        stats: &UnitStats,
+        formation: crate::Formation,
+    ) -> GroupMember {
+        let (file_spacing, rank_spacing) = stats.spacing(formation);
         GroupMember {
             handle: r.handle,
             position: r.position,
@@ -97,7 +107,7 @@ impl GroupMember {
             file_spacing,
             rank_spacing,
             speed: Fx::from_raw(
-                (i64::from(stats.speed.raw()) * i64::from(r.formation.pace_percent()) / 100) as i32,
+                (i64::from(stats.speed.raw()) * i64::from(formation.pace_percent()) / 100) as i32,
             ),
             role: Role::guess(stats),
             raised_files: stats.files,
@@ -252,7 +262,7 @@ pub(crate) fn facing_of(order: GroupOrder, centre: FxVec2, otherwise: Angle) -> 
 
 /// The pace a group marches at so it arrives together: the slowest
 /// member's, or zero (its own) for a group of one.
-pub(crate) fn pace_of(members: &[GroupMember]) -> Fx {
+pub fn pace_of(members: &[GroupMember]) -> Fx {
     if members.len() < 2 {
         return Fx::ZERO;
     }
