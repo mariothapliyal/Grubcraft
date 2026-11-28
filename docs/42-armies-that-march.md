@@ -179,6 +179,7 @@ below.
     Built (no change to the rules): see "Standing armies in full" below.
 18. **Draw the road.** Hold a key and draw the way the army should go;
     the brigade follows the drawn line instead of the shortest one.
+    Built (no change to the rules): see "Draw the road in full" below.
 19. **Column of march.** A brigade can be told to go in road column the
     whole way (faster on roads and through country full of narrow
     places) and to deploy on arrival or when an enemy comes near.
@@ -968,3 +969,61 @@ rules number, replay or network message changed.
   as brigades).
 - The standard has no number drawn on it, only bars, and stands at the
   plain middle of the army even when that is between two halves of it.
+
+## Draw the road in full
+
+### What the player does
+
+Hold `Ctrl` (`Cmd` on a Mac) and right-drag the way the army should go.
+While drawing, the line shows dotted with a plate at each waypoint and
+ghost plates where the army will stand at its end. Let go and the army
+goes by that road; with `Shift` held too, after its current orders.
+While the armies deploy an order places, so only the road's end is
+ordered. A drag shorter than 12 tiles is an ordinary order.
+
+### How it works (`gc_game::road`)
+
+- **Waypoints.** The drawn line is cut to its bends: a point that stands
+  more than 3 tiles out of the straight line between its neighbours is
+  kept (Douglas-Peucker), and kept points nearer than 10 tiles to the
+  one before merge into the later, so the army is not halted to re-form
+  every few steps. The line's start is a waypoint only when it lies a
+  leg or more from the army; the end always is.
+- **Legs.** Each waypoint is one group order, in the selection's shape (a
+  standing army's own, else the shape chosen with `O`), facing on toward
+  the next waypoint and at the end along the road's last leg. The first
+  is an order, the rest are queued after it, each a brigade of its own,
+  so the march is the brigade march of stage 1 leg by leg (a member
+  finishing a leg joins the next leg's brigade). Between waypoints the
+  simulation's own route search walks the leg; the waypoints are close
+  enough at every bend that its shortest way is the drawn one.
+- **Turning with the road.** Each leg is laid out from where the one
+  before leaves the army, turned about its middle as the road turns. So
+  a regiment keeps its side of the army round a bend: a line wheeling
+  left keeps its right on the right, instead of being dealt a place by
+  where it stood before the march began (which, facing a new way, can
+  tie all of them on one lateral and deal places by handle).
+
+All of it is orders the game sends for the player: no rules number,
+replay or network message changed.
+
+### What it measured (`STRESS=draw-the-road`)
+
+A river across the field with two fords, one straight ahead and one 44
+tiles west. Six regiments in line are sent north across it:
+
+| Order | Crossed by the far ford | All in their places | Standing on the way | In disorder |
+|---|---|---|---|---|
+| Ordinary group order | 0 of 6 (the near ford) | 38.5 s | 0 regiment-s | 8.4 regiment-s |
+| Road drawn by the far ford | 6 of 6 | 60.5 s | 0 regiment-s | 18.1 regiment-s |
+
+Along the road the army's middle kept within 4 tiles of the drawn line.
+
+### What it does not do yet
+
+- An attack-move (`A`) cannot be drawn: a road is always a plain move.
+- The army forms its shape at each waypoint as it passes (it does not
+  halt there, but a line re-dresses at every bend). A road drawn with
+  many sharp bends close together is followed by fewer waypoints than
+  it has bends.
+- Dots drawn in woods hide under the trees, as a route's do.
