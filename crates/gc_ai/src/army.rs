@@ -6,6 +6,7 @@
 //! troops on the wings. The same code raises the AI's army and the player's,
 //! so neither side starts better placed.
 
+use gc_data::army;
 use gc_sim::{Command, PlayerCommand, PlayerId, UnitId, UnitStats};
 use glam::Vec2;
 use serde::Deserialize;
@@ -157,32 +158,92 @@ pub fn pick_army_within(
     army
 }
 
-/// The part of a player's own `army` that can take the field: their
-/// faction's regiments (none that cost 0 points), in list order, up to `budget`
-/// points and `most` regiments. Anything else is left at home, so a
-/// changed budget or a tampered list can't field more than it should.
+/// Whether a unit type is a hero, for a Field Battle army.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HeroType {
+    /// A regiment.
+    #[default]
+    No,
+    /// A hero with an ability that works only in Conquest.
+    Hero,
+    /// A hero all of whose abilities work in a Field Battle: the computer
+    /// players take these ([`pick_hero`]).
+    Whole,
+}
+
+/// The part of a player's own `army` (entries as [`gc_data::army`] has
+/// them) that can take the field: their faction's regiments (none that
+/// cost 0 points) and heroes (`heroes` says which unit types are; each
+/// once, at most [`army::MAX_HEROES`], a hero listed without a level at
+/// level 1, a level on anything else dropped), in list order, up to
+/// `budget` points (a hero's at its level) and `most` regiments. Anything
+/// else is left at home, so a changed budget or a tampered list can't
+/// field more than it should.
 pub fn within_budget(
-    army: &[UnitId],
+    army: &[u16],
     points: &[u32],
     factions: &[Faction],
+    heroes: &[HeroType],
     faction: Faction,
     budget: u32,
     most: usize,
-) -> Vec<UnitId> {
+) -> Vec<u16> {
     let mut spent = 0u32;
-    let mut out = Vec::new();
-    for &u in army {
-        let (Some(&p), Some(&f)) = (points.get(u as usize), factions.get(u as usize)) else {
+    let mut out: Vec<u16> = Vec::new();
+    for &e in army {
+        let u = army::unit(e);
+        let (Some(&first), Some(&f)) = (points.get(u as usize), factions.get(u as usize)) else {
             continue;
         };
-        if f != faction || p == 0 || out.len() == most || spent + p > budget {
+        let hero = heroes.get(u as usize).is_some_and(|&h| h != HeroType::No);
+        let e = match (hero, army::level(e)) {
+            (true, 0) => army::entry(u, 1),
+            (false, l) if l > 0 => continue,
+            _ => e,
+        };
+        let p = army::points(e, first);
+        let heroes_in = out.iter().filter(|&&o| army::level(o) > 0);
+        if hero
+            && (heroes_in.clone().count() >= army::MAX_HEROES
+                || heroes_in.clone().any(|&o| army::unit(o) == u))
+        {
+            continue;
+        }
+        if f != faction || first == 0 || out.len() == most || spent + p > budget {
             continue;
         }
         spent += p;
-        out.push(u);
+        out.push(e);
     }
     out
 }
+
+/// The hero a computer player takes into a Field Battle, as an entry:
+/// the first of `faction`'s [`HeroType::Whole`] heroes, at the highest
+/// level that costs at most [`HERO_SHARE_PERCENT`] of `budget`; none if
+/// even its first level costs more.
+pub fn pick_hero(
+    points: &[u32],
+    factions: &[Faction],
+    heroes: &[HeroType],
+    faction: Faction,
+    budget: u32,
+) -> Option<u16> {
+    let u = (0..heroes.len()).find(|&u| {
+        heroes[u] == HeroType::Whole
+            && factions.get(u) == Some(&faction)
+            && points.get(u).is_some_and(|&p| p > 0)
+    })?;
+    let share = budget * HERO_SHARE_PERCENT / 100;
+    (1..=army::MAX_LEVEL)
+        .rev()
+        .find(|&l| army::hero_points(points[u], l) <= share)
+        .map(|l| army::entry(u as u16, l))
+}
+
+/// The most of its budget a computer player spends on its hero, in
+/// percent.
+pub const HERO_SHARE_PERCENT: u32 = 25;
 
 /// Where one regiment of an army starts.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -213,13 +274,46 @@ pub fn deploy(
 
 /// The commands that put a deployed army on the field for `party`.
 pub fn spawn_commands(party: PlayerId, placements: &[Placement], out: &mut Vec<PlayerCommand>) {
-    out.extend(placements.iter().map(|p| PlayerCommand {
-        player: party,
-        command: Command::SpawnRegiment {
-            unit: p.unit,
-            position: to_fx_vec(p.position),
-            facing: vec_angle(p.facing),
-        },
+    spawn_army(party, placements, &[], out);
+}
+
+/// [`spawn_commands`] for an army with heroes: a placement whose unit is
+/// one of `heroes` (entries as [`gc_data::army`] has them, each hero
+/// once) is put down as that hero at its level, the heroes first, in the
+/// order of `heroes` (the first is the side's general).
+pub fn spawn_army(
+    party: PlayerId,
+    placements: &[Placement],
+    heroes: &[u16],
+    out: &mut Vec<PlayerCommand>,
+) {
+    let is_hero = |p: &Placement| {
+        heroes
+            .iter()
+            .any(|&e| army::level(e) > 0 && army::unit(e) == p.unit)
+    };
+    let first =
+        (heroes.iter()).filter_map(|&e| placements.iter().find(|p| p.unit == army::unit(e)));
+    let rest = placements.iter().filter(|p| !is_hero(p));
+    out.extend(first.chain(rest).map(|p| {
+        let (position, facing) = (to_fx_vec(p.position), vec_angle(p.facing));
+        let hero = (heroes.iter()).find(|&&e| army::level(e) > 0 && army::unit(e) == p.unit);
+        PlayerCommand {
+            player: party,
+            command: match hero {
+                Some(&e) => Command::SpawnHero {
+                    unit: p.unit,
+                    position,
+                    facing,
+                    level: army::level(e),
+                },
+                None => Command::SpawnRegiment {
+                    unit: p.unit,
+                    position,
+                    facing,
+                },
+            },
+        }
     }));
 }
 
@@ -341,12 +435,93 @@ mod tests {
         // A Concord regiment and an unknown type are dropped, then the
         // budget runs out at the second 600.
         let built = [0, 3, 1, 99, 2, 1, 0];
-        let fielded = within_budget(&built, &points, &f, Faction::EmberClans, 1_800, 40);
+        let fielded = within_budget(&built, &points, &f, &[], Faction::EmberClans, 1_800, 40);
         assert_eq!(fielded, vec![0, 1, 2, 0]);
         assert_eq!(
-            within_budget(&built, &points, &f, Faction::EmberClans, 8_000, 2),
+            within_budget(&built, &points, &f, &[], Faction::EmberClans, 8_000, 2),
             vec![0, 1]
         );
+    }
+
+    /// A hero is fielded once, at its level's points; a level on a
+    /// regiment is dropped, and a hero without one comes at level 1.
+    #[test]
+    fn a_players_heroes_are_held_to_their_levels_points() {
+        let f = factions();
+        let points = [400, 600, 300, 400];
+        let heroes = [HeroType::No, HeroType::Hero, HeroType::No, HeroType::No];
+        let hero = |l| army::entry(1, l);
+        // Level 5: 960 points.
+        let built = [hero(5), 0, hero(2), army::entry(0, 3), 2];
+        assert_eq!(
+            within_budget(&built, &points, &f, &heroes, Faction::EmberClans, 1_700, 40),
+            vec![hero(5), 0, 2]
+        );
+        assert_eq!(
+            within_budget(
+                &[1, 0],
+                &points,
+                &f,
+                &heroes,
+                Faction::EmberClans,
+                4_000,
+                40
+            ),
+            vec![hero(1), 0]
+        );
+        assert_eq!(
+            within_budget(
+                &[hero(10)],
+                &points,
+                &f,
+                &heroes,
+                Faction::EmberClans,
+                1_000,
+                40
+            ),
+            Vec::<u16>::new(),
+            "1,410 points"
+        );
+    }
+
+    #[test]
+    fn the_computer_takes_its_first_hero_at_the_level_a_quarter_of_its_points_buys() {
+        let f = factions();
+        let points = [400, 600, 300, 400];
+        use HeroType::{No, Whole};
+        let heroes = [No, Whole, No, Whole];
+        let pick = |budget| pick_hero(&points, &f, &heroes, Faction::EmberClans, budget);
+        assert_eq!(pick(2_000), None, "500 points won't buy one");
+        assert_eq!(pick(4_000), Some(army::entry(1, 5)), "960 of 1,000");
+        assert_eq!(pick(8_000), Some(army::entry(1, 10)));
+        assert_eq!(
+            pick_hero(&points, &f, &heroes, Faction::CarrionConcord, 4_000),
+            Some(army::entry(3, 10))
+        );
+        // Placed as the hero at its level.
+        let at = Placement {
+            unit: 1,
+            position: Vec2::ZERO,
+            facing: Vec2::Y,
+        };
+        let mut out = Vec::new();
+        let line = Placement { unit: 0, ..at };
+        spawn_army(0, &[line, at], &[army::entry(1, 5)], &mut out);
+        assert!(
+            matches!(
+                out[0].command,
+                Command::SpawnHero {
+                    unit: 1,
+                    level: 5,
+                    ..
+                }
+            ),
+            "the hero first"
+        );
+        assert!(matches!(
+            out[1].command,
+            Command::SpawnRegiment { unit: 0, .. }
+        ));
     }
 
     #[test]

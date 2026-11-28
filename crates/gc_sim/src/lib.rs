@@ -35,6 +35,8 @@ pub mod events;
 pub mod evolve;
 #[cfg(test)]
 mod faction_tests;
+#[cfg(test)]
+mod field_hero_tests;
 pub mod fieldworks;
 pub mod fire;
 pub mod flood;
@@ -148,7 +150,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 104;
+pub const SIM_VERSION: u32 = 105;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -674,6 +676,20 @@ pub enum Command {
         position: FxVec2,
         facing: Angle,
     },
+    /// Put hero `unit` on the field at `level` (1 to
+    /// [`heroes::MAX_LEVEL`]), with the experience that level took: a
+    /// Field Battle's army raises its heroes so (docs/43-heroes.md, H3),
+    /// and the sandbox can. Refused without the hero table
+    /// ([`World::field_roster`], or Conquest's), for a unit that isn't a
+    /// hero, or if the player has that hero already or as many as anyone
+    /// may ([`heroes::MAX_HEROES`]). Like [`Command::SpawnRegiment`], set
+    /// down on standable ground, inside the player's zone while deploying.
+    SpawnHero {
+        unit: UnitId,
+        position: FxVec2,
+        facing: Angle,
+        level: u8,
+    },
     /// March the block's centre to `target`. Group orders are expanded into
     /// one of these per regiment by [`formation::group_move`]. While the
     /// armies deploy, the regiment is put straight down there instead, if
@@ -1148,6 +1164,7 @@ impl Command {
             | Command::Rally { .. }
             | Command::HandOver { .. } => true,
             Command::SpawnRegiment { .. }
+            | Command::SpawnHero { .. }
             | Command::RemoveRegiment { .. }
             | Command::TuneUnit { .. }
             | Command::DeployZone { .. }
@@ -1217,6 +1234,12 @@ pub struct World {
     brigades: brigades::Brigades,
     /// Soldiers taken prisoner (see [`prisoners`]).
     prisoners: prisoners::Prisoners,
+    /// The Conquest unit table, for heroes' growth and abilities (see
+    /// [`heroes`]): Conquest's own, or a Field Battle's
+    /// ([`World::field_roster`]); empty where there are no heroes.
+    roster: Vec<ConquestUnit>,
+    /// Every player's heroes (see [`heroes`]).
+    heroes: heroes::Heroes,
     pub regiments: Regiments,
 }
 
@@ -1267,6 +1290,8 @@ impl World {
             flood_fords: None,
             brigades: brigades::Brigades::new(setup.capacities.regiments as usize),
             prisoners: prisoners::Prisoners::with_capacity(setup.capacities.regiments as usize),
+            roster: Vec::new(),
+            heroes: heroes::Heroes::new(),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
         .with_air()
@@ -1300,6 +1325,30 @@ impl World {
         self.sky.air()
     }
 
+    /// Give a match without buildings the Conquest unit table `units`, so
+    /// that heroes can take the field in it ([`Command::SpawnHero`]): a
+    /// Field Battle's, or the sandbox's on the roster table. Only on a
+    /// match's own world, before its first tick, once, and not in
+    /// Conquest (which has its own); returns whether it was done.
+    pub fn field_roster(&mut self, units: &[ConquestUnit]) -> bool {
+        if self.tick != 0 || self.scratch || self.conquest.is_some() || !self.roster.is_empty() {
+            return false;
+        }
+        self.roster = units.to_vec();
+        true
+    }
+
+    /// The Conquest unit table a match without buildings was given for
+    /// its heroes ([`World::field_roster`]): empty in Conquest, which has
+    /// its own ([`World::conquest_units`]), and where there is none.
+    pub fn field_units(&self) -> &[ConquestUnit] {
+        if self.conquest.is_some() {
+            &[]
+        } else {
+            &self.roster
+        }
+    }
+
     /// Make this a Conquest match: buildings and the economy. Only
     /// on a match's own world with a map, before its first tick, once;
     /// returns whether it was done.
@@ -1308,6 +1357,7 @@ impl World {
             return false;
         }
         self.conquest = Some(Conquest::new(setup, self.regiments.capacity()));
+        self.roster = setup.units.to_vec();
         self.combat.reserve_towers();
         let conquest = self.conquest.as_ref().unwrap();
         self.combat.set_civil((0..self.units.len()).map(|u| {
@@ -1854,7 +1904,7 @@ impl World {
         self.conquest
             .as_ref()
             .ok_or(Refusal::NoBuildings)?
-            .can_train(player, h, unit)
+            .can_train(&self.heroes, player, h, unit)
     }
 
     /// What `player`'s building `h` would upgrade into now, or why it
@@ -2286,10 +2336,24 @@ impl World {
             if let Some(c) = &mut self.conquest {
                 c.tithe
                     .collect(&c.meters, &c.structures, &self.regiments, self.tick);
-                (c.heroes).earn(&mut self.regiments, &self.units, &c.units, &self.stances);
             }
+            (self.heroes).earn(
+                &mut self.regiments,
+                &self.units,
+                &self.roster,
+                &self.stances,
+            );
             self.abilities_late();
             self.raise_trained();
+        } else if !self.heroes.is_empty() {
+            // A Field Battle's heroes level as they fight, and cast.
+            (self.heroes).earn(
+                &mut self.regiments,
+                &self.units,
+                &self.roster,
+                &self.stances,
+            );
+            self.abilities_late();
         }
         // What powers left on regiments wears off in any world, a copy of
         // one for a forecast too.
@@ -2304,18 +2368,18 @@ impl World {
                 &self.units,
                 &self.stances,
                 &self.vision,
+                &self.heroes,
                 self.tick,
             );
         }
-        if let Some(c) = &mut self.conquest {
-            (c.heroes).update(
-                &mut self.regiments,
-                &self.combat,
-                &self.units,
-                &c.units,
-                &self.stances,
-            );
-        }
+        (self.heroes).update(
+            &mut self.regiments,
+            &self.combat,
+            &self.units,
+            &self.roster,
+            &self.stances,
+            self.generals.as_ref(),
+        );
         morale::update(
             &mut self.regiments,
             &self.combat,
@@ -2338,6 +2402,7 @@ impl World {
                 &self.units,
                 &self.stances,
                 &self.vision,
+                self.generals.as_ref(),
                 self.tick,
             );
         }
@@ -2407,6 +2472,7 @@ impl World {
                 pc.command,
                 Command::DeployZone { .. }
                     | Command::SpawnRegiment { .. }
+                    | Command::SpawnHero { .. }
                     | Command::SpawnStructure { .. }
                     | Command::MoveTo { .. }
                     | Command::AttackMove { .. }
@@ -2460,6 +2526,12 @@ impl World {
                 );
                 true
             }
+            Command::SpawnHero {
+                unit,
+                position,
+                facing,
+                level,
+            } => self.spawn_hero(pc.player, unit, position, facing, level),
             Command::MoveTo {
                 regiment,
                 target,
@@ -2929,11 +3001,11 @@ impl World {
             Command::Train { structure, unit } => self
                 .conquest
                 .as_mut()
-                .is_some_and(|c| c.train(pc.player, structure, unit)),
+                .is_some_and(|c| c.train(&self.heroes, pc.player, structure, unit)),
             Command::Untrain { structure } => self
                 .conquest
                 .as_mut()
-                .is_some_and(|c| c.untrain(pc.player, structure)),
+                .is_some_and(|c| c.untrain(&self.heroes, pc.player, structure)),
             Command::Upgrade { structure } => self
                 .conquest
                 .as_mut()
@@ -3282,6 +3354,47 @@ impl World {
         }
     }
 
+    /// [`Command::SpawnHero`]: `player` puts hero `unit` down at
+    /// `position`, at `level`.
+    fn spawn_hero(
+        &mut self,
+        player: PlayerId,
+        unit: UnitId,
+        position: FxVec2,
+        facing: Angle,
+        level: u8,
+    ) -> bool {
+        let Some(stats) = self.units.get(usize::from(unit)).copied() else {
+            return false;
+        };
+        let Some(growth) = self.roster.get(usize::from(unit)).and_then(|u| u.hero) else {
+            return false;
+        };
+        let kit = self.roster[usize::from(unit)].kit;
+        if usize::from(player) >= MAX_PARTIES
+            || !(1..=heroes::MAX_LEVEL).contains(&level)
+            || self.heroes.check_place(player, unit).is_err()
+            || !self.nav.standable(player, position)
+        {
+            return false;
+        }
+        if self.deploying() && (self.deploy.zone(player)).is_some_and(|z| !z.contains(position)) {
+            return false;
+        }
+        let Some(h) = (self.regiments).spawn(player, unit, position, facing, &stats) else {
+            return false;
+        };
+        let kit = (growth, kit);
+        (self.heroes).raised(&mut self.regiments, &stats, kit, player, unit, h, level);
+        self.vision.start(
+            &self.regiments,
+            &self.units,
+            &self.terrain,
+            h.index as usize,
+        );
+        true
+    }
+
     /// Put the regiments that finished training this tick on the field,
     /// out of the building's front (its south side as drawn, turned with
     /// it), facing out of it and marching to its rally point.
@@ -3298,7 +3411,7 @@ impl World {
                 .and_then(|stats| self.regiments.spawn(t.owner, t.unit, t.at, t.facing, stats));
             let Some(h) = spawned else {
                 // No room for it: what it cost comes back.
-                let (grub, marrow) = conquest.price(t.owner, t.unit);
+                let (grub, marrow) = conquest.price(&self.heroes, t.owner, t.unit);
                 conquest.economy.refund(t.owner, grub, marrow);
                 continue;
             };
@@ -3306,7 +3419,7 @@ impl World {
             if let Some(growth) = u.hero {
                 let stats = &self.units[usize::from(t.unit)];
                 let kit = (growth, u.kit);
-                (conquest.heroes).raised(&mut self.regiments, stats, kit, t.owner, t.unit, h);
+                (self.heroes).raised(&mut self.regiments, stats, kit, t.owner, t.unit, h, 1);
             }
             self.vision.start(
                 &self.regiments,
@@ -4262,6 +4375,11 @@ impl World {
                 for u in &self.units {
                     u.hash_into(h);
                 }
+                // A Field Battle's hero table (Conquest's is hashed with
+                // its buildings); none where there are no heroes.
+                for u in self.field_units() {
+                    u.hash_into(h);
+                }
             }
             "regiments" => {
                 self.regiments.hash_into(h);
@@ -4274,10 +4392,14 @@ impl World {
             "vision" => self.vision.hash_into(&self.regiments, h),
             "deployment" => self.deploy.hash_into(h),
             "verdict" => self.judge.hash_into(h),
-            // Not in Conquest.
+            // Generals are not in Conquest; heroes only once someone has
+            // one.
             "generals" => {
                 if let Some(generals) = &self.generals {
                     generals.hash_into(h);
+                }
+                if !self.heroes.is_empty() {
+                    self.heroes.hash_into(h);
                 }
             }
             // Only in matches that allow champions, so other worlds hash as
@@ -4352,10 +4474,10 @@ impl World {
         self.generals.iter().flat_map(Generals::iter)
     }
 
-    /// Every player's hired heroes, standing or fallen (see [`heroes`]):
-    /// none outside Conquest.
+    /// Every player's heroes, standing or fallen (see [`heroes`]): hired
+    /// in Conquest, or placed in a Field Battle ([`Command::SpawnHero`]).
     pub fn heroes(&self) -> impl Iterator<Item = &heroes::Hero> {
-        self.conquest.iter().flat_map(|c| c.heroes.iter())
+        self.heroes.iter()
     }
 
     /// Regiment `h`'s hit points left and at full strength (a hero's
@@ -4374,13 +4496,13 @@ impl World {
 
     /// The hero regiment `h` is, if it is one.
     pub fn hero_of(&self, h: RegimentHandle) -> Option<&heroes::Hero> {
-        self.conquest.as_ref()?.heroes.of_regiment(h)
+        self.heroes.of_regiment(h)
     }
 
     /// What `player` would pay now for a regiment of type `unit` (Grub,
     /// Marrow): a fallen hero's revive is priced by its level.
     pub fn price_of(&self, player: PlayerId, unit: UnitId) -> Option<(u32, u32)> {
-        Some(self.conquest.as_ref()?.price(player, unit))
+        Some(self.conquest.as_ref()?.price(&self.heroes, player, unit))
     }
 }
 

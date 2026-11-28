@@ -192,6 +192,24 @@ impl Heroes {
         self.list.iter()
     }
 
+    /// Whether nobody has a hero.
+    pub fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+
+    /// Why `player` can't put hero `unit` on the field now
+    /// ([`crate::Command::SpawnHero`]): they have it already, standing or
+    /// fallen, or as many heroes as anyone may.
+    pub(crate) fn check_place(&self, player: PlayerId, unit: UnitId) -> Result<(), Refusal> {
+        if self.find(player, unit).is_some() {
+            return Err(Refusal::HeroTaken);
+        }
+        if self.list.iter().filter(|h| h.owner == player).count() >= MAX_HEROES {
+            return Err(Refusal::HeroLimit);
+        }
+        Ok(())
+    }
+
     /// `player`'s hero of type `unit`, if they have hired it.
     pub fn find(&self, player: PlayerId, unit: UnitId) -> Option<&Hero> {
         self.list
@@ -260,8 +278,11 @@ impl Heroes {
     }
 
     /// A hero of type `unit` came out of training for `owner` as regiment
-    /// `r`: a new hero at level 1, or their fallen one back, at its level
-    /// and full hit points.
+    /// `r`, or was put on the field at `level` (a Field Battle's,
+    /// [`crate::Command::SpawnHero`]): a new hero at `level`, with the
+    /// experience that level took, or their fallen one back, at its own
+    /// level; at full hit points.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn raised(
         &mut self,
         regs: &mut Regiments,
@@ -270,6 +291,7 @@ impl Heroes {
         owner: PlayerId,
         unit: UnitId,
         r: RegimentHandle,
+        level: u8,
     ) {
         let Some(i) = regs.resolve(r) else {
             return;
@@ -282,12 +304,14 @@ impl Heroes {
         {
             Some(k) => k,
             None => {
+                let level = level.clamp(1, MAX_LEVEL);
+                let xp = usize::from(level).checked_sub(2).map_or(0, |k| LEVELS[k]);
                 self.list.push(Hero {
                     owner,
                     unit,
                     regiment: None,
-                    level: 1,
-                    xp: 0,
+                    level,
+                    xp,
                     at,
                     kit,
                     ready_at: [0; 2],
@@ -355,7 +379,9 @@ impl Heroes {
     }
 
     /// Once a tick, before the morale checks: see who has fallen, and mark
-    /// the regiments each standing hero leads ([`Regiments::led`]).
+    /// the regiments each standing hero leads ([`Regiments::led`]). A hero
+    /// who is his side's general (`generals`, in a Field Battle) fell as
+    /// one, which his side felt already.
     pub(crate) fn update(
         &mut self,
         regs: &mut Regiments,
@@ -363,6 +389,7 @@ impl Heroes {
         stats: &[UnitStats],
         units: &[ConquestUnit],
         stances: &Stances,
+        generals: Option<&generals::Generals>,
     ) {
         let mut led = core::mem::take(&mut regs.led);
         for h in &mut self.list {
@@ -373,7 +400,9 @@ impl Heroes {
                 h.regiment = None;
                 // A cast it was walking to dies with it.
                 h.pending = None;
-                fall(regs, stats, units, h);
+                if !generals.is_some_and(|g| g.hero_general(r)) {
+                    fall(regs, stats, units, h);
+                }
                 continue;
             };
             h.at = regs.position[i];

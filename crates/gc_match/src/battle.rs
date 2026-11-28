@@ -140,12 +140,20 @@ pub fn field_mind(party: PlayerId, faction: Faction, level: Difficulty, roll: u6
     })
 }
 
+/// Entry `e`'s unit type, as an index.
+fn unit(e: u16) -> usize {
+    usize::from(gc_data::army::unit(e))
+}
+
 /// Raise and deploy every side's army for `setup`, appending the commands
 /// that put them on the field to `out`, and add a mind for each AI slot to
 /// `minds`. Each army is what its player built in the army builder, held to
 /// the lobby's points budget, or if they built none (and for every AI) the
 /// largest army in a preset mix from the faction's roster that the budget
-/// buys. `units`, `factions` and `points` describe the regiment types;
+/// buys, and for an AI its hero when the budget buys one (see
+/// [`army::pick_hero`]), its first regiment. `units`, `factions`, `points`
+/// and `heroes` describe the regiment types (a hero's points are its first
+/// level's);
 /// `plateaus` are the map's start positions (see [`battle_starts`]);
 /// `roll` varies the AI personalities from match to match. `deploy` is
 /// false on a joiner in a network match: the host raises every army and
@@ -162,6 +170,7 @@ pub fn set_out(
     units: &[UnitStats],
     factions: &[Faction],
     points: &[u32],
+    heroes: &[army::HeroType],
     plateaus: &[Vec2],
     roll: u64,
     deploy: bool,
@@ -204,10 +213,36 @@ pub fn set_out(
             .map_or(Preset::Balanced, |m| m.personality().army);
         let budget = setup.settings.budget.points();
         let raised = if slot.army.is_empty() {
-            army::pick_army_within(units, points, factions, faction, preset, budget, MAX_ARMY)
+            let hero = army::pick_hero(points, factions, heroes, faction, budget);
+            let spent = hero.map_or(0, |e| gc_data::army::points(e, points[unit(e)]));
+            // The rest buys regiments only.
+            let regiments: Vec<u32> = (points.iter().enumerate())
+                .map(|(u, &p)| {
+                    let hero = heroes.get(u).is_some_and(|&h| h != army::HeroType::No);
+                    if hero { 0 } else { p }
+                })
+                .collect();
+            let most = MAX_ARMY - usize::from(hero.is_some());
+            let rest = army::pick_army_within(
+                units,
+                &regiments,
+                factions,
+                faction,
+                preset,
+                budget - spent,
+                most,
+            );
+            hero.into_iter().chain(rest).collect()
         } else {
-            army::within_budget(&slot.army, points, factions, faction, budget, MAX_ARMY)
+            army::within_budget(
+                &slot.army, points, factions, heroes, faction, budget, MAX_ARMY,
+            )
         };
+        // The heroes among them, and the unit types to set out.
+        let hero_levels: Vec<u16> = (raised.iter().copied())
+            .filter(|&e| gc_data::army::level(e) > 0)
+            .collect();
+        let raised: Vec<gc_sim::UnitId> = (raised.iter()).map(|&e| unit(e) as u16).collect();
         // Face the nearest enemy start (the middle of the map if none).
         let foe = (0..players.len())
             .filter(|&j| teams[j] != teams[i])
@@ -235,7 +270,7 @@ pub fn set_out(
                 set.my_forward = at.placed.first().map_or(forward, |p| p.facing);
             }
             let placed = at.placed;
-            army::spawn_commands(party, &placed, &mut spawns);
+            army::spawn_army(party, &placed, &hero_levels, &mut spawns);
             deployed.push(placed);
             // The computer keeps the standard deployment.
             if deployment && slot.kind == SlotKind::Ai {
@@ -873,6 +908,7 @@ pub(crate) mod tests {
             units,
             factions,
             points,
+            ..
         } = crate::Tables::new(data);
         let mut maps: Vec<Heightmap> = vec![
             Heightmap::generate(1, 256),
@@ -903,7 +939,16 @@ pub(crate) mod tests {
                 let mut minds = Minds::new(ai_terrain(map, &nav));
                 let mut out = Vec::new();
                 set_out(
-                    &setup, &units, &factions, &points, &starts, 1, true, &mut minds, &mut out,
+                    &setup,
+                    &units,
+                    &factions,
+                    &points,
+                    &[],
+                    &starts,
+                    1,
+                    true,
+                    &mut minds,
+                    &mut out,
                 );
                 let ground = minds.terrain();
                 let spawns: Vec<_> = out
@@ -948,6 +993,7 @@ pub(crate) mod tests {
             units,
             factions,
             points,
+            ..
         } = crate::Tables::new(data);
         let (yari, _) = data.unit_by_name("Yari Ashigaru").unwrap();
         let (yumi, _) = data.unit_by_name("Yumi Ashigaru").unwrap();
@@ -962,6 +1008,7 @@ pub(crate) mod tests {
                 &units,
                 &factions,
                 &points,
+                &[],
                 &plateau_positions(MAP),
                 1,
                 true,
@@ -1008,6 +1055,7 @@ pub(crate) mod tests {
             units,
             factions,
             points,
+            ..
         } = crate::Tables::new(data);
         let heightmap = Heightmap::generate(3, MAP);
         let nav = heightmap.sim_nav_costs();
@@ -1032,6 +1080,7 @@ pub(crate) mod tests {
                 &units,
                 &factions,
                 &points,
+                &[],
                 &plateau_positions(MAP),
                 3,
                 true,
@@ -1104,6 +1153,7 @@ pub(crate) mod tests {
             units,
             factions,
             points,
+            ..
         } = crate::Tables::new(data);
         let heightmap = Heightmap::generate(3, MAP);
         let nav = heightmap.sim_nav_costs();
@@ -1133,6 +1183,7 @@ pub(crate) mod tests {
                 &units,
                 &factions,
                 &points,
+                &[],
                 &plateau_positions(MAP),
                 3,
                 true,

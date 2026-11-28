@@ -57,6 +57,8 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 ///   the Concord's raising and hiring powers;
 /// - 54: the brigade a move belongs to (moves and attack-moves tagged 52
 ///   and 53, queued steps tagged 3 and 4; read as moves in no brigade);
+/// - 62: a match without buildings' hero table and the spawn hero command
+///   (tag 59; read as no table);
 /// - 53: the hold, skirmish and run orders (commands tagged 49 to 51) and
 ///   the column and wedge formations;
 /// - 51: felling into the river and dumping rafts (the fell and dump
@@ -123,7 +125,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 ///
 /// Anything older is refused with [`Error::Format`].
 // scripts/rules-bump.py reads and sets this line as written.
-pub const FORMAT: u16 = 61;
+pub const FORMAT: u16 = 62;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -424,6 +426,9 @@ pub struct Replay {
     pub generals: bool,
     /// What made it a Conquest match; `None` for a Field Battle.
     pub conquest: Option<ConquestRecord>,
+    /// The hero table a match without buildings was given, as
+    /// [`World::field_roster`] (empty: none; format 62 on).
+    pub roster: Vec<ConquestUnit>,
     /// Ticks recorded.
     pub ticks: u32,
     /// The commands of each tick that had any, in tick order.
@@ -671,6 +676,8 @@ impl Replay {
         let mut world = World::new(&self.setup());
         if let Some(c) = &self.conquest {
             world.conquest(&c.setup());
+        } else if !self.roster.is_empty() {
+            world.field_roster(&self.roster);
         }
         world
     }
@@ -869,6 +876,14 @@ impl Replay {
         }
     }
 
+    /// The hero table, just after the Conquest record (format 62 on).
+    fn write_roster(&self, w: &mut Writer) {
+        w.var(self.roster.len() as u64);
+        for u in &self.roster {
+            w.conquest_unit(u);
+        }
+    }
+
     fn write_tail(&self, w: &mut Writer) {
         w.var(self.turns.len() as u64);
         let mut prev = 0;
@@ -926,6 +941,7 @@ impl Replay {
         self.write_generals(&mut w);
         self.write_sky(&mut w);
         self.write_conquest(&mut w);
+        self.write_roster(&mut w);
         self.write_tail(&mut w);
         let packed = lz4_flex::compress_prepend_size(&w.buf);
         let mut out = Vec::with_capacity(10 + info.buf.len() + packed.len());
@@ -1125,6 +1141,15 @@ impl Replay {
         } else {
             None
         };
+        let roster = if format >= 62 {
+            let n: usize = r.var_as()?;
+            (0..n.min(r.remaining()))
+                .map(|_| r.conquest_unit(format))
+                .collect::<Option<Vec<_>>>()
+                .filter(|u| u.len() == n)?
+        } else {
+            Vec::new()
+        };
         if format < 10 {
             info.ticks = r.var_as()?;
         }
@@ -1190,6 +1215,7 @@ impl Replay {
             champions,
             generals,
             conquest,
+            roster,
             ticks: info.ticks,
             turns,
             checkpoints,
@@ -1365,6 +1391,7 @@ impl Recorder {
                 champions: setup.champions,
                 generals: setup.generals,
                 conquest: None,
+                roster: world.field_units().to_vec(),
                 ticks: 0,
                 turns: Vec::new(),
                 checkpoints: vec![(0, world.state_hash())],
@@ -2214,6 +2241,17 @@ mod tests {
         assert_eq!(replay.setup().sky, replay.sky.sky());
     }
 
+    /// `replay`'s encoded `body` without its hero table (none), as files
+    /// before format 62 have it.
+    fn without_roster(replay: &Replay, body: &[u8]) -> Vec<u8> {
+        assert!(replay.roster.is_empty());
+        let mut tail = Writer::default();
+        replay.write_tail(&mut tail);
+        let at = body.len() - tail.buf.len() - 1;
+        assert_eq!(body[at], 0, "an empty hero table");
+        [&body[..at], &body[at + 1..]].concat()
+    }
+
     #[test]
     fn a_format_14_replay_has_no_unit_names() {
         let mut replay = record();
@@ -2228,6 +2266,7 @@ mod tests {
         // The body as it was then: no growth, footing, flow or levels
         // layer, generals flag or sky after the map.
         let body = lz4_flex::decompress_size_prepended(&new[10 + len..]).unwrap();
+        let body = without_roster(&replay, &body);
         let mut map = Writer::default();
         replay.write_units(&mut map);
         replay.write_map(&mut map);
@@ -2353,7 +2392,9 @@ mod tests {
         old.extend_from_slice(&57u16.to_le_bytes());
         old.extend_from_slice(&(info.len() as u32).to_le_bytes());
         old.extend_from_slice(&info);
-        old.extend_from_slice(&new[10 + len..]);
+        let body = lz4_flex::decompress_size_prepended(&new[10 + len..]).unwrap();
+        let body = without_roster(&replay, &body);
+        old.extend_from_slice(&lz4_flex::compress_prepend_size(&body));
         assert_eq!(Replay::decode(&old).unwrap(), replay);
         let path = temp("header-57", &old);
         assert_eq!(Replay::read_header(&path).unwrap(), replay.info());

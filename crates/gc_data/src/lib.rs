@@ -14,6 +14,7 @@ use gc_assets::{Kind, Pack, PackError, TableError, read_table};
 use gc_fixed::Fx;
 use serde::{Deserialize, Serialize};
 
+pub mod army;
 pub mod conquest;
 
 pub use conquest::{

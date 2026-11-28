@@ -91,7 +91,10 @@ impl Match {
             sky: sky.sky(),
             generals: true,
         };
-        let world = World::new(&match_setup);
+        let mut world = World::new(&match_setup);
+        if !tables.roster.is_empty() {
+            world.field_roster(&tables.roster);
+        }
         let recorder = record.map(|note| Recorder::new(&match_setup, &world, note));
         let mut minds = Minds::new(ai_terrain(map, &nav));
         if live {
@@ -103,6 +106,7 @@ impl Match {
             &tables.units,
             &tables.factions,
             &tables.points,
+            &tables.heroes,
             &field_starts(map, setup.players.len()),
             seed,
             deploy,

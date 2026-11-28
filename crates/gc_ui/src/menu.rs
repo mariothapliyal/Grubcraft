@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 
+use gc_data::army;
+
 use crate::draw::{Rect, fit, text_width};
 use crate::hud::{MinimapTerrain, draw_terrain};
 use crate::lobby::{
@@ -1369,10 +1371,10 @@ impl<N: Network> Menu<N> {
                 hint_color = theme::BAD_INK;
                 format!(
                     "   Army over budget: {}.",
-                    army_summary(me.army.len(), spent, budget)
+                    army_summary(&me.army, spent, budget)
                 )
             } else {
-                format!("   Army: {}.", army_summary(me.army.len(), spent, budget))
+                format!("   Army: {}.", army_summary(&me.army, spent, budget))
             };
         }
         let footer_y = rows_top + rows_h + sp(4);
@@ -1510,6 +1512,69 @@ impl<N: Network> Menu<N> {
             ui.draw.rect(row, theme::CLOTH);
             let text_y = row.y + (row.h - 16) / 2;
             ui.label(row.x + 10, text_y, 1, theme::INK, &fit(&unit.name, 20));
+            let btn = row_h - 12;
+            let plus = Rect::new(row.right() - 6 - btn, row.y + 6, btn, btn);
+            let count_r = Rect::new(plus.x - 56, row.y, 56, row.h);
+            let minus = Rect::new(count_r.x - btn, row.y + 6, btn, btn);
+            if unit.hero {
+                // A hero is bought once, at a level: + raises it, - lowers
+                // it, and at level 1 sends him home.
+                let at = army.iter().position(|&e| usize::from(army::unit(e)) == u);
+                let level = at.map_or(0, |k| army::level(army[k]).max(1));
+                let now = at.map_or(0, |k| army::points(army[k], unit.points));
+                let next = army::hero_points(unit.points, level + 1);
+                let shown = if level == 0 { unit.points } else { now };
+                ui.label(
+                    row.x + 200,
+                    text_y,
+                    1,
+                    theme::INK_MUTED,
+                    &format!("{} points", thousands(shown)),
+                );
+                let label = if level == 0 {
+                    "-".to_string()
+                } else {
+                    format!("Lv {level}")
+                };
+                ui.label_centered(count_r, 1, theme::INK, &label);
+                if ui.button(minus, "-", ButtonStyle::Normal, level > 0)
+                    && let Some(k) = at
+                {
+                    if level <= 1 {
+                        army.remove(k);
+                    } else {
+                        army[k] = army::entry(u as u16, level - 1);
+                    }
+                    changed = true;
+                }
+                let heroes = army.iter().filter(|&&e| army::level(e) > 0).count();
+                let fits = match at {
+                    Some(_) => level < army::MAX_LEVEL && spent - now + next <= budget,
+                    None => {
+                        heroes < army::MAX_HEROES
+                            && spent + unit.points <= budget
+                            && army.len() < MAX_ARMY
+                    }
+                };
+                if ui.button(plus, "+", ButtonStyle::Normal, fits) {
+                    match at {
+                        Some(k) => army[k] = army::entry(u as u16, level + 1),
+                        // Heroes lead the list, in roster order: the first
+                        // is the army's general.
+                        None => {
+                            let k = army
+                                .iter()
+                                .position(|&e| {
+                                    army::level(e) == 0 || usize::from(army::unit(e)) > u
+                                })
+                                .unwrap_or(army.len());
+                            army.insert(k, army::entry(u as u16, 1));
+                        }
+                    }
+                    changed = true;
+                }
+                continue;
+            }
             ui.label(
                 row.x + 200,
                 text_y,
@@ -1518,10 +1583,6 @@ impl<N: Network> Menu<N> {
                 &format!("{} points", thousands(unit.points)),
             );
             let count = army.iter().filter(|&&a| a as usize == u).count();
-            let btn = row_h - 12;
-            let plus = Rect::new(row.right() - 6 - btn, row.y + 6, btn, btn);
-            let count_r = Rect::new(plus.x - 56, row.y, 56, row.h);
-            let minus = Rect::new(count_r.x - btn, row.y + 6, btn, btn);
             ui.label_centered(count_r, 1, theme::INK, &count.to_string());
             if ui.button(minus, "-", ButtonStyle::Normal, count > 0) {
                 if let Some(at) = army.iter().rposition(|&a| a as usize == u) {
@@ -1531,10 +1592,10 @@ impl<N: Network> Menu<N> {
             }
             let fits = spent + unit.points <= budget && army.len() < MAX_ARMY;
             if ui.button(plus, "+", ButtonStyle::Normal, fits) {
-                // Kept grouped by type, in roster order.
+                // Kept grouped by type, in roster order, after the heroes.
                 let at = army
                     .iter()
-                    .position(|&a| a as usize > u)
+                    .position(|&a| army::level(a) == 0 && a as usize > u)
                     .unwrap_or(army.len());
                 army.insert(at, u as u16);
                 changed = true;
@@ -1561,7 +1622,7 @@ impl<N: Network> Menu<N> {
                 summary_y,
                 1,
                 color,
-                &army_summary(army.len(), spent, budget),
+                &army_summary(&army, spent, budget),
             );
             if spent > budget {
                 ui.label(
@@ -1939,10 +2000,19 @@ fn lobby_sizes(screen_h: i32, k: f32) -> (i32, i32) {
     }
 }
 
-/// "3 regiments, 1,400 of 4,000 points".
-fn army_summary(army_len: usize, spent: u32, budget: u32) -> String {
+/// "3 regiments, 1,400 of 4,000 points", or "4 regiments and a hero, ..."
+/// for `army` (entries as [`gc_data::army`] has them).
+fn army_summary(army: &[u16], spent: u32, budget: u32) -> String {
+    let heroes = army.iter().filter(|&&e| army::level(e) > 0).count();
+    let regiments = army.len() - heroes;
+    let heroes = match heroes {
+        0 => String::new(),
+        1 => " and a hero".to_string(),
+        n => format!(" and {n} heroes"),
+    };
+    let s = if regiments == 1 { "" } else { "s" };
     format!(
-        "{army_len} regiments, {} of {} points",
+        "{regiments} regiment{s}{heroes}, {} of {} points",
         thousands(spent),
         thousands(budget)
     )
@@ -2499,6 +2569,7 @@ mod tests {
             name: "Yari Ashigaru".into(),
             faction: Faction::EmberClans,
             points: 400,
+            hero: false,
         }]);
         h.menu.settings.faction = Faction::EmberClans;
         h.click("Play");
@@ -2506,7 +2577,7 @@ mod tests {
         h.click_last("Army");
         let (x, y) = find_all(&h.ui.draw, "+")[0];
         h.click_at(x, y);
-        assert!(h.has("1 regiments, 400 of 4,000 points"));
+        assert!(h.has("1 regiment, 400 of 4,000 points"));
         // The match starts (or the host drops) while the screen is open, so
         // it never sees Done. Later menus start again, in a new lobby.
         h.menu.net().leave();
@@ -2517,7 +2588,7 @@ mod tests {
         h.click_last("Army");
         assert_eq!(h.menu.screen(), Screen::Army);
         assert!(h.has("the Balanced mix will be picked for you"));
-        assert!(!h.has("1 regiments"), "the old lobby's draft");
+        assert!(!h.has("1 regiment,"), "the old lobby's draft");
     }
 
     #[test]
@@ -2527,6 +2598,7 @@ mod tests {
             name: name.into(),
             faction,
             points,
+            hero: false,
         };
         h.menu.set_roster(vec![
             unit("Yari Ashigaru", Faction::EmberClans, 400),
@@ -2576,6 +2648,47 @@ mod tests {
         }
     }
 
+    /// A hero is bought once, at a level his points rise with, and leads
+    /// the list.
+    #[test]
+    fn the_army_builder_buys_a_hero_at_a_level() {
+        let mut h = Harness::new();
+        let unit = |name: &str, points, hero| RosterUnit {
+            name: name.into(),
+            faction: Faction::EmberClans,
+            points,
+            hero,
+        };
+        h.menu.set_roster(vec![
+            unit("Yari Ashigaru", 400, false),
+            unit("The Daimyo", 600, true),
+        ]);
+        h.menu.settings.faction = Faction::EmberClans;
+        h.click("Play");
+        h.click_last("Host");
+        h.click_last("Army");
+        // The regiment's row, then the hero's.
+        let plus = |h: &Harness| find_all(&h.ui.draw, "+");
+        let (x, y) = plus(&h)[0];
+        h.click_at(x, y);
+        let (x, y) = plus(&h)[1];
+        h.click_at(x, y);
+        assert!(h.has("Lv 1") && h.has("600 points"));
+        assert!(h.has("1 regiment and a hero, 1,000 of 4,000 points"));
+        for _ in 0..4 {
+            let (x, y) = plus(&h)[1];
+            h.click_at(x, y);
+        }
+        assert!(h.has("Lv 5") && h.has("960 points"), "15% more a level");
+        assert!(h.has("1,360 of 4,000 points"));
+        let (x, y) = find_all(&h.ui.draw, "-")[1];
+        h.click_at(x, y);
+        assert!(h.has("Lv 4"));
+        h.click_last("Done");
+        let army = h.menu.net.lobby().unwrap().slots[0].army.clone();
+        assert_eq!(army, vec![army::entry(1, 4), 0], "the hero first");
+    }
+
     #[test]
     fn a_budget_that_runs_out_stops_the_builder() {
         let mut h = Harness::new();
@@ -2583,6 +2696,7 @@ mod tests {
             name: "Yari Ashigaru".into(),
             faction: Faction::EmberClans,
             points: 1_500,
+            hero: false,
         }]);
         h.menu.settings.faction = Faction::EmberClans;
         h.click("Play");
@@ -3456,6 +3570,7 @@ mod tests {
                 name: "Yari Ashigaru".into(),
                 faction: h.menu.settings.faction,
                 points: 400,
+                hero: false,
             }]);
             h.menu
                 .net

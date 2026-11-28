@@ -5,9 +5,10 @@
 //! time two hostile regiments that see each other come within
 //! [`CALL_TILES`], before either side has begun fighting, there is a
 //! [`CHANCE_PERCENT`] chance that each side sends a champion out between
-//! the lines. Until heroes exist, a side's
-//! champion is the best man of its best fighting regiment near the front
-//! (melee attack plus defence) that isn't hiding in cover. The two run to
+//! the lines. A side's champion is its general if he is a hero (see
+//! [`crate::generals`]) near the front and free; otherwise the best man of
+//! its best fighting regiment near the front (melee attack plus defence)
+//! that isn't hiding in cover. The two run to
 //! the point halfway between their regiments and trade blows, one swing
 //! each in turn: a blow lands with the simulation's chance to hit for
 //! their regiments' attack and defence, and a man it lands on reels and
@@ -20,7 +21,8 @@
 //! [`HEART`] morale points, and the side keeps them as a higher ceiling for
 //! the rest of the battle, while every regiment on the loser's side loses
 //! as many, from its morale and its ceiling. The loser's regiment loses
-//! him. If neither falls within [`MAX_BEATS`] swings they part and nothing
+//! him, or a hero who loses is wounded instead: he loses
+//! [`HERO_WOUND_PERCENT`] of the hit points he has left. If neither falls within [`MAX_BEATS`] swings they part and nothing
 //! changes. If the battle starts around them first (a regiment of either
 //! side fights in melee or loses soldiers), or a champion's regiment breaks
 //! or is destroyed, the duel is abandoned, also without effect. The armies
@@ -32,6 +34,7 @@ use alloc::vec::Vec;
 use gc_fixed::{Fx, FxVec2, Pcg32};
 
 use crate::combat::hit_percent;
+use crate::generals::Generals;
 use crate::morale::{self, SCALE};
 use crate::regiments::{Regiments, hash_handle};
 use crate::vision::Vision;
@@ -61,6 +64,9 @@ pub const WOUNDS: u8 = 3;
 pub const MAX_BEATS: u8 = 30;
 /// Morale points the winner's side gains and the loser's loses.
 pub const HEART: i16 = 6;
+/// A hero who loses the duel is wounded rather than killed: he loses this
+/// share of the hit points he has left, in percent.
+pub const HERO_WOUND_PERCENT: u32 = 50;
 
 /// Two champions' duel between the lines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,11 +193,12 @@ impl Champions {
         units: &[UnitStats],
         stances: &Stances,
         vision: &Vision,
+        generals: Option<&Generals>,
         tick: u32,
     ) {
         if !self.rolled {
             if tick.is_multiple_of(TICKS_PER_SECOND) {
-                self.look(regs, units, stances, vision, tick);
+                self.look(regs, units, stances, vision, generals, tick);
             }
             return;
         }
@@ -225,6 +232,7 @@ impl Champions {
         units: &[UnitStats],
         stances: &Stances,
         vision: &Vision,
+        generals: Option<&Generals>,
         tick: u32,
     ) {
         let Some((a, b)) = self.nearest_pair(regs, stances, vision) else {
@@ -235,8 +243,8 @@ impl Champions {
             return;
         }
         let (Some(x), Some(y)) = (
-            pick(regs, units, stances, vision, a),
-            pick(regs, units, stances, vision, b),
+            pick(regs, units, stances, vision, generals, a),
+            pick(regs, units, stances, vision, generals, b),
         ) else {
             return;
         };
@@ -361,6 +369,8 @@ impl Champions {
 }
 
 /// The regiment that sends out the champion for the side of regiment `a`:
+/// its party's general if he is a hero within [`PICK_TILES`] of `a`, not
+/// fighting, running or hiding; otherwise
 /// the best fighter (melee attack plus defence, then the nearest to `a`)
 /// among `a` and its allies within [`PICK_TILES`] that are ready to fight,
 /// can spare a man, fight in melee at all, and are not hiding (a champion
@@ -370,9 +380,23 @@ fn pick(
     units: &[UnitStats],
     stances: &Stances,
     vision: &Vision,
+    generals: Option<&Generals>,
     a: usize,
 ) -> Option<usize> {
     let near = Fx::from_int(PICK_TILES).raw() as u64;
+    let close = |i: usize| (regs.position[i] - regs.position[a]).length_sq_raw() <= near * near;
+    let hero = (generals.into_iter().flat_map(Generals::iter))
+        .filter(|g| g.hero && g.party == regs.owner[a] && g.fell.is_none())
+        .find_map(|g| regs.resolve(g.regiment))
+        .filter(|&i| {
+            close(i)
+                && !regs.morale_state[i].broken()
+                && regs.engaged[i].is_none()
+                && !vision.hidden(i, regs.owner[i])
+        });
+    if hero.is_some() {
+        return hero;
+    }
     let mut best: Option<(i32, u64, usize)> = None;
     for i in 0..regs.alive.len() {
         let stats = &units[regs.unit[i] as usize];
@@ -466,7 +490,13 @@ fn settle(regs: &mut Regiments, stances: &Stances, won: RegimentHandle, lost: Re
     }
     let last = regs.models[l] as usize - 1;
     let hp = regs.hp[l * crate::formation::MAX_MODELS as usize + last];
-    regs.take_damage(l, u32::from(hp));
+    // A hero lives to fight on, hurt.
+    let hp = if regs.hero_level[l] > 0 {
+        (u32::from(hp) * HERO_WOUND_PERCENT / 100).min(u32::from(hp).saturating_sub(1))
+    } else {
+        u32::from(hp)
+    };
+    regs.take_damage(l, hp);
     if regs.models[l] == 0 {
         regs.despawn(lost);
     }

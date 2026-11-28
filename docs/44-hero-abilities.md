@@ -107,7 +107,7 @@ Dropped (2026-11-22): Command Aura, Challenge, Wind Cut, Wanderer, Ward Talisman
   - **On screen:** the hero panel's two abilities and the command grid's `A` (basic) and `S` (ultimate). One cast on the hero goes off at once; one aimed at a place or a regiment asks for a click on it ("click a place", "click an enemy regiment"), and Esc, a right-click or pressing the key again puts it down. A locked, cooling or stunned ability says why at once; a cast that a hero walked to and then couldn't make says why when it fails. A cast throws up a burst of dust where it went off, when that is seen. Tooltips from the roster.
   - **Computer players** cast by simple rules (the Steward, `gc_ai/src/conquest/steward/heroes.rs`).
   - **Stress scenario** `abilities`, and the golden replay `conquest-heroes-1v1`, which gives `Cast` at the hero and at a regiment.
-- **H3:** heroes in Field Battles.
+- **H3, heroes in Field Battles (built 2026-11-29):** every ability works as in Conquest except the Maestro's Symphony and the Magnate's and Undertaker's four, which say "works only in Conquest" (`abilities::needs_conquest`); computer players cast from the field mind with the same rules (`gc_ai::casting`). See [43](43-heroes.md#heroes-in-field-battles).
 
 ## Real use
 

@@ -60,6 +60,11 @@ pub struct Tables {
     pub units: Vec<UnitStats>,
     pub factions: Vec<Faction>,
     pub points: Vec<u32>,
+    /// Which types are heroes (empty: none are).
+    pub heroes: Vec<gc_ai::army::HeroType>,
+    /// The Conquest unit table the heroes take the field with
+    /// ([`gc_sim::World::field_roster`]); empty without heroes.
+    pub roster: Vec<gc_sim::ConquestUnit>,
 }
 
 impl Tables {
@@ -72,6 +77,8 @@ impl Tables {
                 .map(gc_data::UnitRecord::faction)
                 .collect(),
             points: data.units.iter().map(|u| u32::from(u.points)).collect(),
+            heroes: Vec::new(),
+            roster: Vec::new(),
         }
     }
 }

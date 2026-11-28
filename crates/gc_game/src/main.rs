@@ -194,6 +194,8 @@ mod wall_survey;
 // The Guide's data (docs/08-ui-ux.md#guide).
 mod column;
 mod drawn_tool;
+#[cfg(test)]
+mod field_heroes_golden;
 mod guide_data;
 mod hero_casts;
 #[cfg(test)]
@@ -1307,6 +1309,9 @@ struct UnitTable {
     /// Which types are undead (the Concord's dead); empty for the Field
     /// types, where the Concord's never-routing troops are its dead.
     undead: Vec<bool>,
+    /// Which types are heroes, for a Field Battle army; empty for the
+    /// Field types, which have none.
+    heroes: Vec<gc_ai::army::HeroType>,
 }
 
 impl UnitTable {
@@ -1339,6 +1344,7 @@ impl UnitTable {
             roles: Vec::new(),
             breakers: Vec::new(),
             undead: Vec::new(),
+            heroes: Vec::new(),
         }
     }
 }
@@ -1948,6 +1954,11 @@ impl App {
             .iter()
             .map(roster::field_points)
             .collect();
+        other_units.heroes = game_data
+            .conquest_units
+            .iter()
+            .map(roster::hero_type)
+            .collect();
         let art = models.map(|models| Art {
             clips: models::Clips::new(&models),
             looks: buildings::Looks::new(&buildings::Table::new(&game_data), &models),
@@ -1991,6 +2002,7 @@ impl App {
                 name: name.clone(),
                 faction: u.faction(),
                 points,
+                hero: u.hero(),
             })
             .collect();
         let capacities = Capacities::default();
@@ -7330,6 +7342,11 @@ impl Running {
         if let Some(plan) = &plan {
             let done = self.world.conquest(&plan.setup());
             debug_assert!(done, "conquest() on a world that has already begun");
+        } else if roster && !matches!(kind, MatchKind::Replay(_)) {
+            // A Field Battle on the roster table has its heroes, and so
+            // does the sandbox on it (a replay brings its own).
+            let done = self.world.field_roster(&conquest::units_of(&self.data));
+            debug_assert!(done, "field_roster() on a world that has already begun");
         }
         // The sandbox has buildings to try. It is never recorded (only
         // `Battle` below makes a recorder).
@@ -7580,6 +7597,7 @@ impl Running {
                 &self.units.stats,
                 &self.units.factions,
                 &self.units.points,
+                &self.units.heroes,
                 &terrain_view::field_starts(&self.heightmap, setup.players.len()),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
