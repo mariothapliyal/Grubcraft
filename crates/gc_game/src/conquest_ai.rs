@@ -273,6 +273,12 @@ pub(crate) mod tests {
         pub stakes: u32,
         pub traps: u32,
         pub bridges: u32,
+        /// Its lines drawn bent: bridges, and walls (each drawing through
+        /// more than two points counts once).
+        pub bent_bridges: u32,
+        pub curved_walls: u32,
+        /// Its longest drawn bridge, tiles along it.
+        pub bridge_span: u32,
         /// Areas of thicket it ordered cleared (a count of orders, kept
         /// over the match rather than standing at once).
         pub clears: u32,
@@ -328,6 +334,15 @@ pub(crate) mod tests {
                 w.heroes_standing += u32::from(!h.dead());
                 w.top_level = w.top_level.max(u32::from(h.level));
             }
+            w.curved_walls = crate::wall_survey::drawn_walls(world, p).0 as u32;
+            for d in (0..).map_while(|id| world.drawing(id)) {
+                if d.owner != p || d.width <= 1 {
+                    continue;
+                }
+                w.bent_bridges += u32::from(d.path.points().len() > 2);
+                let span = d.path.length() / i64::from(gc_sim::drawn::SUB);
+                w.bridge_span = w.bridge_span.max(span as u32);
+            }
             let Some(st) = world.structures() else {
                 return w;
             };
@@ -370,6 +385,9 @@ pub(crate) mod tests {
                 stakes: self.stakes.max(o.stakes),
                 traps: self.traps.max(o.traps),
                 bridges: self.bridges.max(o.bridges),
+                bent_bridges: self.bent_bridges.max(o.bent_bridges),
+                curved_walls: self.curved_walls.max(o.curved_walls),
+                bridge_span: self.bridge_span.max(o.bridge_span),
                 clears: self.clears.max(o.clears),
                 bolts: self.bolts.max(o.bolts),
                 blasts: self.blasts.max(o.blasts),
@@ -1412,21 +1430,7 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_generals_bridge_a_river_that_cuts_them_off() {
-        use gc_map::def::{Mode, Shape, TerrainOp};
-        let mut def = gc_map::shipped("ribcage_pass").expect("shipped");
-        // A river from corner to corner across the middle, about seven
-        // tiles wide and a quarter tile deep, over the ribs and the ford.
-        def.terrain.push(TerrainOp {
-            shape: Shape::Line {
-                a: (0, 127),
-                b: (127, 0),
-                half_width: 3,
-            },
-            mode: Mode::Set,
-            height: 4,
-            edge: 0,
-        });
-        let map = Map::from_def(&def);
+        let map = crate::wall_survey::river_across_ribcage();
         let nav = map.sim_nav_costs();
         let (a, b) = (map.starts()[0], map.starts()[1]);
         assert!(
@@ -1447,6 +1451,64 @@ pub(crate) mod tests {
                 played.report()
             );
         }
+    }
+
+    /// Generals bridge to the far bank (docs/26-fortifications.md, stage
+    /// 8): where the only crossing short enough to bridge is between two
+    /// spits of land in a wide deep river, with inlets of their own banks
+    /// beside each spit that are much shorter to bridge, a General bridges
+    /// spit to spit, and the armies meet across it.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_generals_bridge_to_the_far_bank_not_an_inlet() {
+        use gc_map::def::{Mode, Shape, TerrainOp};
+        let mut def = gc_map::shipped("ribcage_pass").expect("shipped");
+        let op = |shape, mode, height| TerrainOp {
+            shape,
+            mode,
+            height,
+            edge: 0,
+        };
+        // A deep river from corner to corner, some 24 tiles across: too
+        // wide to bridge anywhere...
+        def.terrain.push(op(
+            Shape::Line {
+                a: (0, 127),
+                b: (127, 0),
+                half_width: 12,
+            },
+            Mode::Set,
+            4,
+        ));
+        // ... but between two spits of land on the way between the starts
+        // (this one and, the map being turned half round for the other
+        // player, its twin), some 15 tiles apart.
+        def.terrain.push(op(
+            Shape::Line {
+                a: (40, 40),
+                b: (56, 56),
+                half_width: 4,
+            },
+            Mode::Set,
+            40,
+        ));
+        let map = Map::from_def(&def);
+        let f = Faction::EmberClans;
+        let played = play_map(map, &[f, f], &[Difficulty::General], 8, 35, None, &[]);
+        // Spit to spit is some 15 tiles; an inlet beside a spit, 5.
+        assert!(
+            played.sides.iter().any(|s| s.works.bridge_span >= 12),
+            "nobody bridged spit to spit: {}",
+            played.report()
+        );
+        assert!(
+            played
+                .sides
+                .iter()
+                .all(|s| s.works.bridge_span == 0 || s.works.bridge_span >= 12),
+            "a bridge over an inlet: {}",
+            played.report()
+        );
     }
 
     /// Generals cut through thicket (docs/41, step 6): where a belt of it

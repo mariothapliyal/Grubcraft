@@ -12,10 +12,21 @@
 //! still close; where straightening would open it, the cut is drawn as it
 //! was found.
 //!
+//! The ring follows the land as a player's drawn wall does: each stretch
+//! of the cut between its sharp turns is drawn as one smooth curve
+//! ([`gc_sim::drawn::DrawnPath`]) where the curve's tiles can all go up
+//! and the ring still closes, so it bends round the hill or along the
+//! river it leans on instead of stepping. Ground that holds the wall well
+//! costs the cut a little less, so the ring bends out to take it when
+//! that is not much longer: a crest with the ground falling away outside
+//! (its defenders fight downhill) and a river bank (its attackers stand in
+//! the water).
+//!
 //! Everything here is plain geometry on a square of tiles ([`Site`]), so
 //! it is tested without a world.
 
-use gc_sim::walls::wall_tiles;
+use gc_sim::drawn::{self, DrawnPath};
+use gc_sim::walls::{Line, wall_tiles};
 
 /// How far from home the ring is planned, tiles: inside a walled town's
 /// reach (`gc_sim::towns::TOWN_REACH`).
@@ -24,11 +35,24 @@ pub(super) const REACH: i32 = 30;
 pub(super) const RUN: i32 = 8;
 /// How far a straightened line may stray from the cut, tiles.
 const STRAIGHTEN: f32 = 0.8;
-/// What a tile that can't be walled now costs the cut, in wall tiles: a
-/// ring goes a long way round rather than leave a gap. And a tile to
-/// clear first: a little way round, not a long one.
-const HARD: i32 = 1000;
-const GROWN: i32 = 3;
+/// What a tile of wall costs the cut: on open ground, and on ground that
+/// holds a wall well (see [`Site::vantage`]), so a ring goes up to a
+/// third further round to stand on that.
+const OPEN: i32 = 4;
+const VANTAGE: i32 = 3;
+/// What a tile that can't be walled now costs the cut: a ring goes a long
+/// way round rather than leave a gap. And a tile to clear first: a little
+/// way round (three tiles of open ground), not a long one.
+const HARD: i32 = 1000 * OPEN;
+const GROWN: i32 = 3 * OPEN;
+/// A smooth stretch of the ring: at least this many tiles (shorter ones
+/// are drawn as lines), at most this many in one drawing, a control point
+/// about every [`CURVE_STEP`] tiles along it. It is cut at any turn of
+/// the cut sharper than [`SHARP_TURN`] degrees, which stays a corner.
+const CURVE_LEAST: usize = 6;
+const CURVE_RUN: usize = 16;
+const CURVE_STEP: usize = 4;
+const SHARP_TURN: f32 = 50.0;
 const NO_END: i32 = 1 << 28;
 
 /// How a tile lies for the ring.
@@ -69,6 +93,11 @@ pub(super) struct Site {
     /// shut, so what lies beyond one is no part of the town (see
     /// [`Site::keep_joined`]).
     pub planned: Vec<bool>,
+    /// Open tiles that hold a wall well, facing out of the town: a crest
+    /// or the top of a slope (the ground a few tiles further out lies at
+    /// least half a tile lower, so its defenders fight downhill), or a
+    /// river bank (attackers wade to it). Cheaper for the cut.
+    pub vantage: Vec<bool>,
 }
 
 /// A gate in the ring: its middle tile, and the step from there out of
@@ -98,15 +127,61 @@ impl Door {
     }
 }
 
-/// A line of the ring to draw, from tile to tile.
+/// A line of the ring to draw: straight from tile to tile (the old
+/// two-end order), or a curve along the cut (a drawn path).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Piece {
-    pub from: (i32, i32),
-    pub to: (i32, i32),
+    pub line: Line,
+    /// The end of it nearer the ring's front, where its builder starts.
+    pub start: (i32, i32),
     /// How far round the ring from its front (its gate) it starts, tiles.
     pub round: u32,
     /// Where its two ends are in the ring's order round the town.
     at: [usize; 2],
+}
+
+impl Piece {
+    /// A straight line from tile `a` to tile `b`.
+    fn straight(a: (i32, i32), b: (i32, i32), at: [usize; 2]) -> Piece {
+        Piece {
+            line: Line::straight(a, b),
+            start: a,
+            round: 0,
+            at,
+        }
+    }
+
+    /// A curve along `path`.
+    fn curve(path: DrawnPath, at: [usize; 2]) -> Piece {
+        Piece {
+            line: Line::drawn(path, drawn::STANDARD),
+            start: path.ends().0,
+            round: 0,
+            at,
+        }
+    }
+
+    /// Its two end tiles, in the order it is drawn.
+    pub fn ends(&self) -> ((i32, i32), (i32, i32)) {
+        self.line.path.ends()
+    }
+
+    /// The tiles it covers, in order.
+    #[cfg(test)]
+    pub fn tiles(&self) -> Vec<(i32, i32)> {
+        line_tiles(&self.line)
+    }
+}
+
+/// The tiles `line` covers, as the sim lays them.
+#[cfg(test)]
+fn line_tiles(line: &Line) -> Vec<(i32, i32)> {
+    if line.old {
+        let (a, b) = line.path.ends();
+        wall_tiles(a, b).unwrap_or_default()
+    } else {
+        line.path.wall_tiles()
+    }
 }
 
 /// A ring laid out.
@@ -150,8 +225,15 @@ impl Layout {
         for p in &mut self.pieces {
             let (ra, rb) = (round_from(p.at[0]), round_from(p.at[1]));
             if rb < ra {
-                (p.from, p.to) = (p.to, p.from);
                 p.at.swap(0, 1);
+                let (a, b) = p.ends();
+                // A straight line is drawn the other way, from its end
+                // nearer the front; a curve keeps the way it was smoothed
+                // (turned round, its rounding could move a tile).
+                if p.line.old {
+                    p.line = Line::straight(b, a);
+                }
+                p.start = b;
             }
             p.round = ra.min(rb);
         }
@@ -182,6 +264,7 @@ impl Site {
             out: vec![false; n],
             clear: vec![false; n],
             planned: vec![false; n],
+            vantage: vec![false; n],
         }
     }
 
@@ -451,7 +534,8 @@ fn cut(site: &Site) -> Option<Vec<usize>> {
     for i in (0..n).filter(|&i| near[i]) {
         let cap = match site.ground[i] {
             _ if site.keep[i] || end(i) || site.clear[i] => NO_END,
-            Ground::Open => 1,
+            Ground::Open if site.vantage[i] => VANTAGE,
+            Ground::Open => OPEN,
             Ground::Grown => GROWN,
             _ => HARD,
         };
@@ -601,6 +685,83 @@ fn lines(
     runs_out
 }
 
+/// The stretches of `chain` (in order) each drawn as one curve, as their
+/// first and last places along it: cut where the cut turns sharper than
+/// [`SHARP_TURN`] (between its straightened lines), and into runs of at
+/// most [`CURVE_RUN`] tiles. Neighbouring stretches share their end tile.
+fn stretches(chain: &[(i32, i32)]) -> Vec<[usize; 2]> {
+    let last = chain.len().saturating_sub(1);
+    let mut cuts = vec![0];
+    for w in straighten(chain, STRAIGHTEN).windows(3) {
+        let (a, b, c) = (chain[w[0]], chain[w[1]], chain[w[2]]);
+        if turn(a, b, c) > SHARP_TURN {
+            cuts.push(w[1]);
+        }
+    }
+    cuts.push(last);
+    let mut out = Vec::new();
+    for w in cuts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let parts = (b - a).div_ceil(CURVE_RUN).max(1);
+        out.extend((0..parts).map(|k| [a + (b - a) * k / parts, a + (b - a) * (k + 1) / parts]));
+    }
+    out
+}
+
+/// How far, in degrees, the way from `a` to `b` turns to go on to `c`.
+fn turn(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> f32 {
+    let (u, v) = (
+        ((b.0 - a.0) as f32, (b.1 - a.1) as f32),
+        ((c.0 - b.0) as f32, (c.1 - b.1) as f32),
+    );
+    let cross = u.0 * v.1 - u.1 * v.0;
+    let dot = u.0 * v.0 + u.1 * v.1;
+    cross.atan2(dot).abs().to_degrees()
+}
+
+/// One smooth path along the tiles `span` of the cut (in order), as a
+/// player drags a wall: from the middle of its first tile to the middle of
+/// its last, through a point about every [`CURVE_STEP`] tiles taken from
+/// the tiles round it (so the cut's steps are smoothed away), with as few
+/// sharp corners as keep it within the sim's bend limit. `None` for a
+/// stretch shorter than [`CURVE_LEAST`].
+fn smooth(span: &[(i32, i32)]) -> Option<DrawnPath> {
+    let n = span.len();
+    if n < CURVE_LEAST {
+        return None;
+    }
+    let count = ((n - 1).div_ceil(CURVE_STEP) + 1).clamp(3, drawn::MAX_POINTS);
+    let half = |v: f32| (2.0 * v + 1.0).round() as i16;
+    let mut points: Vec<(i16, i16)> = Vec::with_capacity(count);
+    for j in 0..count {
+        let k = (j * (n - 1) + (count - 1) / 2) / (count - 1);
+        let round = if j == 0 || j + 1 == count {
+            &span[k..=k]
+        } else {
+            &span[k.saturating_sub(2)..=(k + 2).min(n - 1)]
+        };
+        let m = round.len() as f32;
+        let (x, y) = round.iter().fold((0.0, 0.0), |(x, y), t| {
+            (x + t.0 as f32 / m, y + t.1 as f32 / m)
+        });
+        let p = (half(x), half(y));
+        if points.last() != Some(&p) {
+            points.push(p);
+        }
+    }
+    let last = points.len().checked_sub(1)?;
+    // Smooth all along; else a corner at its middle point, two smooth
+    // halves; else a corner at every point (still the cut's line without
+    // its steps).
+    let mid = last / 2;
+    let sharp: [&dyn Fn(usize) -> bool; 3] = [&|_| false, &|k| k == mid, &|_| true];
+    sharp.into_iter().find_map(|sharp| {
+        let path = DrawnPath::new(&points, |k| k == 0 || k == last || sharp(k))?;
+        (path.check().is_ok() && path.bends_gently() && path.ends() == (span[0], span[n - 1]))
+            .then_some(path)
+    })
+}
+
 /// Lay the ring out on `site`, its front (the middle of its gate, or
 /// where its gate would be) at tile `front`. `None` when no ring can be
 /// laid: nothing is kept, or the kept ground runs to the square's rim.
@@ -660,22 +821,42 @@ pub(super) fn lay(site: &Site, front: Option<(i32, i32)>) -> Option<Layout> {
     };
     let fits =
         |a: (i32, i32), b: (i32, i32)| wall_tiles(a, b).is_some_and(|t| t.into_iter().all(ok));
-    let build = |stray: f32| {
+    // Each stretch of the cut as one smooth curve where it can be (with
+    // `curved`), else as lines straightened by `stray`.
+    let build = |stray: f32, curved: bool| {
         let mut pieces = Vec::new();
         let mut laid = vec![false; n];
+        let mut lay = |piece: Piece, tiles: Vec<(i32, i32)>| {
+            for t in tiles {
+                if let Some(i) = site.index(t) {
+                    laid[i] = true;
+                }
+            }
+            pieces.push(piece);
+        };
         for (chain, from) in &chains {
-            for (a, b, [pa, pb]) in lines(chain, stray, &fits) {
-                for t in wall_tiles(a, b).into_iter().flatten() {
-                    if let Some(i) = site.index(t) {
-                        laid[i] = true;
+            let spans = if curved {
+                stretches(chain)
+            } else {
+                vec![[0, chain.len() - 1]]
+            };
+            for [sa, sb] in spans {
+                let span = &chain[sa..=sb];
+                let curve = if curved { smooth(span) } else { None };
+                if let Some(path) = curve {
+                    let tiles = path.wall_tiles();
+                    if tiles.iter().all(|&t| ok(t)) {
+                        lay(Piece::curve(path, [from + sa, from + sb]), tiles);
+                        continue;
                     }
                 }
-                pieces.push(Piece {
-                    from: a,
-                    to: b,
-                    round: 0,
-                    at: [from + pa, from + pb],
-                });
+                for (a, b, [pa, pb]) in lines(span, stray, &fits) {
+                    let tiles = wall_tiles(a, b).unwrap_or_default();
+                    lay(
+                        Piece::straight(a, b, [from + sa + pa, from + sa + pb]),
+                        tiles,
+                    );
+                }
             }
         }
         // The ring must still close: the kept ground never reaches the
@@ -685,7 +866,9 @@ pub(super) fn lay(site: &Site, front: Option<(i32, i32)>) -> Option<Layout> {
         let open = (0..n).any(|i| town[i] && (site.rim(i) || site.out[i]));
         (!open).then_some((pieces, town))
     };
-    let (pieces, town) = build(STRAIGHTEN).or_else(|| build(EXACT))?;
+    let (pieces, town) = build(STRAIGHTEN, true)
+        .or_else(|| build(STRAIGHTEN, false))
+        .or_else(|| build(EXACT, false))?;
     let mut layout = Layout {
         pieces,
         closes: gap(Ground::Hard).next().is_none(),
@@ -834,7 +1017,7 @@ mod tests {
             })
             .collect();
         for p in &l.pieces {
-            for t in wall_tiles(p.from, p.to).unwrap() {
+            for t in p.tiles() {
                 let i = s.index(t).unwrap();
                 rows[i / s.side as usize][i % s.side as usize] = 'w';
             }
@@ -844,9 +1027,7 @@ mod tests {
 
     /// The wall tiles the layout draws.
     fn tiles(l: &Layout) -> usize {
-        let mut all: Vec<_> = (l.pieces.iter())
-            .flat_map(|p| wall_tiles(p.from, p.to).unwrap())
-            .collect();
+        let mut all: Vec<_> = (l.pieces.iter()).flat_map(super::Piece::tiles).collect();
         all.sort_unstable();
         all.dedup();
         all.len()
@@ -856,7 +1037,7 @@ mod tests {
     fn closed(s: &Site, l: &Layout) -> bool {
         let mut laid = vec![false; s.ground.len()];
         for p in &l.pieces {
-            for t in wall_tiles(p.from, p.to).unwrap() {
+            for t in p.tiles() {
                 laid[s.index(t).unwrap()] = true;
             }
         }
@@ -1024,6 +1205,130 @@ mod tests {
     }
 
     #[test]
+    fn a_round_town_is_ringed_with_smooth_curves() {
+        // A disc of kept ground, radius 7, on open ground.
+        let side = 25i32;
+        let rows: Vec<String> = (0..side)
+            .map(|y| {
+                (0..side)
+                    .map(|x| {
+                        let (dx, dy) = (x - 12, y - 12);
+                        if dx * dx + dy * dy <= 49 { 'K' } else { '.' }
+                    })
+                    .collect()
+            })
+            .collect();
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let s = site(&rows);
+        let l = lay(&s, None).unwrap();
+        assert!(l.closes && closed(&s, &l), "{:#?}", drawn(&s, &l));
+        // Most of it is curves through several points, not lines.
+        let curved: usize = (l.pieces.iter())
+            .filter(|p| p.line.path.points().len() > 2)
+            .map(|p| p.tiles().len())
+            .sum();
+        assert!(
+            curved * 2 >= tiles(&l),
+            "{:#?} {:?}",
+            drawn(&s, &l),
+            l.pieces
+        );
+        // Every curve is one the sim takes, and no longer than the stepped
+        // cut it smooths (about a tile a tile round, 2 pi times 8).
+        assert!(
+            l.pieces
+                .iter()
+                .all(|p| p.line.old || p.line.path.bends_gently())
+        );
+        assert!(tiles(&l) <= 56, "{} tiles: {:#?}", tiles(&l), drawn(&s, &l));
+    }
+
+    #[test]
+    fn a_stepped_slant_is_smoothed_into_one_curve() {
+        // A cut stepping one across, two down: one path, a few points,
+        // never more than a tile off the steps.
+        let chain: Vec<(i32, i32)> = (0..15).map(|k| (10 + k / 2, 20 + k)).collect();
+        let path = smooth(&chain).unwrap();
+        assert!(path.points().len() <= 5, "{:?}", path.points());
+        assert_eq!(path.ends(), (chain[0], chain[14]));
+        for t in path.wall_tiles() {
+            let near = chain
+                .iter()
+                .any(|c| (c.0 - t.0).abs().max((c.1 - t.1).abs()) <= 1);
+            assert!(near, "{t:?} strays: {:?}", path.wall_tiles());
+        }
+        // Too short to be worth a curve.
+        assert!(smooth(&chain[..4]).is_none());
+        // A right-angled turn is cut there and stays a corner.
+        let mut l: Vec<(i32, i32)> = (0..8).map(|k| (k, 0)).collect();
+        l.extend((1..8).map(|k| (7, k)));
+        assert_eq!(stretches(&l), vec![[0, 7], [7, 14]]);
+        // Long stretches are cut into runs.
+        let long: Vec<(i32, i32)> = (0..40).map(|k| (k, 0)).collect();
+        let runs = stretches(&long);
+        assert!(runs.len() == 3 && runs.iter().all(|r| r[1] - r[0] <= CURVE_RUN));
+    }
+
+    #[test]
+    fn the_ring_bends_out_to_a_crest_or_bank_close_by() {
+        // A valley five across: open ground two tiles out from the kept
+        // ground's edge holds a wall well (a crest, say).
+        let rows = [
+            "...........",
+            "..^^^^^^^..",
+            "..^.....^..",
+            "..^.KKK.^..",
+            "..^.KKK.^..",
+            "..^.....^..",
+            "..^.....^..",
+            "..^.....^..",
+            "..^.....^..",
+            "...........",
+            "...........",
+        ];
+        let row = |l: &Layout, s: &Site| {
+            let mut ys: Vec<i32> = (l.pieces.iter())
+                .flat_map(super::Piece::tiles)
+                .map(|t| t.1 - s.origin.1)
+                .collect();
+            ys.sort_unstable();
+            ys.dedup();
+            ys
+        };
+        let s = site(&rows);
+        let near = row(&lay(&s, None).unwrap(), &s);
+        assert!(
+            near.iter().all(|&y| y <= 5),
+            "tight round what is kept: {near:?}"
+        );
+        // A crest across the valley two rows further out: the wall stands
+        // on it, as long as it is.
+        let mut s = site(&rows);
+        for x in 3..8 {
+            let i = s.index((100 + x, 207)).unwrap();
+            s.vantage[i] = true;
+        }
+        let l = lay(&s, None).unwrap();
+        assert!(l.closes && closed(&s, &l), "{:#?}", drawn(&s, &l));
+        assert_eq!(row(&l, &s), vec![7], "{:#?}", drawn(&s, &l));
+        // A crest far round a town in the open is much longer to wall
+        // along than the tight ring, and is left.
+        let mut s = site(&[".".repeat(15).as_str(); 15]);
+        for y in 6..9 {
+            for x in 6..9 {
+                s.keep[(y * 15 + x) as usize] = true;
+            }
+        }
+        for i in 0..s.ground.len() {
+            let (x, y) = ((i % 15) as i32, (i / 15) as i32);
+            s.vantage[i] = (x - 7).abs().max((y - 7).abs()) == 5;
+        }
+        let l = lay(&s, None).unwrap();
+        assert!(l.closes && closed(&s, &l));
+        assert_eq!(tiles(&l), 12, "{:#?}", drawn(&s, &l));
+    }
+
+    #[test]
     fn the_gate_goes_where_the_way_out_crosses_the_ring() {
         let mut s = site(&[
             "...............",
@@ -1054,7 +1359,7 @@ mod tests {
         let near: Vec<_> = l.pieces.iter().take(2).collect();
         for end in door.beside() {
             assert!(
-                near.iter().any(|p| p.from == end || p.to == end),
+                near.iter().any(|p| p.ends().0 == end || p.ends().1 == end),
                 "{:#?} {:?}",
                 drawn(&s, &l),
                 l.pieces
@@ -1064,7 +1369,7 @@ mod tests {
         let n = s.ground.len();
         let mut laid = vec![false; n];
         for p in &l.pieces {
-            for t in wall_tiles(p.from, p.to).unwrap() {
+            for t in p.tiles() {
                 laid[s.index(t).unwrap()] = true;
             }
         }
