@@ -188,6 +188,7 @@ mod land;
 mod lights;
 #[cfg(test)]
 mod stress;
+mod take_command;
 #[cfg(test)]
 mod wall_survey;
 // The Guide's data (docs/08-ui-ux.md#guide).
@@ -263,7 +264,9 @@ use gc_ui::{Menu, MenuAction, Network, Screen, Settings, Ui, UiInput};
 use glam::{Vec2, Vec3};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{
+    DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent,
+};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
@@ -1018,6 +1021,10 @@ struct Running {
     camera: RtsCamera,
     /// Set while riding with a regiment; that camera is then the one in use.
     ride: Option<Ride>,
+    /// Whether the mouse is grabbed for first-person looking (docs/46).
+    look_grabbed: bool,
+    /// First person with Tab's free mouse and order bar.
+    person_free: bool,
     heightmap: Arc<Map>,
     /// Which lobby map `heightmap` is; `None` for one opened with `--map`.
     map_key: Option<MapKey>,
@@ -2123,6 +2130,8 @@ impl App {
             start_distance: opts.distance,
             camera,
             ride: None,
+            look_grabbed: false,
+            person_free: false,
             heightmap,
             map_key: opts.map.is_none().then_some(first_key),
             world,
@@ -2374,6 +2383,13 @@ impl ApplicationHandler for App {
         }
     }
 
+    /// Raw mouse motion turns the view in first person.
+    fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
+        if let (Some(r), DeviceEvent::MouseMotion { delta }) = (self.running.as_mut(), event) {
+            r.person_look(delta.0 as f32, delta.1 as f32);
+        }
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         let Some(r) = self.running.as_mut() else {
             return;
@@ -2428,6 +2444,8 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(f) => {
                 r.input.focused = f;
                 r.input.turn = [false; 2];
+                r.input.arrows = [false; 4];
+                r.sync_look_grab();
                 if let Some(o) = &mut r.online {
                     o.ping_press = None;
                 }
@@ -2495,6 +2513,10 @@ impl ApplicationHandler for App {
                 // included (which closes it, not the menu).
                 if r.chat_is_open() {
                     r.chat_key(&event);
+                    return;
+                }
+                // First person takes its keys ahead of the grid.
+                if r.in_person() && r.person_key(&event) {
                     return;
                 }
                 let down = event.state == ElementState::Pressed;
@@ -2617,6 +2639,7 @@ impl ApplicationHandler for App {
                         // Ride with the banner. Chords with Ctrl, Cmd or Alt
                         // are the system's.
                         KeyCode::KeyY if grid_key => r.toggle_ride(),
+                        KeyCode::F6 if down && !event.repeat => r.toggle_take_command(),
                         KeyCode::F8 if down && !event.repeat => r.toggle_director(),
                         KeyCode::F11 | KeyCode::Backquote if down && !event.repeat => {
                             r.overlay = !r.overlay;
@@ -2768,7 +2791,9 @@ impl ApplicationHandler for App {
                         KeyCode::Escape if down && r.hud.help_open() => r.toggle_help(),
                         KeyCode::Escape if down && r.hud.build_menu => r.set_build_menu(false),
                         // Esc first gets you out of a ride.
-                        KeyCode::Escape if down && r.ride.is_some() => r.leave_ride(),
+                        KeyCode::Escape if down && r.ride.is_some() && !r.in_person() => {
+                            r.leave_ride();
+                        }
                         KeyCode::Escape
                             if down
                                 && (r.sandbox.placing
@@ -3031,6 +3056,11 @@ impl Running {
     }
 
     fn mouse_button(&mut self, state: ElementState, button: MouseButton) {
+        // With the mouse grabbed for looking, a click only finishes an armed
+        // cast, aimed with the crosshair.
+        if self.look_grabbed && !(button == MouseButton::Left && self.hud.armed.is_some()) {
+            return;
+        }
         match (button, state) {
             (MouseButton::Middle, ElementState::Pressed) => {
                 self.input.middle_down = self.input.cursor;
@@ -3258,6 +3288,10 @@ impl Running {
 
     /// The ray through the mouse, from whichever camera is in use.
     fn cursor_ray(&self) -> Option<(Vec3, Vec3)> {
+        // A grabbed mouse looks through the middle of the screen.
+        if self.look_grabbed {
+            return Some(self.active_camera().ray(Vec2::ZERO));
+        }
         let cursor = self.input.cursor?;
         let size = self.window.inner_size();
         let ndc = Vec2::new(
@@ -3279,7 +3313,10 @@ impl Running {
     /// The bird's-eye camera, for moving the view: any move of it hands the
     /// view back from a ride first.
     fn camera_mut(&mut self) -> &mut RtsCamera {
-        self.leave_ride();
+        // A hero's eye is not the bird's-eye camera's to take.
+        if !self.in_person() {
+            self.leave_ride();
+        }
         &mut self.camera
     }
 
@@ -5039,6 +5076,7 @@ impl Running {
         self.alpha = alpha;
         // Riding with a regiment: its camera follows where it is drawn now.
         self.update_ride(dt.as_secs_f32());
+        self.sync_look_grab();
         let camera = self.active_camera();
         let (view_proj, eye, forward) = (camera.view_proj(), camera.eye(), camera.forward());
         let (scene_focus, scene_distance) = camera.scenery_view();
@@ -5134,6 +5172,9 @@ impl Running {
         // stay readable.
         let zoom = self.banner_zoom();
         let ridden = self.ride.as_ref().map(|ride| ride.regiment);
+        // The man whose eye the view is at is not drawn (his head would fill
+        // the screen); his body and arm come with the next stage.
+        let embodied = self.embodied();
         let haste_glow = self.haste_glow();
         // Soldiers stand only where a regiment of theirs could walk (an
         // open gate is ground to them; a shut one is wall), and in plain
@@ -5403,6 +5444,19 @@ impl Running {
             }
             // A cocooned regiment is drawn as sacs, not its model.
             let cocooned = self.world.regiments.cocoon_of(r.handle).is_some();
+            if embodied == Some(r.handle) {
+                // The eye's own body is not drawn, but its puppets must keep
+                // updating or the foe in front of it loses its partner.
+                self.puppets.update_on(
+                    &block,
+                    r.owner,
+                    game_dt.as_secs_f32(),
+                    firm(r.owner, block.centre),
+                    deck,
+                    |_| {},
+                );
+                continue;
+            }
             let model =
                 (self.units.models.get(r.unit as usize).copied().flatten()).filter(|_| !cocooned);
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
@@ -5756,6 +5810,8 @@ impl Running {
             let offer = self.surrender_offer();
             self.menu.set_surrender(offer);
             self.run_menu();
+        } else if self.look_grabbed {
+            self.run_person_hud();
         } else if self.hud_drawn() {
             self.run_hud();
         } else {
@@ -6712,7 +6768,9 @@ impl Running {
             return;
         }
         self.menu_open = true;
-        self.leave_ride();
+        if !self.in_person() {
+            self.leave_ride();
+        }
         self.sandbox.dirty = true;
         self.menu.show(Screen::Main);
         self.menu.set_in_match(self.match_started);

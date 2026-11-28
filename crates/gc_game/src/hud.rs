@@ -292,7 +292,7 @@ impl HudState {
         self.right_held
     }
 
-    /// Whether the made-up hero is on show (F6; see `preview_hero`).
+    /// Whether the made-up hero is on show (Shift+H; see `preview_hero`).
     pub fn hero_shown(&self) -> bool {
         self.hero_preview
     }
@@ -706,7 +706,12 @@ impl Running {
     /// Whether the HUD is drawn this frame (rather than the guide, the
     /// menu or nothing).
     pub fn hud_drawn(&self) -> bool {
-        self.guide.is_none() && !self.menu_open && self.match_started && self.showroom.is_none()
+        self.guide.is_none()
+            && !self.menu_open
+            && self.match_started
+            && self.showroom.is_none()
+            // First person with the mouse grabbed draws its own screen.
+            && !self.look_grabbed
     }
 
     /// The share of the window's height the HUD's opaque bottom bar covers
@@ -1817,6 +1822,9 @@ impl Running {
         let name = (self.world.regiments.get(ride.regiment)).map_or("the regiment", |r| {
             self.units.names[r.unit as usize].as_str()
         });
+        if ride.camera.is_in_person() {
+            return Some(format!("{name}'s eye - Tab frees the mouse, F6 steps out"));
+        }
         Some(format!("Riding with {name} - Y or Esc to return"))
     }
 
@@ -2499,7 +2507,7 @@ fn draw_hint(draw: &mut DrawList, screen: (i32, i32), text: &str) {
 }
 
 /// The panel for regiment `h`, if it is a hero.
-fn hero_panel<'a>(
+pub(crate) fn hero_panel<'a>(
     world: &gc_sim::World,
     h: gc_sim::RegimentHandle,
     names: &'a [String],

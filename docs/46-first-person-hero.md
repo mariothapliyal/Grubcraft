@@ -273,6 +273,14 @@ The plan takes the recommended option unless he says otherwise. Because PR B cha
 4. **Duel fairness online:** accept the host's reaction-time edge in hero-against-hero fights (default), or delay host possession commands by the worst joiner's lag, or lengthen wind-ups (5, measured).
 5. **PR A ships behind a "Take command (preview)" setting; Conquest only.**
 
+## Built in PR A (deviations from this plan)
+
+- First person reuses the ride camera (`FollowCamera::in_person`, `ActiveCamera::Ride`) instead of a new view-mode enum: far fewer touch points than the ~16 sites planned.
+- Tab frees the mouse and brings back the ordinary order bar, not a separate minimal overlay.
+- The hero's own body is simply not drawn from its eye; the uniform head mask, the eye-track bake and the pinned LOD0 move to PR B/C, where an arm and body are drawn.
+- Settings: one row, Hero view (F6): Off, or on with a mouse look speed; Field of view (`eye_fov`) and Mouse up looks down (`look_invert_y`) exist as settings fields but have no row yet (the settings screen is full at small window sizes).
+- Dev knob `GC_TAKE_ANY_HERO=1`: F6 takes the first hero of either side when nothing is selected, so a replay can be watched from a hero's eye.
+
 ## Review log
 
 Revision 2 changed the following after the Opus 5.5 review (the review checked each claim against the code):

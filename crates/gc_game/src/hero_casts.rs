@@ -72,7 +72,7 @@ impl Running {
     /// The click after aiming ability `slot`: cast it at what was clicked.
     /// A click on nothing it can aim at leaves it aimed.
     pub fn finish_cast(&mut self, slot: u8) {
-        let Some(h) = self.hero_selected() else {
+        let Some(h) = self.embodied().or_else(|| self.hero_selected()) else {
             self.hud.armed = None;
             return;
         };
@@ -97,7 +97,8 @@ impl Running {
     /// Put down an ability being aimed once its hero is no longer selected.
     pub fn drop_stale_cast(&mut self) {
         if matches!(self.hud.armed, Some(Armed::Cast(_)))
-            && (self.hero_selected().is_none() || self.watching.is_some())
+            && (self.embodied().or_else(|| self.hero_selected()).is_none()
+                || self.watching.is_some())
         {
             self.hud.armed = None;
         }
